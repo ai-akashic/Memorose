@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Memorose Logo Preview</title>
+<style>
+  body { margin: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; gap: 48px; }
+  .row { display: flex; align-items: center; gap: 48px; }
+  .preview { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .label { font-family: system-ui; font-size: 13px; color: #888; }
+  .dark { background: #09090b; }
+</style>
+</head>
+<body class="dark">
+
+<div class="row">
+  <!-- Large -->
+  <div class="preview">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" width="280" height="280">
+      <defs>
+        <!-- Outer: deep jewel tones -->
+        <linearGradient id="Lo1" x1="0.5" y1="1" x2="0.5" y2="0">
+          <stop offset="0%" stop-color="#180d30" /><stop offset="55%" stop-color="#5a35a0" /><stop offset="100%" stop-color="#3a2070" />
+        </linearGradient>
+        <linearGradient id="Lo2" x1="0.5" y1="1" x2="0.5" y2="0">
+          <stop offset="0%" stop-color="#0d1835" /><stop offset="55%" stop-color="#2850a0" /><stop offset="100%" stop-color="#1a3570" />
+        </linearGradient>
+        <linearGradient id="Lo3" x1="0.5" y1="1" x2="0.5" y2="0">
+          <stop offset="0%" stop-color="#0d2820" /><stop offset="55%" stop-color="#20856a" /><stop offset="100%" stop-color="#155a48" />
+        </linearGradient>
+        <linearGradient id="Lo4" x1="0.5" y1="1" x2="0.5" y2="0">
+          <stop offset="0%" stop-color="#2a2510" /><stop offset="55%" stop-color="#8a7528" /><stop offset="100%" stop-color="#5a5018" />
+        </linearGradient>
+        <linearGradient id="Lo5" x1="0.5" y1="1" x2="0.5" y2="0">
+          <stop offset="0%" stop-color="#300d18" /><stop offset="55%" stop-color="#a03555" /><stop offset="100%" stop-color="#702038" />
+        </linearGradient>
+
+        <!-- Middle: rich saturated -->
+        <linearGradient id="Lm1" x1="0.5" y1="1" x2="0.5" y2="0">
+          <stop offset="0%" stop-color="#4040a0" /><stop offset="55%" stop-color="#8888dd" /><stop offset="100%" stop-color="#6868c0" />
+        </linearGradient>
+        <linearGradient id="Lm2" x1="0.5" y1="1" x2="0.5" y2="0">
+          <stop offset="0%" stop-color="#3070a8" /><stop offset="55%" stop-color="#68b0e8" /><stop offset="100%" stop-color="#4890cc" />
+        </linearGradient>
+        <linearGradient id="Lm3" x1="0.5" y1="1" x2="0.5" y2="0">
+          <stop offset="0%" stop-color="#30a880" /><stop offset="55%" stop-color="#68e0bb" /><stop offset="100%" stop-color="#48c0a0" />
+        </linearGradient>
+        <linearGradient id="Lm4" x1="0.5" y1="1" x2="0.5" y2="0">
+          <stop offset="0%" stop-color="#a89030" /><stop offset="55%" stop-color="#e8d068" /><stop offset="100%" stop-color="#ccb048" />
+        </linearGradient>
+        <linearGradient id="Lm5" x1="0.5" y1="1" x2="0.5" y2="0">
+          <stop offset="0%" stop-color="#a84068" /><stop offset="55%" stop-color="#e878a8" /><stop offset="100%" stop-color="#cc5888" />
+        </linearGradient>
+
+        <!-- Inner: luminous jewel pastels -->
+        <linearGradient id="Li1" x1="0.5" y1="1" x2="0.5" y2="0">
+          <stop offset="0%" stop-color="#a088dd" /><stop offset="55%" stop-color="#d8c8ff" /><stop offset="100%" stop-color="#c0a8f0" />
+        </linearGradient>
+        <linearGradient id="Li2" x1="0.5" y1="1" x2="0.5" y2="0">
+          <stop offset="0%" stop-color="#78b8f0" /><stop offset="55%" stop-color="#c0e0ff" /><stop offset="100%" stop-color="#98d0f8" />
+        </linearGradient>
+        <linearGradient id="Li3" x1="0.5" y1="1" x2="0.5" y2="0">
+          <stop offset="0%" stop-color="#68e0c0" /><stop offset="55%" stop-color="#b0f8e8" /><stop offset="100%" stop-color="#88ecd8" />
+        </linearGradient>
+        <linearGradient id="Li4" x1="0.5" y1="1" x2="0.5" y2="0">
+          <stop offset="0%" stop-color="#f0d068" /><stop offset="55%" stop-color="#fff0b0" /><stop offset="100%" stop-color="#f8e088" />
+        </linearGradient>
+        <linearGradient id="Li5" x1="0.5" y1="1" x2="0.5" y2="0">
+          <stop offset="0%" stop-color="#f088b0" /><stop offset="55%" stop-color="#ffd0e0" /><stop offset="100%" stop-color="#f8a8c8" />
+        </linearGradient>
+
+        <!-- Specular highlight -->
+        <linearGradient id="Lhl" x1="0.5" y1="1" x2="0.5" y2="0">
+          <stop offset="0%" stop-color="white" stop-opacity="0" />
+          <stop offset="50%" stop-color="white" stop-opacity="0.18" />
+          <stop offset="80%" stop-color="white" stop-opacity="0.05" />
+          <stop offset="100%" stop-color="white" stop-opacity="0" />
+        </linearGradient>
+
+        <!-- Ambient occlusion -->
+        <radialGradient id="Lao" cx="0.5" cy="0.5" r="0.22">
+          <stop offset="0%" stop-color="#000" stop-opacity="0.28" />
+          <stop offset="80%" stop-color="#000" stop-opacity="0.06" />
+          <stop offset="100%" stop-color="#000" stop-opacity="0" />
+        </radialGradient>
+
+        <radialGradient id="Lcore" cx="0.5" cy="0.5" r="0.22">
+          <stop offset="0%" stop-color="#ffffff" stop-opacity="0.98" />
+          <stop offset="35%" stop-color="#f0eaff" stop-opacity="0.6" />
+          <stop offset="65%" stop-color="#d0c8e8" stop-opacity="0.15" />
+          <stop offset="100%" stop-color="#d0c8e8" stop-opacity="0" />
+        </radialGradient>
+        <radialGradient id="Lhalo" cx="0.5" cy="0.5" r="0.5">
+          <stop offset="0%" stop-color="#7060a0" stop-opacity="0.06" />
+          <stop offset="100%" stop-color="#18181b" stop-opacity="0" />
+        </radialGradient>
+
+        <filter id="Lsh-o" x="-25%" y="-25%" width="150%" height="150%">
+          <feDropShadow dx="0" dy="4" stdDeviation="16" flood-color="#08050f" flood-opacity="0.6" />
+        </filter>
+        <filter id="Lsh-m" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="2" stdDeviation="10" flood-color="#10082a" flood-opacity="0.45" />
+        </filter>
+        <filter id="Lglow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="6" result="blur" />
+          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+        <filter id="Lcglow" x="-60%" y="-60%" width="220%" height="220%">
+          <feGaussianBlur stdDeviation="8" result="blur" />
+          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+      </defs>
+
+      <circle cx="256" cy="256" r="240" fill="url(#Lhalo)" />
+
+      <!-- Outer petals -->
+      <g filter="url(#Lsh-o)">
+        <g opacity="0.75">
+          <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Lo1)" transform="rotate(0 256 256)" />
+          <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Lo2)" transform="rotate(72 256 256)" />
+          <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Lo3)" transform="rotate(144 256 256)" />
+          <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Lo4)" transform="rotate(216 256 256)" />
+          <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Lo5)" transform="rotate(288 256 256)" />
+        </g>
+        <g opacity="0.30">
+          <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Lhl)" transform="rotate(0 256 256)" />
+          <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Lhl)" transform="rotate(72 256 256)" />
+          <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Lhl)" transform="rotate(144 256 256)" />
+          <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Lhl)" transform="rotate(216 256 256)" />
+          <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Lhl)" transform="rotate(288 256 256)" />
+        </g>
+      </g>
+
+      <!-- Middle petals -->
+      <g filter="url(#Lsh-m)">
+        <g opacity="0.85">
+          <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Lm1)" transform="rotate(36 256 256)" />
+          <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Lm2)" transform="rotate(108 256 256)" />
+          <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Lm3)" transform="rotate(180 256 256)" />
+          <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Lm4)" transform="rotate(252 256 256)" />
+          <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Lm5)" transform="rotate(324 256 256)" />
+        </g>
+        <g opacity="0.22">
+          <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Lhl)" transform="rotate(36 256 256)" />
+          <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Lhl)" transform="rotate(108 256 256)" />
+          <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Lhl)" transform="rotate(180 256 256)" />
+          <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Lhl)" transform="rotate(252 256 256)" />
+          <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Lhl)" transform="rotate(324 256 256)" />
+        </g>
+      </g>
+
+      <circle cx="256" cy="256" r="110" fill="url(#Lao)" />
+
+      <!-- Inner petals -->
+      <g filter="url(#Lglow)">
+        <g opacity="0.93">
+          <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#Li1)" transform="rotate(18 256 256)" />
+          <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#Li2)" transform="rotate(90 256 256)" />
+          <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#Li3)" transform="rotate(162 256 256)" />
+          <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#Li4)" transform="rotate(234 256 256)" />
+          <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#Li5)" transform="rotate(306 256 256)" />
+        </g>
+        <g opacity="0.15">
+          <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#Lhl)" transform="rotate(18 256 256)" />
+          <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#Lhl)" transform="rotate(90 256 256)" />
+          <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#Lhl)" transform="rotate(162 256 256)" />
+          <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#Lhl)" transform="rotate(234 256 256)" />
+          <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#Lhl)" transform="rotate(306 256 256)" />
+        </g>
+      </g>
+
+      <g opacity="0.06" stroke="#d4d4d8" stroke-width="1.2" fill="none">
+        <polygon points="333,149 382,295 256,387 130,295 179,149" />
+      </g>
+
+      <circle cx="256" cy="256" r="55" fill="url(#Lcore)" filter="url(#Lcglow)" />
+      <circle cx="256" cy="256" r="5" fill="#ffffff" opacity="0.95" filter="url(#Lcglow)" />
+    </svg>
+    <span class="label">280px</span>
+  </div>
+
+  <!-- Medium -->
+  <div class="preview">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" width="64" height="64">
+      <defs>
+        <linearGradient id="Mo1" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#180d30" /><stop offset="55%" stop-color="#5a35a0" /><stop offset="100%" stop-color="#3a2070" /></linearGradient>
+        <linearGradient id="Mo2" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#0d1835" /><stop offset="55%" stop-color="#2850a0" /><stop offset="100%" stop-color="#1a3570" /></linearGradient>
+        <linearGradient id="Mo3" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#0d2820" /><stop offset="55%" stop-color="#20856a" /><stop offset="100%" stop-color="#155a48" /></linearGradient>
+        <linearGradient id="Mo4" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#2a2510" /><stop offset="55%" stop-color="#8a7528" /><stop offset="100%" stop-color="#5a5018" /></linearGradient>
+        <linearGradient id="Mo5" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#300d18" /><stop offset="55%" stop-color="#a03555" /><stop offset="100%" stop-color="#702038" /></linearGradient>
+        <linearGradient id="Mm1" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#4040a0" /><stop offset="55%" stop-color="#8888dd" /><stop offset="100%" stop-color="#6868c0" /></linearGradient>
+        <linearGradient id="Mm2" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#3070a8" /><stop offset="55%" stop-color="#68b0e8" /><stop offset="100%" stop-color="#4890cc" /></linearGradient>
+        <linearGradient id="Mm3" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#30a880" /><stop offset="55%" stop-color="#68e0bb" /><stop offset="100%" stop-color="#48c0a0" /></linearGradient>
+        <linearGradient id="Mm4" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#a89030" /><stop offset="55%" stop-color="#e8d068" /><stop offset="100%" stop-color="#ccb048" /></linearGradient>
+        <linearGradient id="Mm5" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#a84068" /><stop offset="55%" stop-color="#e878a8" /><stop offset="100%" stop-color="#cc5888" /></linearGradient>
+        <linearGradient id="Mi1" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#a088dd" /><stop offset="55%" stop-color="#d8c8ff" /><stop offset="100%" stop-color="#c0a8f0" /></linearGradient>
+        <linearGradient id="Mi2" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#78b8f0" /><stop offset="55%" stop-color="#c0e0ff" /><stop offset="100%" stop-color="#98d0f8" /></linearGradient>
+        <linearGradient id="Mi3" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#68e0c0" /><stop offset="55%" stop-color="#b0f8e8" /><stop offset="100%" stop-color="#88ecd8" /></linearGradient>
+        <linearGradient id="Mi4" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#f0d068" /><stop offset="55%" stop-color="#fff0b0" /><stop offset="100%" stop-color="#f8e088" /></linearGradient>
+        <linearGradient id="Mi5" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#f088b0" /><stop offset="55%" stop-color="#ffd0e0" /><stop offset="100%" stop-color="#f8a8c8" /></linearGradient>
+        <linearGradient id="Mhl" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="white" stop-opacity="0" /><stop offset="50%" stop-color="white" stop-opacity="0.18" /><stop offset="80%" stop-color="white" stop-opacity="0.05" /><stop offset="100%" stop-color="white" stop-opacity="0" /></linearGradient>
+        <radialGradient id="Mao" cx="0.5" cy="0.5" r="0.22"><stop offset="0%" stop-color="#000" stop-opacity="0.28" /><stop offset="80%" stop-color="#000" stop-opacity="0.06" /><stop offset="100%" stop-color="#000" stop-opacity="0" /></radialGradient>
+        <radialGradient id="Mcore" cx="0.5" cy="0.5" r="0.22"><stop offset="0%" stop-color="#fff" stop-opacity="0.98" /><stop offset="35%" stop-color="#f0eaff" stop-opacity="0.6" /><stop offset="65%" stop-color="#d0c8e8" stop-opacity="0.15" /><stop offset="100%" stop-color="#d0c8e8" stop-opacity="0" /></radialGradient>
+        <filter id="Msh-o" x="-25%" y="-25%" width="150%" height="150%"><feDropShadow dx="0" dy="4" stdDeviation="16" flood-color="#08050f" flood-opacity="0.6" /></filter>
+        <filter id="Msh-m" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="10" flood-color="#10082a" flood-opacity="0.45" /></filter>
+        <filter id="Mglow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="6" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+        <filter id="Mcglow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="8" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+      </defs>
+      <g filter="url(#Msh-o)"><g opacity="0.75">
+        <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Mo1)" transform="rotate(0 256 256)" />
+        <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Mo2)" transform="rotate(72 256 256)" />
+        <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Mo3)" transform="rotate(144 256 256)" />
+        <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Mo4)" transform="rotate(216 256 256)" />
+        <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Mo5)" transform="rotate(288 256 256)" />
+      </g><g opacity="0.30">
+        <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Mhl)" transform="rotate(0 256 256)" />
+        <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Mhl)" transform="rotate(72 256 256)" />
+        <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Mhl)" transform="rotate(144 256 256)" />
+        <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Mhl)" transform="rotate(216 256 256)" />
+        <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Mhl)" transform="rotate(288 256 256)" />
+      </g></g>
+      <g filter="url(#Msh-m)"><g opacity="0.85">
+        <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Mm1)" transform="rotate(36 256 256)" />
+        <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Mm2)" transform="rotate(108 256 256)" />
+        <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Mm3)" transform="rotate(180 256 256)" />
+        <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Mm4)" transform="rotate(252 256 256)" />
+        <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Mm5)" transform="rotate(324 256 256)" />
+      </g><g opacity="0.22">
+        <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Mhl)" transform="rotate(36 256 256)" />
+        <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Mhl)" transform="rotate(108 256 256)" />
+        <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Mhl)" transform="rotate(180 256 256)" />
+        <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Mhl)" transform="rotate(252 256 256)" />
+        <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Mhl)" transform="rotate(324 256 256)" />
+      </g></g>
+      <circle cx="256" cy="256" r="110" fill="url(#Mao)" />
+      <g filter="url(#Mglow)"><g opacity="0.93">
+        <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#Mi1)" transform="rotate(18 256 256)" />
+        <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#Mi2)" transform="rotate(90 256 256)" />
+        <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#Mi3)" transform="rotate(162 256 256)" />
+        <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#Mi4)" transform="rotate(234 256 256)" />
+        <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#Mi5)" transform="rotate(306 256 256)" />
+      </g></g>
+      <circle cx="256" cy="256" r="55" fill="url(#Mcore)" filter="url(#Mcglow)" />
+      <circle cx="256" cy="256" r="5" fill="#fff" opacity="0.95" filter="url(#Mcglow)" />
+    </svg>
+    <span class="label">64px</span>
+  </div>
+
+  <!-- Small -->
+  <div class="preview">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" width="22" height="22">
+      <defs>
+        <linearGradient id="So1" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#180d30" /><stop offset="55%" stop-color="#5a35a0" /><stop offset="100%" stop-color="#3a2070" /></linearGradient>
+        <linearGradient id="So2" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#0d1835" /><stop offset="55%" stop-color="#2850a0" /><stop offset="100%" stop-color="#1a3570" /></linearGradient>
+        <linearGradient id="So3" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#0d2820" /><stop offset="55%" stop-color="#20856a" /><stop offset="100%" stop-color="#155a48" /></linearGradient>
+        <linearGradient id="So4" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#2a2510" /><stop offset="55%" stop-color="#8a7528" /><stop offset="100%" stop-color="#5a5018" /></linearGradient>
+        <linearGradient id="So5" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#300d18" /><stop offset="55%" stop-color="#a03555" /><stop offset="100%" stop-color="#702038" /></linearGradient>
+        <linearGradient id="Sm1" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#4040a0" /><stop offset="55%" stop-color="#8888dd" /><stop offset="100%" stop-color="#6868c0" /></linearGradient>
+        <linearGradient id="Sm2" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#3070a8" /><stop offset="55%" stop-color="#68b0e8" /><stop offset="100%" stop-color="#4890cc" /></linearGradient>
+        <linearGradient id="Sm3" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#30a880" /><stop offset="55%" stop-color="#68e0bb" /><stop offset="100%" stop-color="#48c0a0" /></linearGradient>
+        <linearGradient id="Sm4" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#a89030" /><stop offset="55%" stop-color="#e8d068" /><stop offset="100%" stop-color="#ccb048" /></linearGradient>
+        <linearGradient id="Sm5" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#a84068" /><stop offset="55%" stop-color="#e878a8" /><stop offset="100%" stop-color="#cc5888" /></linearGradient>
+        <linearGradient id="Si1" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#a088dd" /><stop offset="55%" stop-color="#d8c8ff" /><stop offset="100%" stop-color="#c0a8f0" /></linearGradient>
+        <linearGradient id="Si2" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#78b8f0" /><stop offset="55%" stop-color="#c0e0ff" /><stop offset="100%" stop-color="#98d0f8" /></linearGradient>
+        <linearGradient id="Si3" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#68e0c0" /><stop offset="55%" stop-color="#b0f8e8" /><stop offset="100%" stop-color="#88ecd8" /></linearGradient>
+        <linearGradient id="Si4" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#f0d068" /><stop offset="55%" stop-color="#fff0b0" /><stop offset="100%" stop-color="#f8e088" /></linearGradient>
+        <linearGradient id="Si5" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#f088b0" /><stop offset="55%" stop-color="#ffd0e0" /><stop offset="100%" stop-color="#f8a8c8" /></linearGradient>
+        <radialGradient id="Sao" cx="0.5" cy="0.5" r="0.22"><stop offset="0%" stop-color="#000" stop-opacity="0.28" /><stop offset="80%" stop-color="#000" stop-opacity="0.06" /><stop offset="100%" stop-color="#000" stop-opacity="0" /></radialGradient>
+        <radialGradient id="Score" cx="0.5" cy="0.5" r="0.22"><stop offset="0%" stop-color="#fff" stop-opacity="0.98" /><stop offset="35%" stop-color="#f0eaff" stop-opacity="0.6" /><stop offset="100%" stop-color="#d0c8e8" stop-opacity="0" /></radialGradient>
+        <filter id="Ssh-o" x="-25%" y="-25%" width="150%" height="150%"><feDropShadow dx="0" dy="4" stdDeviation="16" flood-color="#08050f" flood-opacity="0.6" /></filter>
+        <filter id="Ssh-m" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="10" flood-color="#10082a" flood-opacity="0.45" /></filter>
+        <filter id="Sglow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="6" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+        <filter id="Scglow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="8" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+      </defs>
+      <g filter="url(#Ssh-o)"><g opacity="0.75">
+        <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#So1)" transform="rotate(0 256 256)" />
+        <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#So2)" transform="rotate(72 256 256)" />
+        <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#So3)" transform="rotate(144 256 256)" />
+        <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#So4)" transform="rotate(216 256 256)" />
+        <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#So5)" transform="rotate(288 256 256)" />
+      </g></g>
+      <g filter="url(#Ssh-m)"><g opacity="0.85">
+        <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Sm1)" transform="rotate(36 256 256)" />
+        <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Sm2)" transform="rotate(108 256 256)" />
+        <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Sm3)" transform="rotate(180 256 256)" />
+        <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Sm4)" transform="rotate(252 256 256)" />
+        <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Sm5)" transform="rotate(324 256 256)" />
+      </g></g>
+      <circle cx="256" cy="256" r="110" fill="url(#Sao)" />
+      <g filter="url(#Sglow)"><g opacity="0.93">
+        <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#Si1)" transform="rotate(18 256 256)" />
+        <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#Si2)" transform="rotate(90 256 256)" />
+        <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#Si3)" transform="rotate(162 256 256)" />
+        <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#Si4)" transform="rotate(234 256 256)" />
+        <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#Si5)" transform="rotate(306 256 256)" />
+      </g></g>
+      <circle cx="256" cy="256" r="55" fill="url(#Score)" filter="url(#Scglow)" />
+      <circle cx="256" cy="256" r="5" fill="#fff" opacity="0.95" filter="url(#Scglow)" />
+    </svg>
+    <span class="label">22px (sidebar)</span>
+  </div>
+</div>
+
+<!-- Brand lockup -->
+<div class="preview" style="margin-top: 24px;">
+  <div style="display: flex; align-items: center; gap: 12px;">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" width="40" height="40">
+      <defs>
+        <linearGradient id="Ko1" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#180d30" /><stop offset="55%" stop-color="#5a35a0" /><stop offset="100%" stop-color="#3a2070" /></linearGradient>
+        <linearGradient id="Ko2" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#0d1835" /><stop offset="55%" stop-color="#2850a0" /><stop offset="100%" stop-color="#1a3570" /></linearGradient>
+        <linearGradient id="Ko3" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#0d2820" /><stop offset="55%" stop-color="#20856a" /><stop offset="100%" stop-color="#155a48" /></linearGradient>
+        <linearGradient id="Ko4" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#2a2510" /><stop offset="55%" stop-color="#8a7528" /><stop offset="100%" stop-color="#5a5018" /></linearGradient>
+        <linearGradient id="Ko5" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#300d18" /><stop offset="55%" stop-color="#a03555" /><stop offset="100%" stop-color="#702038" /></linearGradient>
+        <linearGradient id="Km1" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#4040a0" /><stop offset="55%" stop-color="#8888dd" /><stop offset="100%" stop-color="#6868c0" /></linearGradient>
+        <linearGradient id="Km2" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#3070a8" /><stop offset="55%" stop-color="#68b0e8" /><stop offset="100%" stop-color="#4890cc" /></linearGradient>
+        <linearGradient id="Km3" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#30a880" /><stop offset="55%" stop-color="#68e0bb" /><stop offset="100%" stop-color="#48c0a0" /></linearGradient>
+        <linearGradient id="Km4" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#a89030" /><stop offset="55%" stop-color="#e8d068" /><stop offset="100%" stop-color="#ccb048" /></linearGradient>
+        <linearGradient id="Km5" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#a84068" /><stop offset="55%" stop-color="#e878a8" /><stop offset="100%" stop-color="#cc5888" /></linearGradient>
+        <linearGradient id="Ki1" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#a088dd" /><stop offset="55%" stop-color="#d8c8ff" /><stop offset="100%" stop-color="#c0a8f0" /></linearGradient>
+        <linearGradient id="Ki2" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#78b8f0" /><stop offset="55%" stop-color="#c0e0ff" /><stop offset="100%" stop-color="#98d0f8" /></linearGradient>
+        <linearGradient id="Ki3" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#68e0c0" /><stop offset="55%" stop-color="#b0f8e8" /><stop offset="100%" stop-color="#88ecd8" /></linearGradient>
+        <linearGradient id="Ki4" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#f0d068" /><stop offset="55%" stop-color="#fff0b0" /><stop offset="100%" stop-color="#f8e088" /></linearGradient>
+        <linearGradient id="Ki5" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#f088b0" /><stop offset="55%" stop-color="#ffd0e0" /><stop offset="100%" stop-color="#f8a8c8" /></linearGradient>
+        <linearGradient id="Khl" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="white" stop-opacity="0" /><stop offset="50%" stop-color="white" stop-opacity="0.18" /><stop offset="80%" stop-color="white" stop-opacity="0.05" /><stop offset="100%" stop-color="white" stop-opacity="0" /></linearGradient>
+        <radialGradient id="Kao" cx="0.5" cy="0.5" r="0.22"><stop offset="0%" stop-color="#000" stop-opacity="0.28" /><stop offset="80%" stop-color="#000" stop-opacity="0.06" /><stop offset="100%" stop-color="#000" stop-opacity="0" /></radialGradient>
+        <radialGradient id="Kcore" cx="0.5" cy="0.5" r="0.22"><stop offset="0%" stop-color="#fff" stop-opacity="0.98" /><stop offset="35%" stop-color="#f0eaff" stop-opacity="0.6" /><stop offset="100%" stop-color="#d0c8e8" stop-opacity="0" /></radialGradient>
+        <filter id="Ksh-o" x="-25%" y="-25%" width="150%" height="150%"><feDropShadow dx="0" dy="4" stdDeviation="16" flood-color="#08050f" flood-opacity="0.6" /></filter>
+        <filter id="Ksh-m" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="10" flood-color="#10082a" flood-opacity="0.45" /></filter>
+        <filter id="Kglow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="6" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+        <filter id="Kcglow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="8" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+      </defs>
+      <g filter="url(#Ksh-o)"><g opacity="0.75">
+        <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Ko1)" transform="rotate(0 256 256)" />
+        <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Ko2)" transform="rotate(72 256 256)" />
+        <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Ko3)" transform="rotate(144 256 256)" />
+        <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Ko4)" transform="rotate(216 256 256)" />
+        <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Ko5)" transform="rotate(288 256 256)" />
+      </g><g opacity="0.30">
+        <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Khl)" transform="rotate(0 256 256)" />
+        <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Khl)" transform="rotate(72 256 256)" />
+        <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Khl)" transform="rotate(144 256 256)" />
+        <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Khl)" transform="rotate(216 256 256)" />
+        <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#Khl)" transform="rotate(288 256 256)" />
+      </g></g>
+      <g filter="url(#Ksh-m)"><g opacity="0.85">
+        <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Km1)" transform="rotate(36 256 256)" />
+        <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Km2)" transform="rotate(108 256 256)" />
+        <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Km3)" transform="rotate(180 256 256)" />
+        <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Km4)" transform="rotate(252 256 256)" />
+        <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Km5)" transform="rotate(324 256 256)" />
+      </g><g opacity="0.22">
+        <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Khl)" transform="rotate(36 256 256)" />
+        <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Khl)" transform="rotate(108 256 256)" />
+        <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Khl)" transform="rotate(180 256 256)" />
+        <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Khl)" transform="rotate(252 256 256)" />
+        <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#Khl)" transform="rotate(324 256 256)" />
+      </g></g>
+      <circle cx="256" cy="256" r="110" fill="url(#Kao)" />
+      <g filter="url(#Kglow)"><g opacity="0.93">
+        <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#Ki1)" transform="rotate(18 256 256)" />
+        <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#Ki2)" transform="rotate(90 256 256)" />
+        <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#Ki3)" transform="rotate(162 256 256)" />
+        <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#Ki4)" transform="rotate(234 256 256)" />
+        <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#Ki5)" transform="rotate(306 256 256)" />
+      </g></g>
+      <circle cx="256" cy="256" r="55" fill="url(#Kcore)" filter="url(#Kcglow)" />
+      <circle cx="256" cy="256" r="5" fill="#fff" opacity="0.95" filter="url(#Kcglow)" />
+    </svg>
+    <span style="font-family: system-ui; font-weight: 600; font-size: 22px; color: #e8e8ec; letter-spacing: -0.02em;">Memorose</span>
+  </div>
+  <span class="label">brand lockup</span>
+</div>
+
+</body>
+</html>

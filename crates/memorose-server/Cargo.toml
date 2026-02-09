@@ -1,0 +1,27 @@
+[package]
+name = "memorose-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.7"
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+tower-http = { version = "0.5", features = ["trace", "cors", "fs"] }
+memorose-core = { path = "../memorose-core" }
+memorose-common = { path = "../memorose-common" }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+openraft = { version = "0.9", features = ["serde"] }
+tonic = "0.12"
+moka = { version = "0.12", features = ["future"] }
+tower = "0.4"
+dotenvy = "0.15"
+chrono = { version = "0.4", features = ["serde"] }
+jsonwebtoken = "9"
+bcrypt = "0.16"
+rand = "0.8"
+anyhow = "1.0"
+async-recursion = "1.0"

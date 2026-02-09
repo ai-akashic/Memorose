@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "crates/memorose-common",
+    "crates/memorose-core",
+    "crates/memorose-server",
+    "crates/memorose-gateway",
+]
+resolver = "2"

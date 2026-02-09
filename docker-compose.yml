@@ -1,0 +1,41 @@
+version: '3'
+
+services:
+  gateway:
+    build: .
+    command: /app/memorose-gateway
+    environment:
+      - RUST_LOG=info
+      - SHARD_COUNT=2
+      - NODE_PREFIX=http://memorose-node-
+    ports:
+      - "8080:8080"
+    depends_on:
+      - memorose-node-0
+      - memorose-node-1
+
+  memorose-node-0:
+    build: .
+    command: /app/memorose-server
+    environment:
+      - RUST_LOG=info
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
+    volumes:
+      - data-shard-0:/app/data
+
+  memorose-node-1:
+    build: .
+    command: /app/memorose-server
+    environment:
+      - RUST_LOG=info
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
+    volumes:
+      - data-shard-1:/app/data
+
+volumes:
+  data-shard-0:
+  data-shard-1:
