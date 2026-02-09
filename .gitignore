@@ -1,0 +1,86 @@
+# Rust build artifacts
+target/
+**/*.rs.bk
+# Note: Cargo.lock should be committed for applications/binaries
+# Only ignore it if this is a library-only project
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# OS-specific files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*~
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+*.env
+
+# Database and data directories
+data/
+data_example_basic/
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# Docker
+.dockerignore
+
+# Coverage reports
+tarpaulin-report.html
+coverage/
+*.profraw
+
+# Backup files
+*.bak
+*.backup
+*.tmp
+
+# Test artifacts
+test-results/
+*.test
+
+# Documentation builds
+/book/
+/doc/
+
+# Dashboard build output
+crates/memorose-server/static/dashboard/
+dashboard/out/
+dashboard/node_modules/
+dashboard/.next/
+
+# Benchmark results
+*_results_*.json
+bench_results_*.json
+halumem_results_*.json
+locomo_results_*.json
+personamem_results_*.json
+longmem_results_*.json
+
+# Node cluster logs
+node*.log
+
+# Local configuration
+config.local.*
+*.local.toml

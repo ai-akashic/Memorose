@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package raft;
+
+service RaftService {
+  rpc append_entries(RaftRequest) returns (RaftResponse);
+  rpc vote(RaftRequest) returns (RaftResponse);
+  rpc install_snapshot(RaftRequest) returns (RaftResponse);
+}
+
+message RaftRequest {
+  bytes data = 1;
+}
+
+message RaftResponse {
+  bytes data = 1;
+}

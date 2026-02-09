@@ -1,0 +1,356 @@
+use anyhow::{Result, Context};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use memorose_common::{GraphEdge, RelationType};
+use uuid::Uuid;
+use lancedb::Connection;
+use lancedb::query::{ExecutableQuery, QueryBase};
+use arrow_array::{RecordBatch, StringArray, Float32Array, TimestampMicrosecondArray, RecordBatchIterator};
+use arrow_schema::{Schema, Field, DataType, TimeUnit};
+use futures::TryStreamExt;
+use chrono::Utc;
+
+fn create_graph_schema() -> Arc<Schema> {
+    Arc::new(Schema::new(vec![
+        Field::new("user_id", DataType::Utf8, false),
+        Field::new("source_id", DataType::Utf8, false),
+        Field::new("target_id", DataType::Utf8, false),
+        Field::new("relation", DataType::Utf8, false),
+        Field::new("weight", DataType::Float32, false),
+        Field::new("transaction_time", DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())), false),
+    ]))
+}
+
+#[derive(Clone)]
+pub struct GraphStore {
+    db: Arc<Connection>,
+    buffer: Arc<Mutex<Vec<GraphEdge>>>,
+    table_name: String,
+}
+
+impl GraphStore {
+    pub async fn new(db: Arc<Connection>) -> Result<Self> {
+        let store = Self {
+            db,
+            buffer: Arc::new(Mutex::new(Vec::new())),
+            table_name: "relationships".to_string(),
+        };
+        store.init().await?;
+        Ok(store)
+    }
+
+    async fn init(&self) -> Result<()> {
+        let tables = self.db.table_names().execute().await?;
+        if !tables.contains(&self.table_name) {
+            let schema = create_graph_schema();
+            let batch = RecordBatch::new_empty(schema.clone());
+            let reader = RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema);
+
+            self.db.create_table(&self.table_name, reader).execute().await?;
+        }
+        Ok(())
+    }
+
+    pub async fn add_edge(&self, edge: &GraphEdge) -> Result<()> {
+        let should_flush = {
+            let mut buf = self.buffer.lock().await;
+            buf.push(edge.clone());
+            buf.len() >= 100
+        };
+
+        if should_flush {
+            self.flush().await?;
+        }
+        Ok(())
+    }
+
+    pub async fn flush(&self) -> Result<()> {
+        let edges = {
+            let mut buf = self.buffer.lock().await;
+            if buf.is_empty() {
+                return Ok(());
+            }
+            let edges = buf.clone();
+            buf.clear();
+            edges
+        };
+
+        let schema = create_graph_schema();
+
+        let user_ids: Vec<String> = edges.iter().map(|e| e.user_id.clone()).collect();
+        let source_ids: Vec<String> = edges.iter().map(|e| e.source_id.to_string()).collect();
+        let target_ids: Vec<String> = edges.iter().map(|e| e.target_id.to_string()).collect();
+        let relations: Vec<String> = edges.iter().map(|e| e.relation.as_str().to_string()).collect();
+        let weights: Vec<f32> = edges.iter().map(|e| e.weight).collect();
+        let times: Vec<i64> = edges.iter().map(|e| e.transaction_time.timestamp_micros()).collect();
+
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(StringArray::from(user_ids)),
+                Arc::new(StringArray::from(source_ids)),
+                Arc::new(StringArray::from(target_ids)),
+                Arc::new(StringArray::from(relations)),
+                Arc::new(Float32Array::from(weights)),
+                Arc::new(TimestampMicrosecondArray::from(times).with_timezone("UTC")),
+            ],
+        )?;
+
+        let reader = RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema);
+        let table = self.db.open_table(&self.table_name).execute().await?;
+        table.add(reader).execute().await?;
+
+        Ok(())
+    }
+
+    pub async fn reinforce_edge(&self, user_id: &str, source_id: Uuid, target_id: Uuid, delta: f32) -> Result<()> {
+        // Try to find existing edge
+        let existing_edges = self.get_outgoing_edges(user_id, source_id).await?;
+        let existing_edge = existing_edges.iter()
+            .find(|e| e.target_id == target_id && e.relation == RelationType::RelatedTo);
+
+        let new_weight = if let Some(edge) = existing_edge {
+            (edge.weight + delta).min(1.0)
+        } else {
+            delta.min(1.0)
+        };
+
+        let edge = GraphEdge::new(user_id.to_string(), source_id, target_id, RelationType::RelatedTo, new_weight);
+        self.add_edge(&edge).await
+    }
+
+    pub async fn get_outgoing_edges(&self, user_id: &str, source_id: Uuid) -> Result<Vec<GraphEdge>> {
+        let mut edges = {
+            let buf = self.buffer.lock().await;
+            buf.iter()
+               .filter(|e| e.user_id == user_id && e.source_id == source_id)
+               .cloned()
+               .collect::<Vec<_>>()
+        };
+
+        let table = self.db.open_table(&self.table_name).execute().await?;
+        let escaped_user_id = user_id.replace("'", "''");
+        let batches: Vec<RecordBatch> = table.query()
+            .only_if(format!("user_id = '{}' AND source_id = '{}'", escaped_user_id, source_id))
+            .execute().await?.try_collect().await?;
+
+        edges.extend(self.batches_to_edges(batches)?);
+        Ok(edges)
+    }
+
+    pub async fn get_incoming_edges(&self, user_id: &str, target_id: Uuid) -> Result<Vec<GraphEdge>> {
+        let mut edges = {
+            let buf = self.buffer.lock().await;
+            buf.iter()
+               .filter(|e| e.user_id == user_id && e.target_id == target_id)
+               .cloned()
+               .collect::<Vec<_>>()
+        };
+
+        let table = self.db.open_table(&self.table_name).execute().await?;
+        let escaped_user_id = user_id.replace("'", "''");
+        let batches: Vec<RecordBatch> = table.query()
+            .only_if(format!("user_id = '{}' AND target_id = '{}'", escaped_user_id, target_id))
+            .execute().await?.try_collect().await?;
+
+        edges.extend(self.batches_to_edges(batches)?);
+        Ok(edges)
+    }
+
+    pub async fn get_all_edges_for_user(&self, user_id: &str) -> Result<Vec<GraphEdge>> {
+        let mut edges = {
+            let buf = self.buffer.lock().await;
+            buf.iter()
+               .filter(|e| e.user_id == user_id)
+               .cloned()
+               .collect::<Vec<_>>()
+        };
+
+        let table = self.db.open_table(&self.table_name).execute().await?;
+        let escaped_user_id = user_id.replace("'", "''");
+        let batches: Vec<RecordBatch> = table.query()
+            .only_if(format!("user_id = '{}'", escaped_user_id))
+            .execute().await?.try_collect().await?;
+
+        edges.extend(self.batches_to_edges(batches)?);
+        Ok(edges)
+    }
+
+    pub async fn scan_all_edges(&self) -> Result<Vec<GraphEdge>> {
+        let mut edges = {
+            let buf = self.buffer.lock().await;
+            buf.clone()
+        };
+
+        let table = self.db.open_table(&self.table_name).execute().await?;
+        let batches: Vec<RecordBatch> = table.query()
+            .execute()
+            .await?
+            .try_collect()
+            .await?;
+
+        edges.extend(self.batches_to_edges(batches)?);
+        Ok(edges)
+    }
+
+    /// 批量查询多个节点的出边（使用 SQL IN 子句，性能优化版本）
+    pub async fn batch_get_outgoing_edges(
+        &self,
+        user_id: &str,
+        source_ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<GraphEdge>>> {
+        use std::collections::HashMap;
+
+        if source_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // 先检查缓冲区
+        let mut result: HashMap<Uuid, Vec<GraphEdge>> = HashMap::new();
+        {
+            let buf = self.buffer.lock().await;
+            for edge in buf.iter() {
+                if edge.user_id == user_id && source_ids.contains(&edge.source_id) {
+                    result.entry(edge.source_id)
+                        .or_insert_with(Vec::new)
+                        .push(edge.clone());
+                }
+            }
+        }
+
+        // 构建 SQL IN 子句
+        let source_ids_str = source_ids.iter()
+            .map(|id| format!("'{}'", id))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let escaped_user_id = user_id.replace("'", "''");
+        let filter = format!(
+            "user_id = '{}' AND source_id IN ({})",
+            escaped_user_id,
+            source_ids_str
+        );
+
+        // 单次批量查询
+        let table = self.db.open_table(&self.table_name).execute().await?;
+        let batches: Vec<RecordBatch> = table.query()
+            .only_if(filter)
+            .execute()
+            .await?
+            .try_collect()
+            .await?;
+
+        // 分组
+        let db_edges = self.batches_to_edges(batches)?;
+        for edge in db_edges {
+            result.entry(edge.source_id)
+                .or_insert_with(Vec::new)
+                .push(edge);
+        }
+
+        Ok(result)
+    }
+
+    /// 批量查询多个节点的入边（使用 SQL IN 子句）
+    pub async fn batch_get_incoming_edges(
+        &self,
+        user_id: &str,
+        target_ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<GraphEdge>>> {
+        use std::collections::HashMap;
+
+        if target_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // 先检查缓冲区
+        let mut result: HashMap<Uuid, Vec<GraphEdge>> = HashMap::new();
+        {
+            let buf = self.buffer.lock().await;
+            for edge in buf.iter() {
+                if edge.user_id == user_id && target_ids.contains(&edge.target_id) {
+                    result.entry(edge.target_id)
+                        .or_insert_with(Vec::new)
+                        .push(edge.clone());
+                }
+            }
+        }
+
+        // 构建 SQL IN 子句
+        let target_ids_str = target_ids.iter()
+            .map(|id| format!("'{}'", id))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let escaped_user_id = user_id.replace("'", "''");
+        let filter = format!(
+            "user_id = '{}' AND target_id IN ({})",
+            escaped_user_id,
+            target_ids_str
+        );
+
+        // 单次批量查询
+        let table = self.db.open_table(&self.table_name).execute().await?;
+        let batches: Vec<RecordBatch> = table.query()
+            .only_if(filter)
+            .execute()
+            .await?
+            .try_collect()
+            .await?;
+
+        // 分组
+        let db_edges = self.batches_to_edges(batches)?;
+        for edge in db_edges {
+            result.entry(edge.target_id)
+                .or_insert_with(Vec::new)
+                .push(edge);
+        }
+
+        Ok(result)
+    }
+
+    fn batches_to_edges(&self, batches: Vec<RecordBatch>) -> Result<Vec<GraphEdge>> {
+        let mut edges = Vec::new();
+        for batch in batches {
+            let user_col = batch.column(0).as_any().downcast_ref::<StringArray>().context("col 0")?;
+            let source_col = batch.column(1).as_any().downcast_ref::<StringArray>().context("col 1")?;
+            let target_col = batch.column(2).as_any().downcast_ref::<StringArray>().context("col 2")?;
+            let rel_col = batch.column(3).as_any().downcast_ref::<StringArray>().context("col 3")?;
+            let weight_col = batch.column(4).as_any().downcast_ref::<Float32Array>().context("col 4")?;
+            let time_col = batch.column(5).as_any().downcast_ref::<TimestampMicrosecondArray>().context("col 5")?;
+
+            for i in 0..batch.num_rows() {
+                let user_id = user_col.value(i).to_string();
+                let source = Uuid::parse_str(source_col.value(i)).unwrap_or_default();
+                let target = Uuid::parse_str(target_col.value(i)).unwrap_or_default();
+                let rel_str = rel_col.value(i);
+                let relation = match rel_str {
+                    "Next" => RelationType::Next,
+                    "IsSubTaskOf" => RelationType::IsSubTaskOf,
+                    "Contradicts" => RelationType::Contradicts,
+                    "DerivedFrom" => RelationType::DerivedFrom,
+                    "EvolvedTo" => RelationType::EvolvedTo,
+                    "Supports" => RelationType::Supports,
+                    "Abstracts" => RelationType::Abstracts,
+                    "CausedBy" => RelationType::CausedBy,
+                    "Blocks" => RelationType::Blocks,
+                    "Accomplishes" => RelationType::Accomplishes,
+                    _ => RelationType::RelatedTo,
+                };
+                let ts_micros = time_col.value(i);
+                let timestamp = chrono::TimeZone::timestamp_opt(&Utc, ts_micros / 1_000_000, (ts_micros % 1_000_000 * 1000) as u32)
+                    .unwrap();
+
+                edges.push(GraphEdge {
+                    user_id,
+                    source_id: source,
+                    target_id: target,
+                    relation,
+                    weight: weight_col.value(i),
+                    transaction_time: timestamp,
+                });
+            }
+        }
+        Ok(edges)
+    }
+}

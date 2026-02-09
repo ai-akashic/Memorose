@@ -1,0 +1,51 @@
+[package]
+name = "memorose-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+memorose-common = { path = "../memorose-common" }
+tokio = { version = "1.0", features = ["full"] }
+rocksdb = "0.21"
+lancedb = "0.13.0"
+arrow-array = "52.2.0"
+arrow-schema = "52.2.0"
+tantivy = "0.22"
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+futures = "0.3"
+log = "0.4"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+petgraph = "0.6"
+rand = "0.8"
+reqwest = { version = "0.12", features = ["json"] }
+async-trait = "0.1"
+langchain-rust = "4"
+chrono = { version = "0.4", features = ["serde"] }
+openraft = { version = "0.9", features = ["serde"] }
+tonic = "0.12"
+prost = "0.13"
+tar = "0.4"
+walkdir = "2"
+flate2 = "1.0"
+tempfile = "3"
+base64 = "0.22.1"
+dashmap = "5.5"
+
+# Video Processing
+candle-core = "0.7.0"
+candle-nn = "0.7.0"
+candle-transformers = "0.7.0"
+tokenizers = "0.19"
+image = "0.25"  # For image processing
+hf-hub = "0.3"  # For downloading models
+
+[build-dependencies]
+tonic-build = "0.12"
+
+[dev-dependencies]
+wiremock = "0.5"
+tokio = { version = "1.0", features = ["full", "test-util"] }
+tracing-subscriber = "0.3"
