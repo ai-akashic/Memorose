@@ -85,7 +85,7 @@ async fn main() {
         .build();
 
     let dashboard_cache = Cache::builder()
-        .time_to_live(std::time::Duration::from_secs(10))
+        .time_to_live(std::time::Duration::from_secs(300))
         .max_capacity(100)
         .build();
 
@@ -109,8 +109,11 @@ async fn main() {
         .route("/memories/:id", get(dashboard::handlers::get_memory))
         .route("/graph", get(dashboard::handlers::graph_data))
         .route("/search", post(dashboard::handlers::search))
+        .route("/chat", post(dashboard::handlers::chat))
         .route("/config", get(dashboard::handlers::get_config))
         .route("/version", get(dashboard::handlers::version))
+        .route("/apps", get(dashboard::handlers::list_apps))
+        .route("/apps/:app_id/stats", get(dashboard::handlers::get_app_stats))
         .layer(axum_middleware::from_fn_with_state(
             state.clone(),
             dashboard::auth::auth_middleware,
@@ -150,6 +153,7 @@ async fn main() {
         .route("/v1/users/:user_id/apps/:app_id/streams/:stream_id/retrieve", post(retrieve_memory))
         .route("/v1/users/:user_id/apps/:app_id/streams/:stream_id/tasks/tree", get(get_task_tree))
         .route("/v1/users/:user_id/graph/edges", post(add_edge))
+        .route("/v1/status/pending", get(pending_count))
         .route("/v1/cluster/initialize", post(initialize_cluster))
         .route("/v1/cluster/join", post(join_cluster))
         .route("/v1/cluster/nodes/:node_id", delete(leave_cluster))
@@ -261,6 +265,23 @@ struct AddEdgeRequest {
 
 async fn root() -> &'static str {
     "Memorose is running."
+}
+
+/// Returns the number of pending (un-consolidated) events across all shards.
+/// Useful for benchmarks to poll until consolidation is complete.
+async fn pending_count(
+    State(state): State<Arc<AppState>>,
+) -> Json<serde_json::Value> {
+    let mut total_pending: usize = 0;
+    for (_shard_id, shard) in state.shard_manager.all_shards() {
+        if let Ok(events) = shard.engine.fetch_pending_events().await {
+            total_pending += events.len();
+        }
+    }
+    Json(serde_json::json!({
+        "pending": total_pending,
+        "ready": total_pending == 0,
+    }))
 }
 
 #[derive(Deserialize)]

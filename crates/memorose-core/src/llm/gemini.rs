@@ -157,11 +157,19 @@ impl LLMClient for GeminiClient {
     async fn compress(&self, text: &str) -> Result<super::CompressionOutput> {
         let system_prompt = "You are an expert at summarizing memories for an AI system. \
             Compress the following event into a concise, high-density factual statement. \
+            \
+            CRITICAL RULES: \
+            - PRESERVE ALL specific numbers, quantities, amounts, durations, dates, prices, counts, and measurements exactly as stated. \
+            - PRESERVE ALL proper nouns (names of people, places, brands, products). \
+            - PRESERVE ALL key relationships (who did what, with whom, for whom). \
+            - Keep the first-person perspective (use 'I' if the original uses it). \
+            - Do NOT omit factual details to save space. Density over brevity. \
+            \
             If the text contains specific time references (e.g., 'last week', 'in 2020', 'two days ago'), \
             extract the estimated UTC timestamp. \
             \
             Output ONLY valid JSON: \
-            {\"content\": \"compressed summary\", \"valid_at\": \"ISO8601 timestamp or null\"}";
+            {\"content\": \"compressed summary with ALL facts preserved\", \"valid_at\": \"ISO8601 timestamp or null\"}";
         
         let result = self.call_generate(Some(system_prompt), text).await?;
         

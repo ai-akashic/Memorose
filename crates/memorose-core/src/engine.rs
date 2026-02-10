@@ -579,13 +579,17 @@ impl MemoroseEngine {
             self.vector.add("memories", units_with_embeddings).await?;
         }
 
-        // 3. Index Text in Tantivy
+        // 3. Index Text in Tantivy (with immediate commit + reload for query visibility)
         let index = self.index.clone();
         let units_for_index = units.clone();
         tokio::task::spawn_blocking(move || {
             for unit in &units_for_index {
                 index.index_unit(unit)?;
             }
+            // Commit immediately so new memories are visible to subsequent queries
+            // instead of waiting for the background commit interval (default 5s)
+            index.commit()?;
+            index.reload()?;
             Ok::<(), anyhow::Error>(())
         }).await??;
 
@@ -736,6 +740,8 @@ impl MemoroseEngine {
         let uid = Some(user_id.to_string());
         let aid = app_id.map(|s| s.to_string());
         let text_future = tokio::task::spawn_blocking(move || {
+            // Ensure reader sees latest committed segments before searching
+            index.reload().ok();
             index.search_bitemporal(&q_text, limit * 2, vt, tt, uid.as_deref(), aid.as_deref())
         });
 
@@ -766,6 +772,14 @@ impl MemoroseEngine {
             *rrf_scores.entry(id).or_default() += 1.0 / (k + rank as f32);
         }
 
+        // Normalize RRF scores to [0, 1] range so they are compatible with reranker weights
+        let max_rrf = rrf_scores.values().cloned().fold(0.0_f32, f32::max);
+        if max_rrf > 0.0 {
+            for score in rrf_scores.values_mut() {
+                *score /= max_rrf;
+            }
+        }
+
         let mut sorted_ids: Vec<(String, f32)> = rrf_scores.into_iter().collect();
         sorted_ids.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
@@ -789,7 +803,10 @@ impl MemoroseEngine {
         // Time and Importance Reranking
         let final_results = self.reranker.rerank(&self._kv, expanded_units).await?;
 
-        let threshold = min_score.unwrap_or(0.55);
+        // Default threshold lowered: RRF scores are now normalized to [0,1], and the
+        // reranker adds importance (0.2) + recency (0.1) components, so a reasonable
+        // cutoff is ~0.3 to keep relevant results while filtering noise.
+        let threshold = min_score.unwrap_or(0.3);
         let mut final_results: Vec<_> = final_results.into_iter()
             .filter(|(_, score)| *score >= threshold)
             .collect();

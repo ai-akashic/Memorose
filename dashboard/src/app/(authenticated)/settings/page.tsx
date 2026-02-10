@@ -10,6 +10,7 @@ import {
   Info,
   Loader2,
   Check,
+  Key,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +18,14 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 function ConfigSection({ title, data }: { title: string; data: Record<string, unknown> }) {
   return (
@@ -38,7 +47,7 @@ function ConfigSection({ title, data }: { title: string; data: Record<string, un
   );
 }
 
-function PasswordForm() {
+function PasswordForm({ onSuccess }: { onSuccess?: () => void }) {
   const [current, setCurrent] = useState("");
   const [newPw, setNewPw] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -66,6 +75,11 @@ function PasswordForm() {
       setCurrent("");
       setNewPw("");
       setConfirm("");
+
+      // Call onSuccess callback after a short delay to show success message
+      setTimeout(() => {
+        onSuccess?.();
+      }, 1500);
     } catch (err: unknown) {
       setMessage({ type: "error", text: err instanceof Error ? err.message : "Failed" });
     } finally {
@@ -74,65 +88,55 @@ function PasswordForm() {
   }
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-xs flex items-center gap-1.5">
-          <Shield className="w-3.5 h-3.5 text-primary" />
-          Change Password
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-3 max-w-sm">
-          <div className="space-y-1">
-            <Label htmlFor="current-pw" className="text-xs text-muted-foreground">Current Password</Label>
-            <Input
-              id="current-pw"
-              type="password"
-              value={current}
-              onChange={(e) => setCurrent(e.target.value)}
-              required
-            />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="new-pw" className="text-xs text-muted-foreground">New Password</Label>
-            <Input
-              id="new-pw"
-              type="password"
-              value={newPw}
-              onChange={(e) => setNewPw(e.target.value)}
-              required
-            />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="confirm-pw" className="text-xs text-muted-foreground">Confirm New Password</Label>
-            <Input
-              id="confirm-pw"
-              type="password"
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              required
-            />
-          </div>
+    <form onSubmit={handleSubmit} className="space-y-3">
+      <div className="space-y-1">
+        <Label htmlFor="current-pw" className="text-xs text-muted-foreground">Current Password</Label>
+        <Input
+          id="current-pw"
+          type="password"
+          value={current}
+          onChange={(e) => setCurrent(e.target.value)}
+          required
+        />
+      </div>
+      <div className="space-y-1">
+        <Label htmlFor="new-pw" className="text-xs text-muted-foreground">New Password</Label>
+        <Input
+          id="new-pw"
+          type="password"
+          value={newPw}
+          onChange={(e) => setNewPw(e.target.value)}
+          required
+        />
+      </div>
+      <div className="space-y-1">
+        <Label htmlFor="confirm-pw" className="text-xs text-muted-foreground">Confirm New Password</Label>
+        <Input
+          id="confirm-pw"
+          type="password"
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+          required
+        />
+      </div>
 
-          {message && (
-            <div
-              className={`text-sm rounded-lg px-3 py-2 ${
-                message.type === "success"
-                  ? "bg-success/10 text-success"
-                  : "bg-destructive/10 text-destructive"
-              }`}
-            >
-              {message.text}
-            </div>
-          )}
+      {message && (
+        <div
+          className={`text-sm rounded-lg px-3 py-2 ${
+            message.type === "success"
+              ? "bg-success/10 text-success"
+              : "bg-destructive/10 text-destructive"
+          }`}
+        >
+          {message.text}
+        </div>
+      )}
 
-          <Button type="submit" disabled={loading} size="sm">
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-            Update Password
-          </Button>
-        </form>
-      </CardContent>
-    </Card>
+      <Button type="submit" disabled={loading} size="sm" className="w-full">
+        {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+        Update Password
+      </Button>
+    </form>
   );
 }
 
@@ -140,6 +144,7 @@ export default function SettingsPage() {
   const mustChange = typeof window !== "undefined" && getMustChangePassword();
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [version, setVersion] = useState<VersionInfo | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
 
   useEffect(() => {
     api.config().then(setConfig).catch(() => {});
@@ -183,7 +188,38 @@ export default function SettingsPage() {
               You are using the default password. Please change it before continuing.
             </div>
           )}
-          <PasswordForm />
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-xs flex items-center gap-1.5">
+                <Shield className="w-3.5 h-3.5 text-primary" />
+                Password Management
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground mb-4">
+                Update your account password to keep your account secure.
+              </p>
+
+              <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button variant="outline" size="sm">
+                    <Key className="w-4 h-4 mr-2" />
+                    Change Password
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-[425px]">
+                  <DialogHeader>
+                    <DialogTitle>Change Password</DialogTitle>
+                    <DialogDescription>
+                      Enter your current password and choose a new one. Your password must be at least 8 characters long.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <PasswordForm onSuccess={() => setDialogOpen(false)} />
+                </DialogContent>
+              </Dialog>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="about">

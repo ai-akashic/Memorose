@@ -278,7 +278,14 @@ impl BackgroundWorker {
                 };
 
                 // 3. Embedding
-                let embedding = if let Some(ref client) = llm_clone {
+                let embedding = if let Some(emb_val) = metadata.get("embedding").and_then(|v| v.as_array()) {
+                    // Try to parse embedding from metadata first
+                    let vec: Option<Vec<f32>> = emb_val.iter()
+                        .map(|v| v.as_f64().map(|f| f as f32))
+                        .collect();
+                    vec
+                } else if let Some(ref client) = llm_clone {
+                    // Fallback to server-side embedding
                     client.embed(&summary).await.ok()
                 } else {
                     None
@@ -329,6 +336,17 @@ impl BackgroundWorker {
 
         if !units_to_store.is_empty() {
             self.engine.store_memory_units(units_to_store.clone()).await?;
+
+            // Set reflection markers for users with new L1 memories
+            let mut user_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+            for unit in &units_to_store {
+                user_ids.insert(unit.user_id.clone());
+            }
+            for user_id in user_ids {
+                if let Err(e) = self.engine.set_needs_reflect(&user_id) {
+                    tracing::warn!("Failed to set reflection marker for user {}: {:?}", user_id, e);
+                }
+            }
 
             // Real-time Task Reflection (Bottom-up)
             if self.engine.task_reflection {
@@ -407,8 +425,13 @@ impl BackgroundWorker {
             if !unique_streams.is_empty() {
                 tracing::info!("Found {} active streams for reflection (user {})", unique_streams.len(), user_id);
                 for stream_id in unique_streams {
-                    if let Err(e) = engine.reflect_on_session(&user_id, stream_id).await {
-                        tracing::warn!("Reflection failed for stream {} (user {}): {:?}", stream_id, user_id, e);
+                    match engine.reflect_on_session(&user_id, stream_id).await {
+                        Ok(_) => {
+                            tracing::debug!("Reflection completed for stream {} (user {})", stream_id, user_id);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Reflection failed for stream {} (user {}): {:?}", stream_id, user_id, e);
+                        }
                     }
                 }
             }

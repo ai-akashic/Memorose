@@ -334,6 +334,9 @@ impl ShardManager {
     /// Gracefully shut down all Raft groups.
     pub async fn shutdown_all(&self) {
         for (&shard_id, shard) in &self.shards {
+            if let Err(e) = shard.engine.graph().flush().await {
+                tracing::error!("Graph flush error for shard {}: {:?}", shard_id, e);
+            }
             if let Err(e) = shard.raft.shutdown().await {
                 tracing::error!("Raft shutdown error for shard {}: {:?}", shard_id, e);
             }

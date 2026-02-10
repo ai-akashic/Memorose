@@ -101,4 +101,23 @@ export const api = {
       method: "POST",
       body: JSON.stringify(params),
     }),
+
+  ingestEvent: (params: {
+    user_id: string;
+    app_id: string;
+    stream_id: string;
+    content: {
+      type: string;
+      data: string;
+    };
+  }) => {
+    const { user_id, app_id, stream_id, content } = params;
+    return fetch(`${API_BASE}/v1/users/${user_id}/apps/${app_id}/streams/${stream_id}/events`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ content }),
+    });
+  },
 };

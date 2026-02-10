@@ -4,6 +4,8 @@ use axum::{
     response::{IntoResponse, Response},
     Router,
 };
+use axum::body::to_bytes;
+use bytes::Bytes;
 use memorose_common::sharding::user_id_to_shard;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -17,6 +19,13 @@ struct AppState {
     /// Maps shard_id -> leader physical_node_id (cached)
     shard_leaders: RwLock<HashMap<u32, u32>>,
     http_client: reqwest::Client,
+}
+
+fn max_body_bytes() -> usize {
+    std::env::var("GATEWAY_MAX_BODY_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(10 * 1024 * 1024)
 }
 
 impl AppState {
@@ -99,13 +108,20 @@ async fn proxy_handler(
     let query = req.uri().query().map(|q| q.to_string());
     let method = req.method().clone();
 
-    // Buffer body bytes so we can replay on Raft "Not Leader" redirects.
-    // Without buffering, the stream is consumed on the first attempt
-    // and POST/PUT retries would always fail with BAD_GATEWAY.
-    let body_bytes = match axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024).await {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            return (StatusCode::BAD_REQUEST, format!("Failed to read request body: {}", e)).into_response();
+    let body_bytes = if method == axum::http::Method::GET || method == axum::http::Method::HEAD {
+        None
+    } else {
+        let limit = max_body_bytes();
+        match to_bytes(req.into_body(), limit).await {
+            Ok(bytes) => Some(bytes),
+            Err(e) => {
+                tracing::warn!("Gateway request body too large or unreadable: {}", e);
+                return (
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    format!("Request body exceeds limit ({} bytes)", limit),
+                )
+                    .into_response();
+            }
         }
     };
 
@@ -128,7 +144,7 @@ async fn proxy_request_with_retry(
     method: axum::http::Method,
     path: &str,
     query: Option<String>,
-    body_bytes: bytes::Bytes,
+    body: Option<Bytes>,
 ) -> Response {
     // Route based on user_id hash
     let user_id = extract_user_id(path);
@@ -140,6 +156,7 @@ async fn proxy_request_with_retry(
 
     let client = &state.http_client;
     let max_retries = 3;
+
 
     for attempt in 0..max_retries {
         let addr = match &target_addr {
@@ -168,10 +185,8 @@ async fn proxy_request_with_retry(
             }
         }
 
-        // Body is pre-buffered as Bytes, so clone is cheap (reference-counted)
-        // and retries work correctly for all HTTP methods.
-        if !body_bytes.is_empty() {
-            builder = builder.body(body_bytes.clone());
+        if let Some(ref bytes) = body {
+            builder = builder.body(bytes.clone());
         }
 
         match builder.send().await {
