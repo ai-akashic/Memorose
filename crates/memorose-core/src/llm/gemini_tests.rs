@@ -6,6 +6,9 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
     use serde_json::json;
 
+    const TEST_MODEL: &str = "test-model";
+    const TEST_EMBEDDING_MODEL: &str = "test-embedding-model";
+
     #[tokio::test]
     async fn test_generate_success() {
         let mock_server = MockServer::start().await;
@@ -19,7 +22,7 @@ mod tests {
         });
 
         Mock::given(method("POST"))
-            .and(path("/v1beta/models/gemini-1.5-flash:generateContent"))
+            .and(path(format!("/v1beta/models/{}:generateContent", TEST_MODEL)))
             .and(query_param("key", "test-key"))
             .respond_with(ResponseTemplate::new(200).set_body_json(expected_response))
             .mount(&mock_server)
@@ -27,8 +30,8 @@ mod tests {
 
         let client = GeminiClient::with_base_url(
             "test-key".to_string(),
-            "gemini-1.5-flash".to_string(),
-            "text-embedding-004".to_string(),
+            TEST_MODEL.to_string(),
+            TEST_EMBEDDING_MODEL.to_string(),
             mock_server.uri(),
         );
 
@@ -56,8 +59,8 @@ mod tests {
 
         let client = GeminiClient::with_base_url(
             "bad-key".to_string(),
-            "gemini-1.5-flash".to_string(),
-            "text-embedding-004".to_string(),
+            TEST_MODEL.to_string(),
+            TEST_EMBEDDING_MODEL.to_string(),
             mock_server.uri(),
         );
 
@@ -79,7 +82,7 @@ mod tests {
         });
 
         Mock::given(method("POST"))
-            .and(path("/v1beta/models/text-embedding-004:embedContent"))
+            .and(path(format!("/v1beta/models/{}:embedContent", TEST_EMBEDDING_MODEL)))
             .and(query_param("key", "test-key"))
             .respond_with(ResponseTemplate::new(200).set_body_json(expected_response))
             .mount(&mock_server)
@@ -87,8 +90,8 @@ mod tests {
 
         let client = GeminiClient::with_base_url(
             "test-key".to_string(),
-            "gemini-1.5-flash".to_string(),
-            "text-embedding-004".to_string(),
+            TEST_MODEL.to_string(),
+            TEST_EMBEDDING_MODEL.to_string(),
             mock_server.uri(),
         );
 
@@ -111,8 +114,8 @@ mod tests {
 
         let client = GeminiClient::with_base_url(
             "test-key".to_string(),
-            "gemini-1.5-flash".to_string(),
-            "text-embedding-004".to_string(),
+            TEST_MODEL.to_string(),
+            TEST_EMBEDDING_MODEL.to_string(),
             "http://localhost:1234".to_string(), // Dummy LLM base
         );
 
@@ -125,8 +128,8 @@ mod tests {
     async fn test_transcribe_invalid_key() {
         let client = GeminiClient::new(
             "test-key".into(),
-            "gemini-1.5-flash".into(),
-            "text-embedding-004".into(),
+            TEST_MODEL.into(),
+            TEST_EMBEDDING_MODEL.into(),
         );
         let result = client.transcribe("some-data").await;
         assert!(result.is_err());

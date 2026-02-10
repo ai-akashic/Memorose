@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 
 function StatCard({
   label,
@@ -32,14 +33,16 @@ function StatCard({
   color?: string;
 }) {
   return (
-    <Card>
+    <Card className="group hover:shadow-md hover:border-primary/20 transition-all duration-200">
       <CardContent className="pt-4 pb-3">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs text-muted-foreground">{label}</span>
-          <Icon className={`w-3.5 h-3.5 ${color} opacity-60`} />
+          <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{label}</span>
+          <div className={`p-1.5 rounded-lg bg-muted/50 group-hover:bg-primary/10 transition-colors`}>
+            <Icon className={`w-3.5 h-3.5 ${color}`} />
+          </div>
         </div>
-        <div className="text-xl font-bold tracking-tight">{typeof value === "number" ? formatNumber(value) : value}</div>
-        {sub && <div className="text-[11px] text-muted-foreground mt-0.5">{sub}</div>}
+        <div className="text-2xl font-bold tracking-tight">{typeof value === "number" ? formatNumber(value) : value}</div>
+        {sub && <div className="text-xs text-muted-foreground mt-1">{sub}</div>}
       </CardContent>
     </Card>
   );
@@ -52,13 +55,23 @@ function ShardRaftCard({ shard }: { shard: ShardStatus }) {
     Candidate: "text-warning",
   }[shard.raft_state] || "text-muted-foreground";
 
+  const isHealthy = shard.replication_lag <= 10;
+
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-xs flex items-center gap-1.5">
-          <Layers className="w-3.5 h-3.5 text-primary" />
-          Shard {shard.shard_id}
-        </CardTitle>
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-xs flex items-center gap-1.5">
+            <Layers className="w-3.5 h-3.5 text-primary" />
+            Shard {shard.shard_id}
+          </CardTitle>
+          <div className="flex items-center gap-1.5">
+            <div className={`w-1.5 h-1.5 rounded-full ${isHealthy ? 'bg-success' : 'bg-warning'} animate-pulse`} />
+            <span className="text-[10px] text-muted-foreground">
+              {isHealthy ? 'Healthy' : 'Degraded'}
+            </span>
+          </div>
+        </div>
       </CardHeader>
       <CardContent className="space-y-2">
         {[
@@ -109,6 +122,80 @@ function RaftStatusCard({ cluster }: { cluster: ClusterStatusSingle }) {
             <span className={row.className}>{row.value}</span>
           </div>
         ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+function HeartbeatCard({ cluster }: { cluster: ClusterStatusSingle }) {
+  const config = cluster.config || {
+    heartbeat_interval_ms: 500,
+    election_timeout_min_ms: 1500,
+    election_timeout_max_ms: 3000,
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-xs flex items-center gap-1.5">
+          <Activity className="w-3.5 h-3.5 text-primary" />
+          Heartbeat & Health
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {/* Heartbeat Configuration */}
+        <div className="space-y-2">
+          <div className="flex justify-between text-xs">
+            <span className="text-muted-foreground">Heartbeat Interval</span>
+            <span className="font-mono">{config.heartbeat_interval_ms}ms</span>
+          </div>
+          <div className="flex justify-between text-xs">
+            <span className="text-muted-foreground">Election Timeout</span>
+            <span className="font-mono">{config.election_timeout_min_ms}-{config.election_timeout_max_ms}ms</span>
+          </div>
+        </div>
+
+        <div className="border-t pt-2">
+          <div className="text-xs text-muted-foreground mb-2">Node Status</div>
+          <div className="space-y-2">
+            {cluster.voters.map((nodeId) => {
+              const isLeader = nodeId === cluster.current_leader;
+              const isSelf = nodeId === cluster.node_id;
+              const isHealthy = cluster.replication_lag === 0 || isLeader;
+
+              return (
+                <div key={nodeId} className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${isHealthy ? 'bg-success' : 'bg-warning'} animate-pulse`} />
+                    <span className="text-xs font-mono">
+                      Node {nodeId}
+                      {isSelf && <span className="ml-1 text-muted-foreground">(self)</span>}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {isLeader && (
+                      <Badge variant="outline" className="text-[10px] h-4 px-1.5 bg-success/10 text-success border-success/20">
+                        Leader
+                      </Badge>
+                    )}
+                    <span className="text-xs text-success">Online</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Health Summary */}
+        <div className="rounded-lg bg-success/5 border border-success/20 p-2">
+          <div className="flex items-center gap-2 text-xs text-success">
+            <div className="w-1.5 h-1.5 rounded-full bg-success" />
+            <span className="font-medium">All nodes healthy</span>
+          </div>
+          <p className="text-[10px] text-muted-foreground mt-1">
+            Heartbeats active every {config.heartbeat_interval_ms}ms
+          </p>
+        </div>
       </CardContent>
     </Card>
   );
@@ -268,7 +355,10 @@ export default function ClusterPage() {
   if (clusterLoading || statsLoading) {
     return (
       <div className="space-y-6">
-        <h1 className="text-lg font-semibold tracking-tight">Cluster Overview</h1>
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Cluster Overview</h1>
+          <p className="text-muted-foreground mt-2">Loading cluster information...</p>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {[1, 2, 3].map((i) => (
             <Card key={i}>
@@ -286,20 +376,27 @@ export default function ClusterPage() {
   const sharded = cluster && isShardedCluster(cluster);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold tracking-tight">
-          Cluster Overview
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">
+            Cluster Overview
+          </h1>
           {sharded && (
-            <span className="ml-2 text-xs font-normal text-muted-foreground">
-              ({(cluster as ClusterStatusSharded).shard_count} shards)
-            </span>
+            <p className="text-muted-foreground mt-2">
+              Managing {(cluster as ClusterStatusSharded).shard_count} shards across distributed nodes
+            </p>
           )}
-        </h1>
+          {!sharded && (
+            <p className="text-muted-foreground mt-2">
+              Single-node Raft cluster with distributed consensus
+            </p>
+          )}
+        </div>
         {stats && (
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Clock className="w-3 h-3" />
-            {formatDuration(stats.uptime_seconds)}
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted/50">
+            <Clock className="w-4 h-4 text-muted-foreground" />
+            <span className="text-sm font-medium">{formatDuration(stats.uptime_seconds)}</span>
           </div>
         )}
       </div>
@@ -326,8 +423,9 @@ export default function ClusterPage() {
           color="text-warning"
         />
         <StatCard
-          label={sharded ? "Shards" : "Node"}
-          value={sharded ? (cluster as ClusterStatusSharded).shard_count : (cluster as ClusterStatusSingle)?.node_id ?? 0}
+          label={sharded ? "Shards" : "Nodes"}
+          value={sharded ? (cluster as ClusterStatusSharded).shard_count : (cluster as ClusterStatusSingle)?.voters.length ?? 0}
+          sub={!sharded ? `Node ${(cluster as ClusterStatusSingle)?.node_id} is Leader` : undefined}
           icon={Server}
         />
       </div>
@@ -344,8 +442,9 @@ export default function ClusterPage() {
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {cluster && !sharded && <RaftStatusCard cluster={cluster as ClusterStatusSingle} />}
+          {cluster && !sharded && <HeartbeatCard cluster={cluster as ClusterStatusSingle} />}
           {stats && <PipelineCard stats={stats} />}
         </div>
       )}

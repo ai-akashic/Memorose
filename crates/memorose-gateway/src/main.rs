@@ -4,6 +4,8 @@ use axum::{
     response::{IntoResponse, Response},
     Router,
 };
+use axum::body::to_bytes;
+use bytes::Bytes;
 use memorose_common::sharding::user_id_to_shard;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -17,6 +19,13 @@ struct AppState {
     /// Maps shard_id -> leader physical_node_id (cached)
     shard_leaders: RwLock<HashMap<u32, u32>>,
     http_client: reqwest::Client,
+}
+
+fn max_body_bytes() -> usize {
+    std::env::var("GATEWAY_MAX_BODY_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(10 * 1024 * 1024)
 }
 
 impl AppState {
@@ -99,9 +108,24 @@ async fn proxy_handler(
     let query = req.uri().query().map(|q| q.to_string());
     let method = req.method().clone();
 
-    let body = reqwest::Body::wrap_stream(req.into_body().into_data_stream());
+    let body_bytes = if method == axum::http::Method::GET || method == axum::http::Method::HEAD {
+        None
+    } else {
+        let limit = max_body_bytes();
+        match to_bytes(req.into_body(), limit).await {
+            Ok(bytes) => Some(bytes),
+            Err(e) => {
+                tracing::warn!("Gateway request body too large or unreadable: {}", e);
+                return (
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    format!("Request body exceeds limit ({} bytes)", limit),
+                )
+                    .into_response();
+            }
+        }
+    };
 
-    proxy_request_with_retry(state, headers, method, &path, query, body).await
+    proxy_request_with_retry(state, headers, method, &path, query, body_bytes).await
 }
 
 /// Extract user_id from the URL pattern `/v1/users/{user_id}/...`
@@ -120,7 +144,7 @@ async fn proxy_request_with_retry(
     method: axum::http::Method,
     path: &str,
     query: Option<String>,
-    body: reqwest::Body,
+    body: Option<Bytes>,
 ) -> Response {
     // Route based on user_id hash
     let user_id = extract_user_id(path);
@@ -133,23 +157,6 @@ async fn proxy_request_with_retry(
     let client = &state.http_client;
     let max_retries = 3;
     
-    // We need to clone the body if we retry, but reqwest::Body isn't cloneable if it's a stream.
-    // However, we only have one body stream. Retrying a streaming request is hard without buffering.
-    // Since we removed buffering to save memory, we can only retry if we haven't consumed the body or if it's replayable.
-    // For now, we will only try once if it's a stream, or we accept that retries might fail for streaming bodies.
-    // Actually, `reqwest::Body::wrap_stream` creates a non-replayable body.
-    // If we want reliability + streaming + retries, we're in a tough spot without buffering.
-    // Let's assume for this fix that we pass the body on the first attempt.
-    // If it fails, we can't retry the body send easily.
-    // But wait, the original code WAS buffering. The review asked to REMOVE buffering.
-    // If we remove buffering, we can't retry the request easily if it fails mid-stream or needs re-sending.
-    // We will assume the client handles retries for failed writes, or we just retry the *connection* logic.
-    // But `reqwest` consumes the body.
-    // Let's implement a compromise: If the body is streaming, we don't retry. Or we rely on Reusable Body if possible.
-    // Given the constraints, let's just make `body` an `Option` and `take()` it.
-    
-    let mut body_option = Some(body);
-
     for attempt in 0..max_retries {
         let addr = match &target_addr {
             Some(a) => a.clone(),
@@ -177,14 +184,8 @@ async fn proxy_request_with_retry(
             }
         }
         
-        // If we have the body, use it. If not (retrying and already consumed), we can't send it again.
-        // This effectively disables retries for POST/PUT with body unless we buffer.
-        // But for GET/DELETE it works.
-        if let Some(b) = body_option.take() {
-             builder = builder.body(b);
-        } else if method != axum::http::Method::GET && method != axum::http::Method::HEAD {
-             // We lost the body, can't retry
-             return (StatusCode::BAD_GATEWAY, "Request failed and body could not be replayed").into_response();
+        if let Some(ref bytes) = body {
+            builder = builder.body(bytes.clone());
         }
 
         match builder.send().await {

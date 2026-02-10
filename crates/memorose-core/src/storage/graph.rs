@@ -9,6 +9,7 @@ use arrow_array::{RecordBatch, StringArray, Float32Array, TimestampMicrosecondAr
 use arrow_schema::{Schema, Field, DataType, TimeUnit};
 use futures::TryStreamExt;
 use chrono::Utc;
+use std::time::Duration;
 
 fn create_graph_schema() -> Arc<Schema> {
     Arc::new(Schema::new(vec![
@@ -26,14 +27,26 @@ pub struct GraphStore {
     db: Arc<Connection>,
     buffer: Arc<Mutex<Vec<GraphEdge>>>,
     table_name: String,
+    _flush_task: Arc<tokio::task::JoinHandle<()>>,
 }
 
 impl GraphStore {
     pub async fn new(db: Arc<Connection>) -> Result<Self> {
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let table_name = "relationships".to_string();
         let store = Self {
-            db,
-            buffer: Arc::new(Mutex::new(Vec::new())),
-            table_name: "relationships".to_string(),
+            db: db.clone(),
+            buffer: buffer.clone(),
+            table_name: table_name.clone(),
+            _flush_task: Arc::new(tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(5));
+                loop {
+                    interval.tick().await;
+                    if let Err(e) = GraphStore::flush_with_refs(&db, &buffer, &table_name).await {
+                        tracing::error!("GraphStore periodic flush failed: {:?}", e);
+                    }
+                }
+            })),
         };
         store.init().await?;
         Ok(store)
@@ -65,8 +78,16 @@ impl GraphStore {
     }
 
     pub async fn flush(&self) -> Result<()> {
+        Self::flush_with_refs(&self.db, &self.buffer, &self.table_name).await
+    }
+
+    async fn flush_with_refs(
+        db: &Arc<Connection>,
+        buffer: &Arc<Mutex<Vec<GraphEdge>>>,
+        table_name: &str,
+    ) -> Result<()> {
         let edges = {
-            let mut buf = self.buffer.lock().await;
+            let mut buf = buffer.lock().await;
             if buf.is_empty() {
                 return Ok(());
             }
@@ -97,7 +118,7 @@ impl GraphStore {
         )?;
 
         let reader = RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema);
-        let table = self.db.open_table(&self.table_name).execute().await?;
+        let table = db.open_table(table_name).execute().await?;
         table.add(reader).execute().await?;
 
         Ok(())
@@ -135,7 +156,7 @@ impl GraphStore {
             .execute().await?.try_collect().await?;
 
         edges.extend(self.batches_to_edges(batches)?);
-        Ok(edges)
+        Ok(Self::dedup_edges(edges))
     }
 
     pub async fn get_incoming_edges(&self, user_id: &str, target_id: Uuid) -> Result<Vec<GraphEdge>> {
@@ -154,7 +175,7 @@ impl GraphStore {
             .execute().await?.try_collect().await?;
 
         edges.extend(self.batches_to_edges(batches)?);
-        Ok(edges)
+        Ok(Self::dedup_edges(edges))
     }
 
     pub async fn get_all_edges_for_user(&self, user_id: &str) -> Result<Vec<GraphEdge>> {
@@ -173,7 +194,7 @@ impl GraphStore {
             .execute().await?.try_collect().await?;
 
         edges.extend(self.batches_to_edges(batches)?);
-        Ok(edges)
+        Ok(Self::dedup_edges(edges))
     }
 
     pub async fn scan_all_edges(&self) -> Result<Vec<GraphEdge>> {
@@ -190,7 +211,7 @@ impl GraphStore {
             .await?;
 
         edges.extend(self.batches_to_edges(batches)?);
-        Ok(edges)
+        Ok(Self::dedup_edges(edges))
     }
 
     /// 批量查询多个节点的出边（使用 SQL IN 子句，性能优化版本）
@@ -246,6 +267,11 @@ impl GraphStore {
             result.entry(edge.source_id)
                 .or_insert_with(Vec::new)
                 .push(edge);
+        }
+
+        for edges in result.values_mut() {
+            let deduped = Self::dedup_edges(std::mem::take(edges));
+            *edges = deduped;
         }
 
         Ok(result)
@@ -306,7 +332,41 @@ impl GraphStore {
                 .push(edge);
         }
 
+        for edges in result.values_mut() {
+            let deduped = Self::dedup_edges(std::mem::take(edges));
+            *edges = deduped;
+        }
+
         Ok(result)
+    }
+
+    fn dedup_edges(edges: Vec<GraphEdge>) -> Vec<GraphEdge> {
+        use std::collections::HashMap;
+
+        let mut map: HashMap<(String, Uuid, Uuid, &'static str), GraphEdge> = HashMap::new();
+        for edge in edges {
+            let key = (
+                edge.user_id.clone(),
+                edge.source_id,
+                edge.target_id,
+                edge.relation.as_str(),
+            );
+
+            match map.get_mut(&key) {
+                Some(existing) => {
+                    if edge.transaction_time > existing.transaction_time
+                        || (edge.transaction_time == existing.transaction_time && edge.weight > existing.weight)
+                    {
+                        *existing = edge;
+                    }
+                }
+                None => {
+                    map.insert(key, edge);
+                }
+            }
+        }
+
+        map.into_values().collect()
     }
 
     fn batches_to_edges(&self, batches: Vec<RecordBatch>) -> Result<Vec<GraphEdge>> {

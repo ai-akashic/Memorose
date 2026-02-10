@@ -14,6 +14,7 @@ import {
   Loader2,
   Network,
   Brain,
+  List,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -357,8 +358,7 @@ function SearchPlayground({ globalUserId }: { globalUserId?: string }) {
   );
 }
 
-export default function MemoriesPage() {
-  const { userId } = useUserFilter();
+function MemoryListTab({ userId }: { userId?: string }) {
   const [levelFilter, setLevelFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState("importance");
@@ -371,7 +371,7 @@ export default function MemoriesPage() {
     page,
     limit: 20,
     sort,
-    user_id: userId || undefined,
+    user_id: userId,
   });
 
   const handleViewDetail = useCallback(async (id: string) => {
@@ -384,9 +384,7 @@ export default function MemoriesPage() {
   }, []);
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-lg font-semibold tracking-tight">Memory Explorer</h1>
-
+    <div className="space-y-4">
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3">
         <ToggleGroup
@@ -416,12 +414,12 @@ export default function MemoriesPage() {
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/20 hover:bg-muted/20">
-              <TableHead className="text-xs">Content</TableHead>
               <TableHead className="text-xs w-24">User</TableHead>
               <TableHead className="text-xs text-center w-14">Level</TableHead>
               <TableHead className="text-xs w-28">Importance</TableHead>
               <TableHead className="text-xs text-center w-16">Access</TableHead>
               <TableHead className="text-xs text-center w-14">Refs</TableHead>
+              <TableHead className="text-xs">Content</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -447,6 +445,13 @@ export default function MemoriesPage() {
                   className="cursor-pointer group"
                 >
                   <TableCell>
+                    <span className="text-xs font-mono truncate block max-w-[100px]">{m.user_id}</span>
+                  </TableCell>
+                  <TableCell className="text-center"><LevelBadge level={m.level} /></TableCell>
+                  <TableCell><ImportanceBar value={m.importance} /></TableCell>
+                  <TableCell className="text-center font-mono text-xs">{m.access_count}</TableCell>
+                  <TableCell className="text-center font-mono text-xs">{m.reference_count}</TableCell>
+                  <TableCell>
                     <p className="line-clamp-2 text-[13px] leading-snug">{m.content}</p>
                     {m.keywords.length > 0 && (
                       <div className="flex gap-1.5 mt-1">
@@ -456,13 +461,6 @@ export default function MemoriesPage() {
                       </div>
                     )}
                   </TableCell>
-                  <TableCell>
-                    <span className="text-xs font-mono truncate block max-w-[100px]">{m.user_id}</span>
-                  </TableCell>
-                  <TableCell className="text-center"><LevelBadge level={m.level} /></TableCell>
-                  <TableCell><ImportanceBar value={m.importance} /></TableCell>
-                  <TableCell className="text-center font-mono text-xs">{m.access_count}</TableCell>
-                  <TableCell className="text-center font-mono text-xs">{m.reference_count}</TableCell>
                 </TableRow>
               ))
             )}
@@ -497,42 +495,48 @@ export default function MemoriesPage() {
         )}
       </div>
 
-      {/* Graph / Search Tabs */}
-      <div className="rounded-lg border border-border bg-card">
-        <Tabs defaultValue="graph">
-          <div className="border-b border-border px-4">
-            <TabsList className="bg-transparent h-auto p-0 gap-0">
-              <TabsTrigger
-                value="graph"
-                className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"
-              >
-                <Network className="w-4 h-4" /> Knowledge Graph
-              </TabsTrigger>
-              <TabsTrigger
-                value="search"
-                className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"
-              >
-                <Brain className="w-4 h-4" /> Search Playground
-              </TabsTrigger>
-            </TabsList>
-          </div>
-          <div className="p-4">
-            <TabsContent value="graph" className="m-0">
-              <KnowledgeGraph userId={userId || undefined} />
-            </TabsContent>
-            <TabsContent value="search" className="m-0">
-              <SearchPlayground globalUserId={userId || undefined} />
-            </TabsContent>
-          </div>
-        </Tabs>
-      </div>
-
       {/* Detail Sheet */}
       <MemoryDetailSheet
         memory={selectedMemory}
         open={!!selectedMemory}
         onOpenChange={(open) => { if (!open) setSelectedMemory(null); }}
       />
+    </div>
+  );
+}
+
+export default function MemoriesPage() {
+  const { userId } = useUserFilter();
+
+  return (
+    <div className="space-y-6 h-full flex flex-col">
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">Memory Explorer</h1>
+      </div>
+
+      <Tabs defaultValue="list" className="flex-1 flex flex-col min-h-0">
+        <TabsList className="bg-muted/30 self-start">
+          <TabsTrigger value="list" className="gap-1.5">
+            <List className="w-3.5 h-3.5" /> List
+          </TabsTrigger>
+          <TabsTrigger value="graph" className="gap-1.5">
+            <Network className="w-3.5 h-3.5" /> Graph
+          </TabsTrigger>
+          <TabsTrigger value="search" className="gap-1.5">
+            <Search className="w-3.5 h-3.5" /> Search
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="list" className="flex-1 mt-4">
+          <MemoryListTab userId={userId || undefined} />
+        </TabsContent>
+        <TabsContent value="graph" className="flex-1 mt-4">
+          <KnowledgeGraph userId={userId || undefined} />
+        </TabsContent>
+        <TabsContent value="search" className="flex-1 mt-4">
+          <SearchPlayground globalUserId={userId || undefined} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

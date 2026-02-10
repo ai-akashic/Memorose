@@ -223,7 +223,10 @@ impl Arbitrator {
         let combined_prompt = format!("{}\n\n{}", system_prompt, memories_str);
         let result = match client.generate(&combined_prompt).await {
             Ok(res) => res,
-            Err(_) => return Ok(Vec::new()),
+            Err(e) => {
+                tracing::error!("LLM generate failed for extract_topics: {:?}", e);
+                return Ok(Vec::new());
+            }
         };
 
         let clean_json = result.trim()
@@ -238,13 +241,19 @@ impl Arbitrator {
             source_ids: Vec<String>,
         }
 
-        let dtos: Vec<TopicDTO> = serde_json::from_str(clean_json).unwrap_or_default();
+        let dtos: Vec<TopicDTO> = match serde_json::from_str(clean_json) {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::error!("Failed to parse topics JSON: {:?}. Raw response: {}", e, clean_json);
+                Vec::new()
+            }
+        };
         
         let mut topic_units = Vec::new();
         for dto in dtos {
             let mut unit = MemoryUnit::new(user_id.to_string(), app_id.to_string(), stream_id, dto.summary, None);
             unit.level = 2; // Level 2: Topic/Insight
-            
+
             // Map source IDs to references
             for id_str in dto.source_ids {
                 if let Ok(id) = uuid::Uuid::parse_str(&id_str) {
@@ -252,6 +261,10 @@ impl Arbitrator {
                 }
             }
             topic_units.push(unit);
+        }
+
+        if !topic_units.is_empty() {
+            tracing::info!("Generated {} L2 topics for user {} stream {}", topic_units.len(), user_id, stream_id);
         }
 
         Ok(topic_units)

@@ -99,8 +99,8 @@ impl Default for LLMConfig {
             provider: LLMProvider::Gemini,
             openai_api_key: None,
             google_api_key: None,
-            model: "gemini-1.5-flash".into(),
-            embedding_model: "text-embedding-004".into(),
+            model: String::new(),
+            embedding_model: String::new(),
             stt_provider: None,
             stt_model: None,
         }
@@ -163,8 +163,8 @@ impl AppConfig {
             .set_default("storage.root_dir", format!("./data/node-{}", node_id))?
             .set_default("storage.index_commit_interval_ms", 5000)?
             .set_default("llm.provider", "gemini")?
-            .set_default("llm.model", "gemini-1.5-flash")?
-            .set_default("llm.embedding_model", "text-embedding-004")?
+            .set_default("llm.model", "")?
+            .set_default("llm.embedding_model", "")?
             .set_default("raft.node_id", node_id)?
             .set_default("raft.raft_addr", "127.0.0.1:5001")?
             .set_default("raft.heartbeat_interval_ms", 500)?

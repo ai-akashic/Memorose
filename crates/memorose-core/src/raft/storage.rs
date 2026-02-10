@@ -7,6 +7,23 @@ use crate::MemoroseEngine;
 use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 
+fn storage_io_error(
+    subject: openraft::ErrorSubject<u64>,
+    verb: openraft::ErrorVerb,
+    msg: impl std::fmt::Display,
+) -> StorageError<u64> {
+    StorageError::IO {
+        source: openraft::StorageIOError::new(
+            subject,
+            verb,
+            openraft::AnyError::new(&std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                msg.to_string(),
+            )),
+        ),
+    }
+}
+
 struct StoredSnapshot {
     meta: SnapshotMeta<u64, BasicNode>,
     data: Vec<u8>,
@@ -58,20 +75,24 @@ impl RaftLogReader<MemoroseTypeConfig> for MemoroseRaftStorage {
 
         let mut entries = Vec::new();
         for (k, v) in pairs {
-            let key_str = String::from_utf8(k.to_vec()).unwrap();
-            let index_str = key_str.strip_prefix("raft:log:").unwrap();
-            if let Ok(index) = index_str.parse::<u64>() {
-                if range.contains(&index) {
-                    let entry: Entry<MemoroseTypeConfig> = serde_json::from_slice(&v)
-                        .map_err(|e| StorageError::IO {
-                            source: openraft::StorageIOError::new(
-                                openraft::ErrorSubject::Log(openraft::LogId::new(openraft::LeaderId::default(), index)),
-                                openraft::ErrorVerb::Read,
-                                openraft::AnyError::new(&std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
-                            )
-                        })?;
-                    entries.push(entry);
-                }
+            let key_str = String::from_utf8(k.to_vec())
+                .map_err(|e| storage_io_error(openraft::ErrorSubject::Store, openraft::ErrorVerb::Read, e))?;
+            let index_str = key_str
+                .strip_prefix("raft:log:")
+                .ok_or_else(|| storage_io_error(openraft::ErrorSubject::Store, openraft::ErrorVerb::Read, "Invalid raft log key"))?;
+            let index: u64 = index_str
+                .parse()
+                .map_err(|e| storage_io_error(openraft::ErrorSubject::Store, openraft::ErrorVerb::Read, e))?;
+            if range.contains(&index) {
+                let entry: Entry<MemoroseTypeConfig> = serde_json::from_slice(&v)
+                    .map_err(|e| StorageError::IO {
+                        source: openraft::StorageIOError::new(
+                            openraft::ErrorSubject::Log(openraft::LogId::new(openraft::LeaderId::default(), index)),
+                            openraft::ErrorVerb::Read,
+                            openraft::AnyError::new(&std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                        )
+                    })?;
+                entries.push(entry);
             }
         }
         Ok(entries)
@@ -152,7 +173,8 @@ impl RaftStorage<MemoroseTypeConfig> for MemoroseRaftStorage {
 
         let last_log_id = match last_log_index_val {
             Some(v) => {
-                let index: u64 = serde_json::from_slice(&v).unwrap_or(0);
+                let index: u64 = serde_json::from_slice(&v)
+                    .map_err(|e| storage_io_error(openraft::ErrorSubject::Store, openraft::ErrorVerb::Read, e))?;
                 let entry_key = format!("raft:log:{:020}", index);
                 let entry_val = engine.system_kv().get(entry_key.as_bytes())
                     .map_err(|e| StorageError::IO {
@@ -164,7 +186,14 @@ impl RaftStorage<MemoroseTypeConfig> for MemoroseRaftStorage {
                     })?;
                 
                 if let Some(bytes) = entry_val {
-                    let entry: Entry<MemoroseTypeConfig> = serde_json::from_slice(&bytes).unwrap();
+                    let entry: Entry<MemoroseTypeConfig> = serde_json::from_slice(&bytes)
+                        .map_err(|e| StorageError::IO {
+                            source: openraft::StorageIOError::new(
+                                openraft::ErrorSubject::Log(openraft::LogId::new(openraft::LeaderId::default(), index)),
+                                openraft::ErrorVerb::Read,
+                                openraft::AnyError::new(&std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                            )
+                        })?;
                     Some(entry.log_id)
                 } else {
                     None
