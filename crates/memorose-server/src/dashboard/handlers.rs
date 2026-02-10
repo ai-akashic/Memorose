@@ -3,7 +3,7 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use memorose_common::MemoryUnit;
+use memorose_common::{MemoryUnit, EventContent};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -303,6 +303,7 @@ pub async fn stats(
                 (event_count, edge_count, total_units, l1_count, l2_count)
             } else {
                 let all_pairs = kv.scan(b"u:")?;
+                tracing::debug!("Scanning all pairs: found {} keys starting with 'u:'", all_pairs.len());
                 let mut event_count = 0usize;
                 let mut edge_count = 0usize;
                 let mut total_units = 0usize;
@@ -324,6 +325,8 @@ pub async fn stats(
                         }
                     }
                 }
+                tracing::debug!("Scan results: events={}, edges={}, units={}, l1={}, l2={}",
+                    event_count, edge_count, total_units, l1_count, l2_count);
                 (event_count, edge_count, total_units, l1_count, l2_count)
             };
 
@@ -833,4 +836,473 @@ pub async fn version() -> Json<serde_json::Value> {
         "build_time": env!("BUILD_TIME"),
         "features": ["raft", "bitemporal", "knowledge-graph", "dashboard", "sharding"],
     }))
+}
+
+// ── Chat ──────────────────────────────────────────────────────────
+
+use axum::response::sse::{Event, Sse};
+use futures_util::stream::Stream;
+
+#[derive(Deserialize)]
+pub struct ChatRequest {
+    message: String,
+    user_id: String,
+    app_id: String,
+    #[serde(default = "default_chat_limit")]
+    context_limit: usize,
+}
+
+fn default_chat_limit() -> usize { 5 }
+
+pub async fn chat(
+    State(state): State<Arc<crate::AppState>>,
+    Json(payload): Json<ChatRequest>,
+) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
+    let user_id = payload.user_id.clone();
+    let app_id = payload.app_id.clone();
+    let message = payload.message.clone();
+    let context_limit = payload.context_limit;
+
+    let stream = async_stream::stream! {
+        // Step 1: Search for relevant context using hybrid search
+        let shard = state.shard_manager.shard_for_user(&user_id);
+
+        let context_results = match state.llm_client.embed(&message).await {
+            Ok(embedding) => {
+                match shard.engine.search_hybrid(
+                    &user_id,
+                    Some(&app_id),
+                    &message,
+                    &embedding,
+                    context_limit,
+                    false,
+                    None,
+                    1,
+                    None,
+                    None,
+                ).await {
+                    Ok(results) => results,
+                    Err(e) => {
+                        yield Ok(Event::default().event("error").data(format!("Search failed: {}", e)));
+                        return;
+                    }
+                }
+            }
+            Err(e) => {
+                yield Ok(Event::default().event("error").data(format!("Embedding failed: {}", e)));
+                return;
+            }
+        };
+
+        // Step 2: Build context from search results
+        let mut context_text = String::new();
+        if !context_results.is_empty() {
+            context_text.push_str("## Relevant Context from Memory:\n");
+            for (unit, _score) in &context_results {
+                context_text.push_str(&format!("- {}\n", unit.content));
+            }
+            context_text.push_str("\n");
+        }
+
+        // Step 3: Build prompt
+        let _system_prompt = format!(
+            "You are a helpful AI assistant with access to the user's memory system. \
+            Use the provided context to give informed and personalized responses.\n\n{}",
+            context_text
+        );
+
+        // Step 4: Generate response using LLM
+        let full_prompt = format!("User: {}", message);
+        match state.llm_client.generate(&full_prompt).await {
+            Ok(response) => {
+                // Stream the response word by word for better UX
+                let words: Vec<&str> = response.split_whitespace().collect();
+                for (i, word) in words.iter().enumerate() {
+                    let text = if i == words.len() - 1 {
+                        word.to_string()
+                    } else {
+                        format!("{} ", word)
+                    };
+                    yield Ok(Event::default().event("message").data(text));
+                    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                }
+
+                yield Ok(Event::default().event("done").data(""));
+            }
+            Err(e) => {
+                yield Ok(Event::default().event("error").data(format!("Generation failed: {}", e)));
+            }
+        }
+    };
+
+    Sse::new(stream)
+}
+
+// ── Apps ──────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+pub struct AppSummary {
+    app_id: String,
+    total_events: usize,
+    total_users: usize,
+    total_memories: usize,
+    l1_count: usize,
+    l2_count: usize,
+    last_activity: Option<i64>,
+}
+
+pub async fn list_apps(
+    State(state): State<Arc<crate::AppState>>,
+) -> axum::response::Response {
+    // Check cache first (5 minute cache for app list)
+    let cache_key = "apps:list".to_string();
+    if let Some(cached) = state.dashboard_cache.get(&cache_key).await {
+        return Json(cached).into_response();
+    }
+
+    // Scan all shards to discover apps
+    let mut app_data: HashMap<String, AppSummary> = HashMap::new();
+
+    for (_, shard) in state.shard_manager.all_shards() {
+        let engine = shard.engine.clone();
+
+        let scan_result = tokio::task::spawn_blocking(move || -> anyhow::Result<HashMap<String, AppSummary>> {
+            let kv = engine.kv();
+            let mut local_apps: HashMap<String, AppSummary> = HashMap::new();
+
+            // Scan all memory units to collect app_id information
+            let all_pairs = kv.scan(b"u:")?;
+            for (k, val) in &all_pairs {
+                if k.windows(6).any(|w| w == b":unit:") {
+                    if let Ok(unit) = serde_json::from_slice::<MemoryUnit>(val) {
+                        let entry = local_apps.entry(unit.app_id.clone()).or_insert_with(|| AppSummary {
+                            app_id: unit.app_id.clone(),
+                            total_events: 0,
+                            total_users: 0,
+                            total_memories: 0,
+                            l1_count: 0,
+                            l2_count: 0,
+                            last_activity: None,
+                        });
+
+                        entry.total_memories += 1;
+                        match unit.level {
+                            1 => entry.l1_count += 1,
+                            2 => entry.l2_count += 1,
+                            _ => {}
+                        }
+
+                        // Update last activity
+                        let ts = unit.transaction_time.timestamp();
+                        if entry.last_activity.is_none() || entry.last_activity < Some(ts) {
+                            entry.last_activity = Some(ts);
+                        }
+                    }
+                }
+            }
+
+            // Count events per app
+            let event_pairs = kv.scan(b"u:")?;
+            let mut event_counts: HashMap<String, usize> = HashMap::new();
+            for (k, val) in &event_pairs {
+                if k.windows(7).any(|w| w == b":event:") {
+                    if let Ok(event) = serde_json::from_slice::<memorose_common::Event>(val) {
+                        *event_counts.entry(event.app_id.clone()).or_default() += 1;
+                    }
+                }
+            }
+
+            // Count unique users per app
+            for (app_id, entry) in &mut local_apps {
+                if let Some(&count) = event_counts.get(app_id) {
+                    entry.total_events = count;
+                }
+
+                // Count unique users for this app by scanning units
+                let mut users = std::collections::HashSet::new();
+                for (_, val) in kv.scan(b"u:")? {
+                    if let Ok(unit) = serde_json::from_slice::<MemoryUnit>(&val) {
+                        if unit.app_id == *app_id {
+                            users.insert(unit.user_id.clone());
+                        }
+                    }
+                }
+                entry.total_users = users.len();
+            }
+
+            Ok(local_apps)
+        }).await;
+
+        if let Ok(Ok(shard_apps)) = scan_result {
+            for (app_id, summary) in shard_apps {
+                let entry = app_data.entry(app_id).or_insert_with(|| AppSummary {
+                    app_id: summary.app_id,
+                    total_events: 0,
+                    total_users: 0,
+                    total_memories: 0,
+                    l1_count: 0,
+                    l2_count: 0,
+                    last_activity: None,
+                });
+
+                entry.total_events += summary.total_events;
+                entry.total_users += summary.total_users;
+                entry.total_memories += summary.total_memories;
+                entry.l1_count += summary.l1_count;
+                entry.l2_count += summary.l2_count;
+
+                if entry.last_activity.is_none() || (summary.last_activity.is_some() && entry.last_activity < summary.last_activity) {
+                    entry.last_activity = summary.last_activity;
+                }
+            }
+        }
+    }
+
+    let mut apps: Vec<AppSummary> = app_data.into_values().collect();
+    apps.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
+
+    let result = serde_json::json!({
+        "apps": apps,
+        "total_count": apps.len(),
+    });
+
+    state.dashboard_cache.insert(cache_key, result.clone()).await;
+
+    Json(result).into_response()
+}
+
+#[derive(serde::Serialize)]
+pub struct AppDetailStats {
+    app_id: String,
+    overview: AppOverview,
+    users: Vec<UserActivity>,
+    recent_activity: Vec<ActivityLog>,
+    performance: PerformanceMetrics,
+}
+
+#[derive(serde::Serialize)]
+pub struct AppOverview {
+    total_events: usize,
+    total_users: usize,
+    total_memories: usize,
+    l1_count: usize,
+    l2_count: usize,
+    memory_pipeline_status: String,
+    avg_memories_per_user: f64,
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct UserActivity {
+    user_id: String,
+    event_count: usize,
+    memory_count: usize,
+    last_activity: Option<i64>,
+}
+
+#[derive(serde::Serialize)]
+pub struct ActivityLog {
+    timestamp: i64,
+    user_id: String,
+    event_type: String,
+    stream_id: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct PerformanceMetrics {
+    total_storage_bytes: usize,
+    avg_event_size_bytes: f64,
+    l1_generation_rate: f64,
+    l2_generation_rate: f64,
+}
+
+pub async fn get_app_stats(
+    State(state): State<Arc<crate::AppState>>,
+    Path(app_id): Path<String>,
+) -> axum::response::Response {
+    // Check cache first
+    let cache_key = format!("apps:stats:{}", app_id);
+    if let Some(cached) = state.dashboard_cache.get(&cache_key).await {
+        return Json(cached).into_response();
+    }
+
+    let mut total_events = 0usize;
+    let mut total_memories = 0usize;
+    let mut l1_count = 0usize;
+    let mut l2_count = 0usize;
+    let mut user_activities: HashMap<String, UserActivity> = HashMap::new();
+    let mut recent_activities: Vec<ActivityLog> = Vec::new();
+    let mut total_storage_bytes = 0usize;
+
+    for (_, shard) in state.shard_manager.all_shards() {
+        let engine = shard.engine.clone();
+        let app_id_clone = app_id.clone();
+
+        let scan_result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+            let kv = engine.kv();
+            let mut local_events = 0usize;
+            let mut local_memories = 0usize;
+            let mut local_l1 = 0usize;
+            let mut local_l2 = 0usize;
+            let mut local_users: HashMap<String, UserActivity> = HashMap::new();
+            let mut local_activities: Vec<ActivityLog> = Vec::new();
+            let mut local_storage = 0usize;
+
+            // Scan events
+            let event_pairs = kv.scan(b"u:")?;
+            for (k, val) in &event_pairs {
+                if k.windows(7).any(|w| w == b":event:") {
+                    if let Ok(event) = serde_json::from_slice::<memorose_common::Event>(val) {
+                        if event.app_id == app_id_clone {
+                            local_events += 1;
+                            local_storage += val.len();
+
+                            let user_entry = local_users.entry(event.user_id.clone()).or_insert_with(|| UserActivity {
+                                user_id: event.user_id.clone(),
+                                event_count: 0,
+                                memory_count: 0,
+                                last_activity: None,
+                            });
+                            user_entry.event_count += 1;
+
+                            let event_ts = event.transaction_time.timestamp();
+                            if user_entry.last_activity.is_none() || user_entry.last_activity < Some(event_ts) {
+                                user_entry.last_activity = Some(event_ts);
+                            }
+
+                            if local_activities.len() < 100 {
+                                local_activities.push(ActivityLog {
+                                    timestamp: event.transaction_time.timestamp(),
+                                    user_id: event.user_id.clone(),
+                                    event_type: match &event.content {
+                                        EventContent::Text(_) => "text".to_string(),
+                                        EventContent::Image(_) => "image".to_string(),
+                                        EventContent::Audio(_) => "audio".to_string(),
+                                        EventContent::Video(_) => "video".to_string(),
+                                        EventContent::Json(_) => "json".to_string(),
+                                    },
+                                    stream_id: event.stream_id.to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Scan memory units
+            let unit_pairs = kv.scan(b"u:")?;
+            for (k, val) in &unit_pairs {
+                if k.windows(6).any(|w| w == b":unit:") {
+                    if let Ok(unit) = serde_json::from_slice::<MemoryUnit>(val) {
+                        if unit.app_id == app_id_clone {
+                            local_memories += 1;
+                            local_storage += val.len();
+
+                            match unit.level {
+                                1 => local_l1 += 1,
+                                2 => local_l2 += 1,
+                                _ => {}
+                            }
+
+                            if let Some(user_entry) = local_users.get_mut(&unit.user_id) {
+                                user_entry.memory_count += 1;
+                            } else {
+                                local_users.insert(unit.user_id.clone(), UserActivity {
+                                    user_id: unit.user_id.clone(),
+                                    event_count: 0,
+                                    memory_count: 1,
+                                    last_activity: Some(unit.transaction_time.timestamp()),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            Ok((local_events, local_memories, local_l1, local_l2, local_users, local_activities, local_storage))
+        }).await;
+
+        if let Ok(Ok((events, memories, l1, l2, users, activities, storage))) = scan_result {
+            total_events += events;
+            total_memories += memories;
+            l1_count += l1;
+            l2_count += l2;
+            total_storage_bytes += storage;
+
+            for (user_id, activity) in users {
+                let entry = user_activities.entry(user_id).or_insert_with(|| activity.clone());
+                entry.event_count += activity.event_count;
+                entry.memory_count += activity.memory_count;
+                if entry.last_activity.is_none() || (activity.last_activity.is_some() && entry.last_activity < activity.last_activity) {
+                    entry.last_activity = activity.last_activity;
+                }
+            }
+
+            recent_activities.extend(activities);
+        }
+    }
+
+    // Sort activities by timestamp descending and take top 100
+    recent_activities.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    recent_activities.truncate(100);
+
+    let total_users = user_activities.len();
+    let mut users_vec: Vec<UserActivity> = user_activities.into_values().collect();
+    users_vec.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
+
+    let memory_pipeline_status = if l2_count > 0 {
+        "healthy"
+    } else if l1_count > 0 {
+        "generating_l2"
+    } else {
+        "initializing"
+    };
+
+    let avg_memories_per_user = if total_users > 0 {
+        total_memories as f64 / total_users as f64
+    } else {
+        0.0
+    };
+
+    let avg_event_size_bytes = if total_events > 0 {
+        total_storage_bytes as f64 / total_events as f64
+    } else {
+        0.0
+    };
+
+    let l1_generation_rate = if total_events > 0 {
+        l1_count as f64 / total_events as f64
+    } else {
+        0.0
+    };
+
+    let l2_generation_rate = if l1_count > 0 {
+        l2_count as f64 / l1_count as f64
+    } else {
+        0.0
+    };
+
+    let result = serde_json::json!({
+        "app_id": app_id,
+        "overview": {
+            "total_events": total_events,
+            "total_users": total_users,
+            "total_memories": total_memories,
+            "l1_count": l1_count,
+            "l2_count": l2_count,
+            "memory_pipeline_status": memory_pipeline_status,
+            "avg_memories_per_user": avg_memories_per_user,
+        },
+        "users": users_vec,
+        "recent_activity": recent_activities,
+        "performance": {
+            "total_storage_bytes": total_storage_bytes,
+            "avg_event_size_bytes": avg_event_size_bytes,
+            "l1_generation_rate": l1_generation_rate,
+            "l2_generation_rate": l2_generation_rate,
+        },
+    });
+
+    state.dashboard_cache.insert(cache_key, result.clone()).await;
+
+    Json(result).into_response()
 }

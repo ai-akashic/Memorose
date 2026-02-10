@@ -10,11 +10,12 @@ import {
   Settings,
   LogOut,
   ChevronLeft,
+  MessageSquare,
+  Package,
 } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   Tooltip,
   TooltipContent,
@@ -35,6 +36,8 @@ export function useUserFilter() {
 const navItems = [
   { href: "/cluster/", label: "Cluster", icon: LayoutDashboard },
   { href: "/memories/", label: "Memories", icon: Database },
+  { href: "/playground/", label: "Playground", icon: MessageSquare },
+  { href: "/apps/", label: "Apps", icon: Package },
   { href: "/metrics/", label: "Metrics", icon: BarChart3 },
   { href: "/settings/", label: "Settings", icon: Settings },
 ];
@@ -62,7 +65,7 @@ export default function AuthenticatedLayout({
 
   if (!mounted || !isAuthenticated()) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="h-screen flex items-center justify-center bg-background">
         <div className="animate-pulse text-muted-foreground text-sm">Loading...</div>
       </div>
     );
@@ -71,10 +74,10 @@ export default function AuthenticatedLayout({
   return (
     <UserFilterContext.Provider value={{ userId, setUserId }}>
       <TooltipProvider delayDuration={0}>
-        <div className="min-h-screen flex bg-background">
+        <div className="h-screen flex bg-background overflow-hidden">
           <aside
             className={cn(
-              "flex flex-col border-r border-border bg-card/80 backdrop-blur-sm transition-all duration-200 z-30",
+              "flex flex-col shrink-0 border-r border-border bg-card/80 backdrop-blur-sm transition-all duration-200 z-30 h-full overflow-hidden",
               collapsed ? "w-14" : "w-52"
             )}
           >
@@ -117,18 +120,6 @@ export default function AuthenticatedLayout({
               })}
             </nav>
 
-            {!collapsed && (
-              <div className="px-2 pb-1.5">
-                <Input
-                  type="text"
-                  value={userId}
-                  onChange={(e) => setUserId(e.target.value)}
-                  placeholder="Filter user..."
-                  className="h-7 text-xs"
-                />
-              </div>
-            )}
-
             <div className="border-t border-border p-1.5 space-y-0.5">
               <Button
                 variant="ghost"
@@ -165,8 +156,8 @@ export default function AuthenticatedLayout({
             </div>
           </aside>
 
-          <main className="flex-1 overflow-auto">
-            <div className="p-6 max-w-7xl">{children}</div>
+          <main className="flex-1 overflow-auto h-full">
+            <div className="p-6 max-w-7xl h-full">{children}</div>
           </main>
         </div>
       </TooltipProvider>

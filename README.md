@@ -18,8 +18,6 @@ Memorose is a distributed memory system designed specifically for AI Agents. It 
 - ⚡ **High Performance**: Hybrid storage (RocksDB + LanceDB + Tantivy) optimized for different access patterns
 - 🌐 **Distributed Architecture**: Raft-based consensus for high availability and horizontal scaling
 - 🎨 **Web Dashboard**: Real-time visualization of memory graphs, clusters, and system metrics
-- 🔐 **Multi-tenancy**: Complete isolation of tenant data with per-tenant streams
-
 ---
 
 ## 🧠 Design Philosophy
@@ -406,7 +404,6 @@ insights = client.get_insights("user_123", "session_1")
 - [x] **Auto Graph Construction**: Similarity-based linking + dynamic weighting
 - [x] **Distributed Raft Cluster**: Leader election, log replication, failover
 - [x] **Snapshot Replication**: Full state transfer for new nodes
-- [x] **Multi-tenancy V2**: Physical isolation of tenant data
 - [x] **Web Dashboard**: Cluster monitoring, memory explorer, metrics
 - [x] **Bi-temporal Model**: Support `valid_time` vs `transaction_time`
 - [x] **Community Detection**: Graph-based L2 insight generation
