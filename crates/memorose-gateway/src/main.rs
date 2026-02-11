@@ -99,9 +99,17 @@ async fn proxy_handler(
     let query = req.uri().query().map(|q| q.to_string());
     let method = req.method().clone();
 
-    let body = reqwest::Body::wrap_stream(req.into_body().into_data_stream());
+    // Buffer body bytes so we can replay on Raft "Not Leader" redirects.
+    // Without buffering, the stream is consumed on the first attempt
+    // and POST/PUT retries would always fail with BAD_GATEWAY.
+    let body_bytes = match axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024).await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, format!("Failed to read request body: {}", e)).into_response();
+        }
+    };
 
-    proxy_request_with_retry(state, headers, method, &path, query, body).await
+    proxy_request_with_retry(state, headers, method, &path, query, body_bytes).await
 }
 
 /// Extract user_id from the URL pattern `/v1/users/{user_id}/...`
@@ -120,7 +128,7 @@ async fn proxy_request_with_retry(
     method: axum::http::Method,
     path: &str,
     query: Option<String>,
-    body: reqwest::Body,
+    body_bytes: bytes::Bytes,
 ) -> Response {
     // Route based on user_id hash
     let user_id = extract_user_id(path);
@@ -132,23 +140,6 @@ async fn proxy_request_with_retry(
 
     let client = &state.http_client;
     let max_retries = 3;
-    
-    // We need to clone the body if we retry, but reqwest::Body isn't cloneable if it's a stream.
-    // However, we only have one body stream. Retrying a streaming request is hard without buffering.
-    // Since we removed buffering to save memory, we can only retry if we haven't consumed the body or if it's replayable.
-    // For now, we will only try once if it's a stream, or we accept that retries might fail for streaming bodies.
-    // Actually, `reqwest::Body::wrap_stream` creates a non-replayable body.
-    // If we want reliability + streaming + retries, we're in a tough spot without buffering.
-    // Let's assume for this fix that we pass the body on the first attempt.
-    // If it fails, we can't retry the body send easily.
-    // But wait, the original code WAS buffering. The review asked to REMOVE buffering.
-    // If we remove buffering, we can't retry the request easily if it fails mid-stream or needs re-sending.
-    // We will assume the client handles retries for failed writes, or we just retry the *connection* logic.
-    // But `reqwest` consumes the body.
-    // Let's implement a compromise: If the body is streaming, we don't retry. Or we rely on Reusable Body if possible.
-    // Given the constraints, let's just make `body` an `Option` and `take()` it.
-    
-    let mut body_option = Some(body);
 
     for attempt in 0..max_retries {
         let addr = match &target_addr {
@@ -176,15 +167,11 @@ async fn proxy_request_with_retry(
                 builder = builder.header(key, value);
             }
         }
-        
-        // If we have the body, use it. If not (retrying and already consumed), we can't send it again.
-        // This effectively disables retries for POST/PUT with body unless we buffer.
-        // But for GET/DELETE it works.
-        if let Some(b) = body_option.take() {
-             builder = builder.body(b);
-        } else if method != axum::http::Method::GET && method != axum::http::Method::HEAD {
-             // We lost the body, can't retry
-             return (StatusCode::BAD_GATEWAY, "Request failed and body could not be replayed").into_response();
+
+        // Body is pre-buffered as Bytes, so clone is cheap (reference-counted)
+        // and retries work correctly for all HTTP methods.
+        if !body_bytes.is_empty() {
+            builder = builder.body(body_bytes.clone());
         }
 
         match builder.send().await {
