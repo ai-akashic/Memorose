@@ -6,7 +6,7 @@ use axum::{
 };
 use axum::body::to_bytes;
 use bytes::Bytes;
-use memorose_common::sharding::user_id_to_shard;
+use memorose_common::sharding::{user_id_to_shard, decode_raft_node_id};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -192,9 +192,18 @@ async fn proxy_request_with_retry(
             Ok(resp) => {
                 let status = resp.status();
 
-                // Stop retrying on client errors (4xx) except maybe 429
-                if status.is_client_error() && status != StatusCode::TOO_MANY_REQUESTS {
-                     // ... logic to return response ...
+                // [Bug #2 fix] Stop retrying on client errors (4xx) - return immediately
+                if status.is_client_error() {
+                    let res_headers = resp.headers().clone();
+                    let res_body = axum::body::Body::from_stream(resp.bytes_stream());
+                    let mut response = res_body.into_response();
+                    *response.status_mut() = status;
+                    for (k, v) in res_headers {
+                        if let Some(k) = k {
+                            response.headers_mut().insert(k, v);
+                        }
+                    }
+                    return response;
                 }
 
                 // RAFT REDIRECTION LOGIC
@@ -202,31 +211,53 @@ async fn proxy_request_with_retry(
                     let res_bytes = resp.bytes().await.unwrap_or_default();
                     if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&res_bytes) {
                         if json["error"] == "Not Leader" {
-                            // ... existing logic ...
+                            // [Bug #1 fix] Try leader_physical_node first (sharded response),
+                            // but only trust it when > 0 (0 means leader unknown) and the
+                            // node actually exists in our config.
                             if let Some(leader_node) = json["leader_physical_node"].as_u64() {
                                 let leader_node = leader_node as u32;
-                                {
+                                if leader_node > 0 && state.node_addresses.contains_key(&leader_node) {
                                     let mut cache = state.shard_leaders.write().await;
                                     cache.insert(shard_id, leader_node);
+                                    target_addr = state.node_addresses.get(&leader_node).cloned();
+                                    continue;
                                 }
-                                target_addr = state.node_addresses.get(&leader_node).cloned();
-                                continue;
                             }
-                             if let Some(new_leader_id) = json["current_leader"].as_u64() {
-                                let leader_node = new_leader_id as u32;
-                                {
+                            // [Bug #3 fix] Fallback: current_leader is a raw Raft node ID,
+                            // decode it to extract the physical_node_id.
+                            if let Some(raft_leader_id) = json["current_leader"].as_u64() {
+                                let (_leader_shard, physical_node_id) = decode_raft_node_id(raft_leader_id);
+                                if physical_node_id > 0 && state.node_addresses.contains_key(&physical_node_id) {
                                     let mut cache = state.shard_leaders.write().await;
-                                    cache.insert(shard_id, leader_node);
+                                    cache.insert(shard_id, physical_node_id);
+                                    target_addr = state.node_addresses.get(&physical_node_id).cloned();
+                                    continue;
                                 }
-                                target_addr = state.node_addresses.get(&leader_node).cloned();
-                                continue;
                             }
+                            // Leader unknown or not in our node list - clear stale cache and retry
+                            tracing::warn!("Shard {} has no known leader, clearing cache and retrying", shard_id);
+                            {
+                                let mut cache = state.shard_leaders.write().await;
+                                cache.remove(&shard_id);
+                            }
+                            target_addr = None;
+                            if attempt < max_retries - 1 {
+                                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                            }
+                            continue;
                         }
                     }
-                    return (status, axum::body::Body::from(res_bytes)).into_response();
+                    // [Bug #4 fix] Non-"Not Leader" 503: retry with backoff instead of
+                    // returning immediately.
+                    tracing::warn!("Proxy attempt {} got non-raft 503 for shard {}", attempt + 1, shard_id);
+                    if attempt == max_retries - 1 {
+                        return (status, axum::body::Body::from(res_bytes)).into_response();
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    continue;
                 }
 
-                // SUCCESS or other error: Return to client
+                // SUCCESS or other server error: Return to client
                 let res_headers = resp.headers().clone();
                 let res_body = axum::body::Body::from_stream(resp.bytes_stream());
                 let mut response = res_body.into_response();
