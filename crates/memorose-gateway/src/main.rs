@@ -192,7 +192,7 @@ async fn proxy_request_with_retry(
             Ok(resp) => {
                 let status = resp.status();
 
-                // [Bug #2 fix] Stop retrying on client errors (4xx) - return immediately
+                // Stop retrying on client errors (4xx) - return immediately
                 if status.is_client_error() {
                     let res_headers = resp.headers().clone();
                     let res_body = axum::body::Body::from_stream(resp.bytes_stream());
@@ -211,7 +211,7 @@ async fn proxy_request_with_retry(
                     let res_bytes = resp.bytes().await.unwrap_or_default();
                     if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&res_bytes) {
                         if json["error"] == "Not Leader" {
-                            // [Bug #1 fix] Try leader_physical_node first (sharded response),
+                            // Try leader_physical_node first (sharded response),
                             // but only trust it when > 0 (0 means leader unknown) and the
                             // node actually exists in our config.
                             if let Some(leader_node) = json["leader_physical_node"].as_u64() {
@@ -223,7 +223,7 @@ async fn proxy_request_with_retry(
                                     continue;
                                 }
                             }
-                            // [Bug #3 fix] Fallback: current_leader is a raw Raft node ID,
+                            // Fallback: current_leader is a raw Raft node ID,
                             // decode it to extract the physical_node_id.
                             if let Some(raft_leader_id) = json["current_leader"].as_u64() {
                                 let (_leader_shard, physical_node_id) = decode_raft_node_id(raft_leader_id);
@@ -247,7 +247,7 @@ async fn proxy_request_with_retry(
                             continue;
                         }
                     }
-                    // [Bug #4 fix] Non-"Not Leader" 503: retry with backoff instead of
+                    // Non-"Not Leader" 503: retry with backoff instead of
                     // returning immediately.
                     tracing::warn!("Proxy attempt {} got non-raft 503 for shard {}", attempt + 1, shard_id);
                     if attempt == max_retries - 1 {
