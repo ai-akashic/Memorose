@@ -81,6 +81,7 @@ export interface MemoryItem {
   transaction_time: string;
   reference_count: number;
   has_assets: boolean;
+  item_type?: "memory" | "event";
 }
 
 export interface MemoryListResponse {

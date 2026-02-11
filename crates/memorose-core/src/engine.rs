@@ -203,6 +203,33 @@ impl MemoroseEngine {
         &self.graph
     }
 
+    fn derive_l2_app_id(units: &[MemoryUnit]) -> String {
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for unit in units {
+            if !unit.app_id.is_empty() {
+                *counts.entry(unit.app_id.clone()).or_insert(0) += 1;
+            }
+        }
+
+        let mut best_app = String::new();
+        let mut best_count = 0usize;
+        for (app_id, count) in counts {
+            if count > best_count || (count == best_count && (best_app.is_empty() || app_id < best_app)) {
+                best_app = app_id;
+                best_count = count;
+            }
+        }
+
+        if best_count > 0 {
+            best_app
+        } else {
+            units
+                .first()
+                .map(|u| u.app_id.clone())
+                .unwrap_or_default()
+        }
+    }
+
     pub async fn fetch_pending_events(&self) -> Result<Vec<Event>> {
         let skv = self.system_kv();
         let pending_pairs = tokio::task::spawn_blocking(move || {
@@ -1016,7 +1043,7 @@ impl MemoroseEngine {
 
             let mut l2_unit = MemoryUnit::new(
                 user_id.to_string(),
-                String::new(), // app_id empty for cross-app L2
+                Self::derive_l2_app_id(&units),
                 Uuid::new_v4(),
                 insight.summary,
                 None
@@ -1165,7 +1192,7 @@ impl MemoroseEngine {
 
             let mut l2_unit = MemoryUnit::new(
                 user_id.to_string(),
-                String::new(),
+                Self::derive_l2_app_id(&units),
                 Uuid::new_v4(),
                 insight.summary,
                 None
