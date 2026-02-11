@@ -70,7 +70,7 @@ export const api = {
     user_id?: string;
   }) => {
     const qs = new URLSearchParams();
-    if (params.level) qs.set("level", String(params.level));
+    if (params.level !== undefined) qs.set("level", String(params.level));
     if (params.page) qs.set("page", String(params.page));
     if (params.limit) qs.set("limit", String(params.limit));
     if (params.sort) qs.set("sort", params.sort);
