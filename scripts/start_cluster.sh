@@ -51,6 +51,12 @@ wait_for_ready() {
 }
 
 start_servers() {
+    # Load .env file
+    if [ -f ".env" ]; then
+        echo "Loading .env configuration..."
+        export $(grep -v '^#' .env | xargs)
+    fi
+
     # Ensure binary exists
     if [ ! -f "$SERVER_BIN" ]; then
         echo "Compiling Memorose..."
