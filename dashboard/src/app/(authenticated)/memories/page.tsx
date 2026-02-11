@@ -46,6 +46,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 function LevelBadge({ level }: { level: number }) {
   const colors: Record<number, string> = {
+    0: "bg-muted text-muted-foreground border-border",
     1: "bg-primary/15 text-primary border-primary/20 hover:bg-primary/20",
     2: "bg-success/15 text-success border-success/20 hover:bg-success/20",
   };
@@ -393,6 +394,7 @@ function MemoryListTab({ userId }: { userId?: string }) {
           onValueChange={(v) => { setLevelFilter(v || "all"); setPage(1); }}
         >
           <ToggleGroupItem value="all" aria-label="All levels">All</ToggleGroupItem>
+          <ToggleGroupItem value="0" aria-label="Level 0">L0</ToggleGroupItem>
           <ToggleGroupItem value="1" aria-label="Level 1">L1</ToggleGroupItem>
           <ToggleGroupItem value="2" aria-label="Level 2">L2</ToggleGroupItem>
         </ToggleGroup>
@@ -438,31 +440,38 @@ function MemoryListTab({ userId }: { userId?: string }) {
                 </TableCell>
               </TableRow>
             ) : (
-              memories?.items.map((m) => (
-                <TableRow
-                  key={m.id}
-                  onClick={() => handleViewDetail(m.id)}
-                  className="cursor-pointer group"
-                >
-                  <TableCell>
-                    <span className="text-xs font-mono truncate block max-w-[100px]">{m.user_id}</span>
-                  </TableCell>
-                  <TableCell className="text-center"><LevelBadge level={m.level} /></TableCell>
-                  <TableCell><ImportanceBar value={m.importance} /></TableCell>
-                  <TableCell className="text-center font-mono text-xs">{m.access_count}</TableCell>
-                  <TableCell className="text-center font-mono text-xs">{m.reference_count}</TableCell>
-                  <TableCell>
-                    <p className="line-clamp-2 text-[13px] leading-snug">{m.content}</p>
-                    {m.keywords.length > 0 && (
-                      <div className="flex gap-1.5 mt-1">
-                        {m.keywords.slice(0, 3).map((kw) => (
-                          <span key={kw} className="text-[11px] text-muted-foreground/70">{kw}</span>
-                        ))}
-                      </div>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))
+              memories?.items.map((m) => {
+                const canOpenDetail = m.item_type !== "event";
+                return (
+                  <TableRow
+                    key={m.id}
+                    onClick={() => {
+                      if (canOpenDetail) {
+                        handleViewDetail(m.id);
+                      }
+                    }}
+                    className={canOpenDetail ? "cursor-pointer group" : "opacity-95"}
+                  >
+                    <TableCell>
+                      <span className="text-xs font-mono truncate block max-w-[100px]">{m.user_id}</span>
+                    </TableCell>
+                    <TableCell className="text-center"><LevelBadge level={m.level} /></TableCell>
+                    <TableCell><ImportanceBar value={m.importance} /></TableCell>
+                    <TableCell className="text-center font-mono text-xs">{m.access_count}</TableCell>
+                    <TableCell className="text-center font-mono text-xs">{m.reference_count}</TableCell>
+                    <TableCell>
+                      <p className="line-clamp-2 text-[13px] leading-snug">{m.content}</p>
+                      {m.keywords.length > 0 && (
+                        <div className="flex gap-1.5 mt-1">
+                          {m.keywords.slice(0, 3).map((kw) => (
+                            <span key={kw} className="text-[11px] text-muted-foreground/70">{kw}</span>
+                          ))}
+                        </div>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })
             )}
           </TableBody>
         </Table>

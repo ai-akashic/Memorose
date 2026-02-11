@@ -226,6 +226,7 @@ impl EnhancedCommunityDetector {
 /// Louvain 算法的图表示
 struct LouvainGraph {
     nodes: Vec<Uuid>,
+    #[allow(dead_code)]
     node_to_idx: HashMap<Uuid, usize>,
     communities: Vec<usize>,  // 每个节点的社区 ID
     edges: Vec<(usize, usize, f32)>,  // (source_idx, target_idx, weight)

@@ -48,6 +48,7 @@ struct QueryStats {
     /// 每种关系类型的平均扇出度
     avg_fanout: HashMap<String, f32>,
     /// 节点总数估计
+    #[allow(dead_code)]
     total_nodes: usize,
 }
 

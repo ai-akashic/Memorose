@@ -195,7 +195,12 @@ impl BatchCommunityDetector {
             let mut phase2_config = self.config.clone();
             phase2_config.algorithm = super::enhanced::Algorithm::Louvain;
 
-            let subgraph_result = phase1_detector
+            let phase2_detector = BatchCommunityDetector::new(
+                self.batch_executor.clone_graph_store(),
+                phase2_config,
+            );
+
+            let subgraph_result = phase2_detector
                 .detect_communities_direct(user_id, members)
                 .await?;
 
@@ -246,8 +251,6 @@ impl BatchExecutor {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[tokio::test]
     async fn test_batch_community_detection() {
         // 需要真实的 GraphStore 才能测试

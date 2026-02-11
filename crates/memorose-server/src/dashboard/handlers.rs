@@ -3,7 +3,7 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use memorose_common::{MemoryUnit, EventContent};
+use memorose_common::{Event as MemoryEvent, EventContent, MemoryUnit};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -381,6 +381,33 @@ fn default_page() -> usize { 1 }
 fn default_limit() -> usize { 20 }
 fn default_sort() -> String { "importance".to_string() }
 
+#[derive(Clone)]
+struct DashboardMemoryRow {
+    id: String,
+    user_id: String,
+    app_id: String,
+    content: String,
+    level: u8,
+    importance: f32,
+    keywords: Vec<String>,
+    access_count: u64,
+    last_accessed_at: chrono::DateTime<chrono::Utc>,
+    transaction_time: chrono::DateTime<chrono::Utc>,
+    reference_count: usize,
+    has_assets: bool,
+    item_type: &'static str,
+}
+
+fn event_content_preview(content: &EventContent) -> (String, bool) {
+    match content {
+        EventContent::Text(text) => (text.clone(), false),
+        EventContent::Image(url) => (format!("[Image] {}", url), true),
+        EventContent::Audio(url) => (format!("[Audio] {}", url), true),
+        EventContent::Video(url) => (format!("[Video] {}", url), true),
+        EventContent::Json(value) => (value.to_string(), false),
+    }
+}
+
 pub async fn list_memories(
     State(state): State<Arc<crate::AppState>>,
     Query(params): Query<ListMemoriesQuery>,
@@ -388,6 +415,8 @@ pub async fn list_memories(
     let level_filter = params.level;
     let sort = params.sort.clone();
     let user_id_filter = params.user_id.clone();
+    let include_events = level_filter.map_or(true, |l| l == 0);
+    let include_units = level_filter.map_or(true, |l| l > 0);
 
     // Determine which shards to scan
     let shard_ids: Vec<u32> = if let Some(ref uid) = user_id_filter {
@@ -397,7 +426,7 @@ pub async fn list_memories(
         state.shard_manager.all_shards().map(|(id, _)| id).collect()
     };
 
-    let mut all_units: Vec<MemoryUnit> = Vec::new();
+    let mut rows: Vec<DashboardMemoryRow> = Vec::new();
 
     for shard_id in shard_ids {
         let shard = match state.shard_manager.shard(shard_id) {
@@ -405,69 +434,139 @@ pub async fn list_memories(
             None => continue,
         };
         let engine = shard.engine.clone();
-        let uid_filter = user_id_filter.clone();
 
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<MemoryUnit>> {
-            let kv = engine.kv();
-            let prefix = if let Some(ref uid) = uid_filter {
-                format!("u:{}:unit:", uid).into_bytes()
-            } else {
-                b"u:".to_vec()
-            };
-            let pairs = kv.scan(&prefix)?;
+        if include_units {
+            let uid_filter = user_id_filter.clone();
+            let level_filter_for_units = level_filter;
+            let units_result = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<DashboardMemoryRow>> {
+                let kv = engine.kv();
+                let prefix = if let Some(ref uid) = uid_filter {
+                    format!("u:{}:unit:", uid).into_bytes()
+                } else {
+                    b"u:".to_vec()
+                };
+                let pairs = kv.scan(&prefix)?;
 
-            let units: Vec<MemoryUnit> = pairs
-                .into_iter()
-                .filter(|(k, _)| {
-                    if uid_filter.is_none() {
-                        k.windows(6).any(|w| w == b":unit:")
-                    } else {
-                        true
-                    }
-                })
-                .filter_map(|(_, val)| serde_json::from_slice::<MemoryUnit>(&val).ok())
-                .filter(|u| level_filter.map_or(true, |l| u.level == l))
-                .take(10_000)
-                .collect();
+                let units: Vec<DashboardMemoryRow> = pairs
+                    .into_iter()
+                    .filter(|(k, _)| {
+                        if uid_filter.is_none() {
+                            k.windows(6).any(|w| w == b":unit:")
+                        } else {
+                            true
+                        }
+                    })
+                    .filter_map(|(_, val)| serde_json::from_slice::<MemoryUnit>(&val).ok())
+                    .filter(|u| level_filter_for_units.map_or(true, |l| u.level == l))
+                    .map(|u| DashboardMemoryRow {
+                        id: u.id.to_string(),
+                        user_id: u.user_id,
+                        app_id: u.app_id,
+                        content: u.content,
+                        level: u.level,
+                        importance: u.importance,
+                        keywords: u.keywords,
+                        access_count: u.access_count,
+                        last_accessed_at: u.last_accessed_at,
+                        transaction_time: u.transaction_time,
+                        reference_count: u.references.len(),
+                        has_assets: !u.assets.is_empty(),
+                        item_type: "memory",
+                    })
+                    .take(10_000)
+                    .collect();
 
-            Ok(units)
-        }).await;
+                Ok(units)
+            }).await;
 
-        if let Ok(Ok(units)) = result {
-            all_units.extend(units);
+            if let Ok(Ok(units)) = units_result {
+                rows.extend(units);
+            }
+        }
+
+        if include_events {
+            let engine = shard.engine.clone();
+            let uid_filter = user_id_filter.clone();
+            let events_result = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<DashboardMemoryRow>> {
+                let kv = engine.kv();
+                let prefix = if let Some(ref uid) = uid_filter {
+                    format!("u:{}:event:", uid).into_bytes()
+                } else {
+                    b"u:".to_vec()
+                };
+                let pairs = kv.scan(&prefix)?;
+
+                let events: Vec<DashboardMemoryRow> = pairs
+                    .into_iter()
+                    .filter(|(k, _)| {
+                        if uid_filter.is_none() {
+                            k.windows(7).any(|w| w == b":event:")
+                        } else {
+                            true
+                        }
+                    })
+                    .filter_map(|(_, val)| serde_json::from_slice::<MemoryEvent>(&val).ok())
+                    .map(|event| {
+                        let (content, has_assets) = event_content_preview(&event.content);
+                        DashboardMemoryRow {
+                            id: event.id.to_string(),
+                            user_id: event.user_id,
+                            app_id: event.app_id,
+                            content,
+                            level: 0,
+                            importance: 0.0,
+                            keywords: Vec::new(),
+                            access_count: 0,
+                            last_accessed_at: event.transaction_time,
+                            transaction_time: event.transaction_time,
+                            reference_count: 0,
+                            has_assets,
+                            item_type: "event",
+                        }
+                    })
+                    .take(10_000)
+                    .collect();
+
+                Ok(events)
+            }).await;
+
+            if let Ok(Ok(events)) = events_result {
+                rows.extend(events);
+            }
         }
     }
 
-    let total = all_units.len();
+    let total = rows.len();
 
     match sort.as_str() {
-        "importance" => all_units.sort_by(|a, b| b.importance.partial_cmp(&a.importance).unwrap_or(std::cmp::Ordering::Equal)),
-        "access_count" => all_units.sort_by(|a, b| b.access_count.cmp(&a.access_count)),
-        "recent" => all_units.sort_by(|a, b| b.transaction_time.cmp(&a.transaction_time)),
-        _ => all_units.sort_by(|a, b| b.importance.partial_cmp(&a.importance).unwrap_or(std::cmp::Ordering::Equal)),
+        "importance" => rows.sort_by(|a, b| b.importance.partial_cmp(&a.importance).unwrap_or(std::cmp::Ordering::Equal)),
+        "access_count" => rows.sort_by(|a, b| b.access_count.cmp(&a.access_count)),
+        "recent" => rows.sort_by(|a, b| b.transaction_time.cmp(&a.transaction_time)),
+        _ => rows.sort_by(|a, b| b.importance.partial_cmp(&a.importance).unwrap_or(std::cmp::Ordering::Equal)),
     }
 
     let page = params.page.max(1);
     let limit = params.limit.min(100);
     let offset = (page - 1) * limit;
 
-    let items: Vec<serde_json::Value> = all_units
+    let items: Vec<serde_json::Value> = rows
         .into_iter()
         .skip(offset)
         .take(limit)
-        .map(|u| serde_json::json!({
-            "id": u.id,
-            "user_id": u.user_id,
-            "app_id": u.app_id,
-            "content": u.content,
-            "level": u.level,
-            "importance": u.importance,
-            "keywords": u.keywords,
-            "access_count": u.access_count,
-            "last_accessed_at": u.last_accessed_at,
-            "transaction_time": u.transaction_time,
-            "reference_count": u.references.len(),
-            "has_assets": !u.assets.is_empty(),
+        .map(|row| serde_json::json!({
+            "id": row.id,
+            "user_id": row.user_id,
+            "app_id": row.app_id,
+            "content": row.content,
+            "level": row.level,
+            "importance": row.importance,
+            "keywords": row.keywords,
+            "access_count": row.access_count,
+            "last_accessed_at": row.last_accessed_at,
+            "transaction_time": row.transaction_time,
+            "reference_count": row.reference_count,
+            "has_assets": row.has_assets,
+            "item_type": row.item_type,
         }))
         .collect();
 
@@ -1071,6 +1170,7 @@ pub async fn list_apps(
     Json(result).into_response()
 }
 
+#[allow(dead_code)]
 #[derive(serde::Serialize)]
 pub struct AppDetailStats {
     app_id: String,
@@ -1080,6 +1180,7 @@ pub struct AppDetailStats {
     performance: PerformanceMetrics,
 }
 
+#[allow(dead_code)]
 #[derive(serde::Serialize)]
 pub struct AppOverview {
     total_events: usize,
@@ -1107,6 +1208,7 @@ pub struct ActivityLog {
     stream_id: String,
 }
 
+#[allow(dead_code)]
 #[derive(serde::Serialize)]
 pub struct PerformanceMetrics {
     total_storage_bytes: usize,
