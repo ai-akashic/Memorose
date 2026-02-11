@@ -108,6 +108,9 @@ async fn proxy_handler(
     let query = req.uri().query().map(|q| q.to_string());
     let method = req.method().clone();
 
+    // Buffer body bytes so we can replay on Raft "Not Leader" redirects.
+    // Without buffering, the stream is consumed on the first attempt
+    // and POST/PUT retries would always fail with BAD_GATEWAY.
     let body_bytes = if method == axum::http::Method::GET || method == axum::http::Method::HEAD {
         None
     } else {
@@ -157,7 +160,10 @@ async fn proxy_request_with_retry(
     let client = &state.http_client;
     let max_retries = 3;
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 7f511f8 (fix: Refactor proxy_handler to buffer request body)
     for attempt in 0..max_retries {
         let addr = match &target_addr {
             Some(a) => a.clone(),
@@ -185,6 +191,11 @@ async fn proxy_request_with_retry(
             }
         }
 
+<<<<<<< HEAD
+=======
+        // Body is pre-buffered as Bytes, so clone is cheap (reference-counted)
+        // and retries work correctly for all HTTP methods.
+>>>>>>> 7f511f8 (fix: Refactor proxy_handler to buffer request body)
         if let Some(ref bytes) = body {
             builder = builder.body(bytes.clone());
         }
