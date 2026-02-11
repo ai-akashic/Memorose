@@ -172,18 +172,31 @@ impl BackgroundWorker {
         Ok(())
     }
 
+    fn parse_metadata_embedding(metadata: &serde_json::Value) -> Option<Option<Vec<f32>>> {
+        metadata
+            .get("embedding")
+            .and_then(|v| v.as_array())
+            .map(|values| {
+                values
+                    .iter()
+                    .map(|v| v.as_f64().map(|f| f as f32))
+                    .collect::<Option<Vec<f32>>>()
+                    .filter(|vec| !vec.is_empty())
+            })
+    }
+
     async fn run_consolidation_cycle(&self) -> Result<bool> {
         let events = self.engine.fetch_pending_events().await?;
         if events.is_empty() {
             return Ok(false);
         }
 
-        tracing::info!("Consolidating {} events concurrently...", events.len());
-        let mut units_to_store = Vec::new();
-        let mut processed_event_ids = Vec::new();
+        tracing::info!("Consolidating {} events with batch embedding...", events.len());
 
+        // Phase 1: Process content and compress in parallel
         let mut join_set = tokio::task::JoinSet::new();
         let llm_client = self.llm_client.clone();
+        let mut compressed_data = Vec::new();
 
         for event in events {
             let llm_clone = llm_client.clone();
@@ -197,9 +210,9 @@ impl BackgroundWorker {
             // Limit concurrency
             if join_set.len() >= self.config.llm_concurrency {
                 if let Some(res) = join_set.join_next().await {
-                    if let Ok(Some((unit, eid))) = res {
-                        units_to_store.push(unit);
-                        processed_event_ids.push(eid);
+                    match res {
+                        Ok(data) => compressed_data.push(data),
+                        Err(e) => tracing::error!("Failed to process consolidation task: {:?}", e),
                     }
                 }
             }
@@ -277,62 +290,161 @@ impl BackgroundWorker {
                     None => (text_to_process, None),
                 };
 
-                // 3. Embedding
-                let embedding = if let Some(emb_val) = metadata.get("embedding").and_then(|v| v.as_array()) {
-                    // Try to parse embedding from metadata first
-                    let vec: Option<Vec<f32>> = emb_val.iter()
-                        .map(|v| v.as_f64().map(|f| f as f32))
-                        .collect();
-                    vec
-                } else if let Some(ref client) = llm_clone {
-                    // Fallback to server-side embedding
-                    client.embed(&summary).await.ok()
-                } else {
-                    None
-                };
-
-                // 4. Create Unit with user_id and app_id
-                let mut unit = MemoryUnit::new(user_id, app_id, stream_id, summary, embedding);
-                unit.valid_time = valid_at.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc)));
-                unit.assets = assets;
-
-                // 5. Task-specific Logic
-                if let Some(level) = metadata.get("target_level").and_then(|v| v.as_u64()) {
-                    unit.level = level as u8;
-
-                    if let Some(parent_id_str) = metadata.get("parent_id").and_then(|v| v.as_str()) {
-                        if let Ok(parent_id) = uuid::Uuid::parse_str(parent_id_str) {
-                            unit.references.push(parent_id);
-                        }
-                    }
-
-                    if level >= 1 {
-                        let status = match metadata.get("task_status").and_then(|v| v.as_str()) {
-                            Some("Completed") => memorose_common::TaskStatus::Completed,
-                            Some("Active") => memorose_common::TaskStatus::Active,
-                            Some("Failed") => memorose_common::TaskStatus::Failed,
-                            Some("Blocked") => memorose_common::TaskStatus::Blocked,
-                            _ => memorose_common::TaskStatus::Pending,
-                        };
-
-                        unit.task_metadata = Some(memorose_common::TaskMetadata {
-                            status,
-                            progress: metadata.get("task_progress").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
-                        });
-                    }
-                }
-
-                Some((unit, event_id.to_string()))
+                // Return data for batching
+                (event_id, user_id, app_id, stream_id, summary, valid_at, assets, metadata)
             });
         }
 
-        // Collect remaining
+        // Collect all compressed results
         while let Some(res) = join_set.join_next().await {
-            if let Ok(Some((unit, eid))) = res {
-                units_to_store.push(unit);
-                processed_event_ids.push(eid);
+            match res {
+                Ok(data) => compressed_data.push(data),
+                Err(e) => tracing::error!("Failed to process consolidation task: {:?}", e),
             }
         }
+
+        if compressed_data.is_empty() {
+            return Ok(false);
+        }
+
+        // Phase 2: Batch embed all summaries
+        let mut texts_to_embed = Vec::new();
+        let mut needs_embedding = Vec::new();
+
+        for (idx, (event_id, _, _, _, summary, _, _, metadata)) in compressed_data.iter().enumerate() {
+            // Use metadata embedding when valid; re-embed when invalid or missing.
+            match Self::parse_metadata_embedding(metadata) {
+                Some(Some(_)) => continue,
+                Some(None) => {
+                    tracing::warn!(
+                        "Invalid embedding metadata for event {}, falling back to model embedding",
+                        event_id
+                    );
+                }
+                None => {}
+            }
+
+            texts_to_embed.push(summary.clone());
+            needs_embedding.push(idx);
+        }
+
+        let embeddings = if !texts_to_embed.is_empty() {
+            if let Some(client) = llm_client.as_ref() {
+                tracing::info!("Batch embedding {} texts...", texts_to_embed.len());
+                let mut fallback_to_single = false;
+
+                let batch_embeddings = match client.embed_batch(texts_to_embed.clone()).await {
+                    Ok(embs) => {
+                        if embs.len() == needs_embedding.len() {
+                            Some(embs)
+                        } else {
+                            tracing::error!(
+                                "Batch embedding count mismatch: requested={}, received={}",
+                                needs_embedding.len(),
+                                embs.len()
+                            );
+                            fallback_to_single = true;
+                            None
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Batch embedding failed: {:?}", e);
+                        fallback_to_single = true;
+                        None
+                    }
+                };
+
+                if let Some(embs) = batch_embeddings {
+                    embs
+                } else if fallback_to_single {
+                    tracing::info!(
+                        "Falling back to individual embedding for {} texts",
+                        texts_to_embed.len()
+                    );
+                    let mut embs = Vec::with_capacity(texts_to_embed.len());
+                    for text in texts_to_embed {
+                        match client.embed(&text).await {
+                            Ok(embedding) => embs.push(embedding),
+                            Err(e) => {
+                                tracing::warn!("Fallback embed failed: {:?}", e);
+                                embs.push(vec![]);
+                            }
+                        }
+                    }
+                    embs
+                } else {
+                    vec![]
+                }
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        };
+
+        if embeddings.len() != needs_embedding.len() {
+            tracing::warn!(
+                "Embedding result count mismatch after fallback: expected={}, got={}",
+                needs_embedding.len(),
+                embeddings.len()
+            );
+        }
+
+        let mut embeddings_by_idx = HashMap::with_capacity(needs_embedding.len());
+        for (event_idx, embedding) in needs_embedding.into_iter().zip(embeddings.into_iter()) {
+            if !embedding.is_empty() {
+                embeddings_by_idx.insert(event_idx, embedding);
+            }
+        }
+
+        // Phase 3: Create memory units with embeddings
+        let mut units_to_store = Vec::new();
+        let mut processed_event_ids = Vec::new();
+
+        for (idx, (event_id, user_id, app_id, stream_id, summary, valid_at, assets, metadata)) in compressed_data.into_iter().enumerate() {
+            // Get embedding (either from metadata or from batch result)
+            let embedding = match Self::parse_metadata_embedding(&metadata) {
+                Some(Some(vec)) => Some(vec),
+                Some(None) | None => embeddings_by_idx.remove(&idx),
+            };
+
+            // Create Unit
+            let mut unit = MemoryUnit::new(user_id, app_id, stream_id, summary, embedding);
+            unit.valid_time = valid_at.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc)));
+            unit.assets = assets;
+
+            // Task-specific Logic
+            if let Some(level) = metadata.get("target_level").and_then(|v| v.as_u64()) {
+                unit.level = level as u8;
+
+                if let Some(parent_id_str) = metadata.get("parent_id").and_then(|v| v.as_str()) {
+                    if let Ok(parent_id) = uuid::Uuid::parse_str(parent_id_str) {
+                        unit.references.push(parent_id);
+                    }
+                }
+
+                if level >= 1 {
+                    let status = match metadata.get("task_status").and_then(|v| v.as_str()) {
+                        Some("Completed") => memorose_common::TaskStatus::Completed,
+                        Some("Active") => memorose_common::TaskStatus::Active,
+                        Some("Failed") => memorose_common::TaskStatus::Failed,
+                        Some("Blocked") => memorose_common::TaskStatus::Blocked,
+                        _ => memorose_common::TaskStatus::Pending,
+                    };
+
+                    unit.task_metadata = Some(memorose_common::TaskMetadata {
+                        status,
+                        progress: metadata.get("task_progress").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+                    });
+                }
+            }
+
+            units_to_store.push(unit);
+            processed_event_ids.push(event_id.to_string());
+        }
+
+        // Store all units
+        tracing::info!("Storing {} memory units...", units_to_store.len());
 
         if !units_to_store.is_empty() {
             self.engine.store_memory_units(units_to_store.clone()).await?;

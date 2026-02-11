@@ -103,6 +103,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_embed_batch_success() {
+        let mock_server = MockServer::start().await;
+
+        let expected_response = json!({
+            "embeddings": [
+                { "values": [0.1, 0.2, 0.3] },
+                { "values": [0.4, 0.5, 0.6] }
+            ]
+        });
+
+        Mock::given(method("POST"))
+            .and(path(format!("/v1beta/models/{}:batchEmbedContents", TEST_EMBEDDING_MODEL)))
+            .and(query_param("key", "test-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(expected_response))
+            .mount(&mock_server)
+            .await;
+
+        let client = GeminiClient::with_base_url(
+            "test-key".to_string(),
+            TEST_MODEL.to_string(),
+            TEST_EMBEDDING_MODEL.to_string(),
+            mock_server.uri(),
+        );
+
+        let result = client
+            .embed_batch(vec!["one".to_string(), "two".to_string()])
+            .await;
+        assert!(result.is_ok());
+
+        let embeddings = result.unwrap();
+        assert_eq!(embeddings.len(), 2);
+        assert_eq!(embeddings[0], vec![0.1, 0.2, 0.3]);
+        assert_eq!(embeddings[1], vec![0.4, 0.5, 0.6]);
+    }
+
+    #[tokio::test]
+    async fn test_embed_batch_count_mismatch() {
+        let mock_server = MockServer::start().await;
+
+        let mismatch_response = json!({
+            "embeddings": [
+                { "values": [0.1, 0.2, 0.3] }
+            ]
+        });
+
+        Mock::given(method("POST"))
+            .and(path(format!("/v1beta/models/{}:batchEmbedContents", TEST_EMBEDDING_MODEL)))
+            .and(query_param("key", "test-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mismatch_response))
+            .mount(&mock_server)
+            .await;
+
+        let client = GeminiClient::with_base_url(
+            "test-key".to_string(),
+            TEST_MODEL.to_string(),
+            TEST_EMBEDDING_MODEL.to_string(),
+            mock_server.uri(),
+        );
+
+        let result = client
+            .embed_batch(vec!["one".to_string(), "two".to_string()])
+            .await;
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("count mismatch"));
+    }
+
+    #[tokio::test]
     async fn test_describe_image_invalid_url() {
         let mock_server = MockServer::start().await;
         
