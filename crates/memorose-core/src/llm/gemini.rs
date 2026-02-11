@@ -107,6 +107,21 @@ struct Embedding {
     values: Vec<f32>,
 }
 
+// ============== Batch Embedding API Structures ==============
+
+#[derive(Serialize)]
+struct BatchEmbedRequest {
+    requests: Vec<EmbedRequest>,
+}
+
+#[derive(Deserialize)]
+struct BatchEmbedResponse {
+    embeddings: Option<Vec<Embedding>>,
+    error: Option<ApiError>,
+}
+
+const GEMINI_BATCH_EMBED_MAX_SIZE: usize = 100;
+
 #[async_trait]
 impl LLMClient for GeminiClient {
     async fn generate(&self, prompt: &str) -> Result<String> {
@@ -115,25 +130,22 @@ impl LLMClient for GeminiClient {
 
     async fn embed(&self, text: &str) -> Result<Vec<f32>> {
         let clean_model = self.embedding_model.trim_start_matches("models/");
+        let model_name = format!("models/{}", clean_model);
         let url = format!(
             "{}/v1beta/models/{}:embedContent?key={}",
-            self.base_url.trim_end_matches('/'), 
-            clean_model, 
+            self.base_url.trim_end_matches('/'),
+            clean_model,
             self.api_key.trim()
         );
 
         let request = EmbedRequest {
-            model: format!("models/{}", self.embedding_model),
+            model: model_name,
             content: EmbedContent {
                 parts: vec![Part::Text { text: text.to_string() }],
             },
         };
 
-        let response = self.client
-            .post(&url)
-            .json(&request)
-            .send()
-            .await?;
+        let response = self.client.post(&url).json(&request).send().await?;
 
         let status = response.status();
         let body = response.text().await?;
@@ -149,9 +161,90 @@ impl LLMClient for GeminiClient {
             return Err(anyhow!("Gemini Embedding API error: {}", err.message));
         }
 
-        parsed.embedding
+        parsed
+            .embedding
             .map(|e| e.values)
             .ok_or_else(|| anyhow!("No embedding in Gemini response"))
+    }
+
+    async fn embed_batch(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let clean_model = self.embedding_model.trim_start_matches("models/");
+        let model_name = format!("models/{}", clean_model);
+        let url = format!(
+            "{}/v1beta/models/{}:batchEmbedContents?key={}",
+            self.base_url.trim_end_matches('/'),
+            clean_model,
+            self.api_key.trim()
+        );
+
+        let mut all_embeddings = Vec::with_capacity(texts.len());
+
+        for chunk in texts.chunks(GEMINI_BATCH_EMBED_MAX_SIZE) {
+            let requests: Vec<EmbedRequest> = chunk
+                .iter()
+                .map(|text| EmbedRequest {
+                    model: model_name.clone(),
+                    content: EmbedContent {
+                        parts: vec![Part::Text {
+                            text: text.to_string(),
+                        }],
+                    },
+                })
+                .collect();
+
+            let batch_request = BatchEmbedRequest { requests };
+
+            tracing::debug!(
+                "Batch embedding chunk size={} (total={})",
+                chunk.len(),
+                texts.len()
+            );
+
+            let response = self.client.post(&url).json(&batch_request).send().await?;
+
+            let status = response.status();
+            let body = response.text().await?;
+
+            if !status.is_success() {
+                return Err(anyhow!(
+                    "Gemini Batch Embedding API error ({}): {}",
+                    status,
+                    body
+                ));
+            }
+
+            let parsed: BatchEmbedResponse = serde_json::from_str(&body).map_err(|e| {
+                anyhow!(
+                    "Failed to parse Gemini batch embedding response: {} - body: {}",
+                    e,
+                    body
+                )
+            })?;
+
+            if let Some(err) = parsed.error {
+                return Err(anyhow!("Gemini Batch Embedding API error: {}", err.message));
+            }
+
+            let embeddings = parsed
+                .embeddings
+                .ok_or_else(|| anyhow!("No embeddings in Gemini batch response"))?;
+
+            if embeddings.len() != chunk.len() {
+                return Err(anyhow!(
+                    "Gemini batch embedding count mismatch: requested={}, received={}",
+                    chunk.len(),
+                    embeddings.len()
+                ));
+            }
+
+            all_embeddings.extend(embeddings.into_iter().map(|e| e.values));
+        }
+
+        Ok(all_embeddings)
     }
 
     async fn compress(&self, text: &str) -> Result<super::CompressionOutput> {
