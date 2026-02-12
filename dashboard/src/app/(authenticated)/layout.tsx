@@ -156,7 +156,7 @@ export default function AuthenticatedLayout({
             </div>
           </aside>
 
-          <main className="flex-1 overflow-auto h-full">
+          <main className="flex-1 overflow-auto h-full allow-select">
             <div className="p-6 max-w-7xl h-full">{children}</div>
           </main>
         </div>

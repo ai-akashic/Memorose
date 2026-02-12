@@ -12,7 +12,7 @@ async fn main() -> Result<()> {
     if data_dir.exists() { fs::remove_dir_all(&data_dir)?; }
     
     // Initialize Engine & Worker
-    let engine = MemoroseEngine::new(&data_dir, 1000, true, true).await?;
+    let engine = MemoroseEngine::new_with_default_threshold(&data_dir, 1000, true, true).await?;
     let engine_clone = engine.clone();
     
     // Note: This requires an API Key to actually work with LLM. 

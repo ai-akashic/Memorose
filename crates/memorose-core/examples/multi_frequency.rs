@@ -11,7 +11,7 @@ async fn main() -> Result<()> {
     let data_dir = PathBuf::from("./data_example_frequency");
     if data_dir.exists() { fs::remove_dir_all(&data_dir)?; }
     
-    let engine = MemoroseEngine::new(&data_dir, 1000, true, true).await?;
+    let engine = MemoroseEngine::new_with_default_threshold(&data_dir, 1000, true, true).await?;
     let engine_clone = engine.clone();
     let user_id = "example_user".to_string();
     let app_id = "example_app".to_string();

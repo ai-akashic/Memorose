@@ -22,7 +22,7 @@ async fn main() -> Result<()> {
     // 初始化引擎
     let data_dir = PathBuf::from("./data_community_demo");
     if data_dir.exists() { std::fs::remove_dir_all(&data_dir)?; }
-    let engine = MemoroseEngine::new(&data_dir, 1000, false, false).await?;
+    let engine = MemoroseEngine::new_with_default_threshold(&data_dir, 1000, false, false).await?;
 
     let user_id = "demo_user";
     let app_id = "demo_app";
