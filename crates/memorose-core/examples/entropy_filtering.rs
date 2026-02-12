@@ -57,7 +57,7 @@ async fn main() -> Result<()> {
     if data_dir.exists() { fs::remove_dir_all(&data_dir)?;
     }
     
-    let engine = MemoroseEngine::new(&data_dir, 1000, true, true).await?;
+    let engine = MemoroseEngine::new_with_default_threshold(&data_dir, 1000, true, true).await?;
     let ingestor = SmartIngestor::new(engine, 3.5); // Threshold
 
     println!("🧪 --- Memorose Entropy Filtering Concept ---");

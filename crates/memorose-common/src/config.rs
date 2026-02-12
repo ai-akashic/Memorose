@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use config::{Config, ConfigError, File, Environment};
 
+pub const DEFAULT_AUTO_LINK_SIMILARITY_THRESHOLD: f32 = 0.6;
+pub const DEFAULT_COMMUNITY_TRIGGER_L1_STEP: usize = 5;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum LLMProvider {
     OpenAI,
@@ -43,11 +46,23 @@ pub struct RaftConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkerConfig {
     pub llm_concurrency: usize,
+    pub decay_interval_secs: u64,
+    pub decay_factor: f32,
+    pub prune_threshold: f32,
     pub consolidation_interval_ms: u64,
+    pub consolidation_batch_size: usize,
+    pub consolidation_max_retries: u32,
+    pub compaction_interval_secs: u64,
     pub community_interval_ms: u64,
+    pub community_min_members: usize,
+    pub community_max_users_per_cycle: usize,
+    pub community_max_groups_per_user: usize,
+    pub community_trigger_l1_step: usize,
     pub insight_interval_ms: u64,
+    pub insight_recent_l1_limit: usize,
     pub enable_auto_planner: bool,
     pub enable_task_reflection: bool,
+    pub auto_link_similarity_threshold: f32,
 }
 
 fn default_shard_count() -> u32 { 1 }
@@ -133,11 +148,23 @@ impl Default for WorkerConfig {
     fn default() -> Self {
         Self {
             llm_concurrency: 5,
+            decay_interval_secs: 60,
+            decay_factor: 0.9,
+            prune_threshold: 0.1,
             consolidation_interval_ms: 1000,
-            community_interval_ms: 60000,
+            consolidation_batch_size: 200,
+            consolidation_max_retries: 3,  // 最多重试3次
+            compaction_interval_secs: 3600,
+            community_interval_ms: 1000,  // 从 60000ms (60秒) 改为 1000ms (1秒)
+            community_min_members: 3,
+            community_max_users_per_cycle: 100000,
+            community_max_groups_per_user: 100000,
+            community_trigger_l1_step: DEFAULT_COMMUNITY_TRIGGER_L1_STEP,
             insight_interval_ms: 30000,
+            insight_recent_l1_limit: 20,
             enable_auto_planner: true,
             enable_task_reflection: true,
+            auto_link_similarity_threshold: DEFAULT_AUTO_LINK_SIMILARITY_THRESHOLD,  // 相似度阈值，从 0.7 降低到 0.6
         }
     }
 }
@@ -172,12 +199,24 @@ impl AppConfig {
             .set_default("raft.election_timeout_max_ms", 3000)?
             .set_default("raft.snapshot_logs", 1000000)?
             .set_default("worker.llm_concurrency", 5)?
+            .set_default("worker.decay_interval_secs", 60)?
+            .set_default("worker.decay_factor", 0.9)?
+            .set_default("worker.prune_threshold", 0.1)?
             .set_default("worker.consolidation_interval_ms", 1000)?
-            .set_default("worker.community_interval_ms", 60000)?
+            .set_default("worker.consolidation_batch_size", 200)?
+            .set_default("worker.consolidation_max_retries", 3)?
+            .set_default("worker.compaction_interval_secs", 3600)?
+            .set_default("worker.community_interval_ms", 1000)?  // 从 60000ms 改为 1000ms
+            .set_default("worker.community_min_members", 3)?
+            .set_default("worker.community_max_users_per_cycle", 100000)?
+            .set_default("worker.community_max_groups_per_user", 100000)?
+            .set_default("worker.community_trigger_l1_step", DEFAULT_COMMUNITY_TRIGGER_L1_STEP as i64)?
             .set_default("worker.insight_interval_ms", 30000)?
+            .set_default("worker.insight_recent_l1_limit", 20)?
             .set_default("worker.enable_auto_planner", true)?
             .set_default("worker.enable_task_reflection", true)?
-            
+            .set_default("worker.auto_link_similarity_threshold", DEFAULT_AUTO_LINK_SIMILARITY_THRESHOLD as f64)?
+
             // File: config.toml
             .add_source(File::with_name("config").required(false))
             

@@ -9,7 +9,7 @@ async fn main() -> Result<()> {
     
     println!("🕵️‍♀️ Inspecting Memorose State at {:?}...", data_path); 
     
-    let engine = MemoroseEngine::new(&data_path, 1000, true, true).await?;
+    let engine = MemoroseEngine::new_with_default_threshold(&data_path, 1000, true, true).await?;
     let user_id = "example_user";
     
     // 1. Check Pending Events (L0)

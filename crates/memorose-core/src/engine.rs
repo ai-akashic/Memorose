@@ -31,6 +31,7 @@ pub struct MemoroseEngine {
     pub auto_planner: bool,
     pub task_reflection: bool,
     pub task_locks: Arc<DashMap<Uuid, Arc<Mutex<()>>>>,
+    pub auto_link_similarity_threshold: f32,
     // 新增：查询优化组件
     query_cache: Arc<crate::graph::QueryCache>,
     batch_executor: Arc<crate::graph::BatchExecutor>,
@@ -81,11 +82,27 @@ fn cosine_similarity(v1: &[f32], v2: &[f32]) -> f32 {
 }
 
 impl MemoroseEngine {
+    pub async fn new_with_default_threshold(
+        path: impl Into<PathBuf>,
+        commit_interval_ms: u64,
+        auto_planner: bool,
+        task_reflection: bool,
+    ) -> Result<Self> {
+        Self::new(
+            path,
+            commit_interval_ms,
+            auto_planner,
+            task_reflection,
+            memorose_common::config::DEFAULT_AUTO_LINK_SIMILARITY_THRESHOLD,
+        ).await
+    }
+
     pub async fn new(
         path: impl Into<PathBuf>,
         commit_interval_ms: u64,
         auto_planner: bool,
         task_reflection: bool,
+        auto_link_similarity_threshold: f32,
     ) -> Result<Self> {
         let root_path = path.into();
         std::fs::create_dir_all(&root_path)?;
@@ -131,6 +148,7 @@ impl MemoroseEngine {
             auto_planner,
             task_reflection,
             task_locks: Arc::new(DashMap::new()),
+            auto_link_similarity_threshold,
             query_cache,
             batch_executor,
         })
@@ -146,6 +164,26 @@ impl MemoroseEngine {
     }
 
     pub async fn ingest_event_directly(&self, event: Event) -> Result<()> {
+        // Validate event content is not empty
+        let is_empty = match &event.content {
+            memorose_common::EventContent::Text(text) => text.trim().is_empty(),
+            memorose_common::EventContent::Image(url) => url.trim().is_empty(),
+            memorose_common::EventContent::Audio(url) => url.trim().is_empty(),
+            memorose_common::EventContent::Video(url) => url.trim().is_empty(),
+            memorose_common::EventContent::Json(val) => {
+                val.is_null() || (val.is_string() && val.as_str().unwrap_or("").trim().is_empty())
+            }
+        };
+
+        if is_empty {
+            return Err(anyhow::anyhow!(
+                "Rejected empty event: event_id={}, user_id={}, content type={:?}",
+                event.id,
+                event.user_id,
+                std::mem::discriminant(&event.content)
+            ));
+        }
+
         let event_id = event.id.to_string();
         let user_id = event.user_id.clone();
         let app_id = event.app_id.clone();
@@ -231,6 +269,14 @@ impl MemoroseEngine {
     }
 
     pub async fn fetch_pending_events(&self) -> Result<Vec<Event>> {
+        self.fetch_pending_events_limited(usize::MAX).await
+    }
+
+    pub async fn fetch_pending_events_limited(&self, limit: usize) -> Result<Vec<Event>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
         let skv = self.system_kv();
         let pending_pairs = tokio::task::spawn_blocking(move || {
             skv.scan(b"pending:")
@@ -238,6 +284,10 @@ impl MemoroseEngine {
 
         let mut events = Vec::new();
         for (key, val) in pending_pairs {
+            if events.len() >= limit {
+                break;
+            }
+
             let key_str = String::from_utf8(key)?;
             let parts: Vec<&str> = key_str.split(':').collect();
             if parts.len() == 2 {
@@ -263,6 +313,59 @@ impl MemoroseEngine {
     pub async fn mark_event_processed(&self, id: &str) -> Result<()> {
         let key = format!("pending:{}", id);
         self.system_kv().delete(key.as_bytes())?;
+        // 同时删除重试计数
+        let retry_key = format!("retry_count:{}", id);
+        self.system_kv().delete(retry_key.as_bytes())?;
+        Ok(())
+    }
+
+    pub async fn get_retry_count(&self, id: &str) -> Result<u32> {
+        let key = format!("retry_count:{}", id);
+        match self.system_kv().get(key.as_bytes())? {
+            Some(bytes) => {
+                let count = u32::from_le_bytes(bytes.try_into().unwrap_or([0, 0, 0, 0]));
+                Ok(count)
+            }
+            None => Ok(0),
+        }
+    }
+
+    pub async fn increment_retry_count(&self, id: &str) -> Result<u32> {
+        let key = format!("retry_count:{}", id);
+        let current = self.get_retry_count(id).await?;
+        let new_count = current + 1;
+        self.system_kv().put(key.as_bytes(), &new_count.to_le_bytes())?;
+        Ok(new_count)
+    }
+
+    pub async fn increment_retry_count_if_pending(&self, id: &str) -> Result<Option<u32>> {
+        let pending_key = format!("pending:{}", id);
+        if self.system_kv().get(pending_key.as_bytes())?.is_none() {
+            return Ok(None);
+        }
+        let count = self.increment_retry_count(id).await?;
+        Ok(Some(count))
+    }
+
+    pub async fn mark_event_failed(&self, id: &str, error: &str) -> Result<()> {
+        // 从 pending 队列移除
+        let pending_key = format!("pending:{}", id);
+        self.system_kv().delete(pending_key.as_bytes())?;
+
+        // 移到失败队列
+        let retry_count = self.get_retry_count(id).await?;
+        let failed_key = format!("failed:{}", id);
+        let failed_info = serde_json::json!({
+            "error": error,
+            "failed_at": chrono::Utc::now().to_rfc3339(),
+            "retry_count": retry_count
+        });
+        self.system_kv().put(failed_key.as_bytes(), &serde_json::to_vec(&failed_info)?)?;
+
+        // 清理重试计数，避免失败事件残留状态。
+        let retry_key = format!("retry_count:{}", id);
+        self.system_kv().delete(retry_key.as_bytes())?;
+
         Ok(())
     }
 
@@ -635,7 +738,7 @@ impl MemoroseEngine {
             let similar = self.search_similar(&unit.user_id, None, embedding, 5, filter).await?;
 
             for (peer, score) in similar {
-                if peer.id != unit.id && score > 0.7 {
+                if peer.id != unit.id && score > self.auto_link_similarity_threshold {  // 使用配置值
                     let edge = GraphEdge::new(unit.user_id.clone(), unit.id, peer.id, RelationType::RelatedTo, score);
                     self.graph.add_edge(&edge).await?;
 
@@ -725,7 +828,7 @@ impl MemoroseEngine {
 
                 let is_relevant = match edge.relation {
                     RelationType::DerivedFrom | RelationType::EvolvedTo => true,
-                    RelationType::RelatedTo if edge.weight > 0.6 => true,
+                    RelationType::RelatedTo if edge.weight > self.auto_link_similarity_threshold => true,
                     _ => false,
                 };
 
@@ -1010,10 +1113,22 @@ impl MemoroseEngine {
 
     /// Graph-driven L2 Generation for a specific user.
     pub async fn process_communities(&self, user_id: &str) -> Result<()> {
+        self.process_communities_with_limits(user_id, 3, usize::MAX).await?;
+        Ok(())
+    }
+
+    /// Graph-driven L2 generation with configurable thresholds/limits.
+    /// Returns number of L2 units created in this run.
+    pub async fn process_communities_with_limits(
+        &self,
+        user_id: &str,
+        min_members: usize,
+        max_groups: usize,
+    ) -> Result<usize> {
         let edges = self.graph.get_all_edges_for_user(user_id).await?;
 
         if edges.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
 
         let communities = tokio::task::spawn_blocking(move || {
@@ -1025,8 +1140,15 @@ impl MemoroseEngine {
             community_groups.entry(community_id).or_default().push(node_id);
         }
 
+        let min_members = min_members.max(1);
+        let mut created = 0usize;
+
         for (_comm_id, members) in community_groups {
-            if members.len() < 3 {
+            if created >= max_groups {
+                break;
+            }
+
+            if members.len() < min_members {
                 continue;
             }
 
@@ -1068,10 +1190,11 @@ impl MemoroseEngine {
                 self.graph.add_edge(&edge).await?;
             }
 
+            created += 1;
             tracing::info!("Created L2 Insight '{}' from {} members for user {}", insight.name, units.len(), user_id);
         }
 
-        Ok(())
+        Ok(created)
     }
 
     /// 增强版社区检测（支持多种算法）
@@ -1255,6 +1378,63 @@ impl MemoroseEngine {
         Ok(results)
     }
 
+    /// Count the total number of L1 memory units for a specific user.
+    pub async fn count_l1_units(&self, user_id: &str) -> Result<usize> {
+        let prefix = format!("u:{}:unit:", user_id);
+        let store = self._kv.clone();
+        let prefix_bytes = prefix.into_bytes();
+
+        let count = tokio::task::spawn_blocking(move || {
+            let pairs = store.scan(&prefix_bytes)?;
+            let mut count = 0;
+            for (_, val) in pairs {
+                if let Ok(unit) = serde_json::from_slice::<MemoryUnit>(&val) {
+                    if unit.level == 1 {
+                        count += 1;
+                    }
+                }
+            }
+            Ok::<usize, anyhow::Error>(count)
+        }).await??;
+
+        Ok(count)
+    }
+
+    /// Track cumulative L1 growth and return the count range crossed by this update.
+    pub async fn bump_l1_count_and_get_range(&self, user_id: &str, delta: usize) -> Result<(usize, usize)> {
+        if delta == 0 {
+            let current = self.current_l1_count(user_id).await?;
+            return Ok((current, current));
+        }
+
+        let key = format!("l1_count:{}", user_id);
+        if let Some(bytes) = self.system_kv().get(key.as_bytes())? {
+            let current = u64::from_le_bytes(bytes.try_into().unwrap_or([0; 8])) as usize;
+            let updated = current.saturating_add(delta);
+            self.system_kv().put(key.as_bytes(), &(updated as u64).to_le_bytes())?;
+            return Ok((current, updated));
+        }
+
+        // Lazy init from real storage count so legacy data doesn't lose trigger state.
+        let current_after_store = self.count_l1_units(user_id).await?;
+        let current_before_store = current_after_store.saturating_sub(delta);
+        self.system_kv()
+            .put(key.as_bytes(), &(current_after_store as u64).to_le_bytes())?;
+        Ok((current_before_store, current_after_store))
+    }
+
+    async fn current_l1_count(&self, user_id: &str) -> Result<usize> {
+        let key = format!("l1_count:{}", user_id);
+        if let Some(bytes) = self.system_kv().get(key.as_bytes())? {
+            return Ok(u64::from_le_bytes(bytes.try_into().unwrap_or([0; 8])) as usize);
+        }
+
+        let current = self.count_l1_units(user_id).await?;
+        self.system_kv()
+            .put(key.as_bytes(), &(current as u64).to_le_bytes())?;
+        Ok(current)
+    }
+
     pub async fn fetch_units_with_scores(&self, user_id: &str, results: Vec<(String, f32)>) -> Result<Vec<(MemoryUnit, f32)>> {
         if results.is_empty() { return Ok(Vec::new()); }
 
@@ -1379,7 +1559,7 @@ mod tests {
     #[tokio::test]
     async fn test_engine_integration() -> Result<()> {
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new(temp_dir.path(), 1000, true, true).await?;
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
 
         // 1. Test L0 Ingestion
         let stream_id = Uuid::new_v4();
@@ -1441,7 +1621,7 @@ mod tests {
     #[tokio::test]
     async fn test_auto_linking() -> Result<()> {
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new(temp_dir.path(), 1000, true, true).await?;
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let stream_id = Uuid::new_v4();
 
         // 1. Store first memory
@@ -1471,7 +1651,7 @@ mod tests {
         }
 
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new(temp_dir.path(), 1000, true, true).await?;
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let stream_id = Uuid::new_v4();
 
         let mut emb1 = vec![0.0; 384]; emb1[0] = 1.0;
@@ -1499,7 +1679,7 @@ mod tests {
         }
 
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new(temp_dir.path(), 1000, true, true).await?;
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let stream_id = Uuid::new_v4();
 
         let mut emb1 = vec![0.0; 384]; emb1[0] = 1.0;
@@ -1541,7 +1721,7 @@ mod tests {
     #[tokio::test]
     async fn test_feedback_loop() -> Result<()> {
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new(temp_dir.path(), 1000, true, true).await?;
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let stream_id = Uuid::new_v4();
 
         let u1 = MemoryUnit::new(TEST_USER.into(), TEST_APP.into(), stream_id, "Memory A".into(), None);
@@ -1566,7 +1746,7 @@ mod tests {
     #[tokio::test]
     async fn test_temporal_text_search() -> Result<()> {
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new(temp_dir.path(), 1000, true, true).await?;
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let stream_id = Uuid::new_v4();
 
         let mut u1 = MemoryUnit::new(TEST_USER.into(), TEST_APP.into(), stream_id, "Memorose started in 2020".into(), None);
@@ -1596,7 +1776,7 @@ mod tests {
     #[tokio::test]
     async fn test_search_filters() -> Result<()> {
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new(temp_dir.path(), 1000, true, true).await?;
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let stream_id = Uuid::new_v4();
 
         let mut u1 = MemoryUnit::new(TEST_USER.into(), TEST_APP.into(), stream_id, "Highly relevant".into(), Some(vec![1.0; 384]));
@@ -1639,7 +1819,7 @@ mod tests {
     #[tokio::test]
     async fn test_custom_reranker() -> Result<()> {
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new(temp_dir.path(), 1000, true, true).await?
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?
             .with_reranker(std::sync::Arc::new(MockReranker));
 
         let u1 = MemoryUnit::new(TEST_USER.into(), TEST_APP.into(), Uuid::new_v4(), "Test".into(), Some(vec![1.0; 384]));
@@ -1656,7 +1836,7 @@ mod tests {
     #[tokio::test]
     async fn test_concurrency_progress_update() -> Result<()> {
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new(temp_dir.path(), 1000, true, true).await?;
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let stream_id = Uuid::new_v4();
 
         // 1. Create parent L2
@@ -1711,7 +1891,7 @@ mod tests {
     #[tokio::test]
     async fn test_user_isolation() -> Result<()> {
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new(temp_dir.path(), 1000, true, true).await?;
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let stream_id = Uuid::new_v4();
 
         // Store memory for user A
@@ -1735,6 +1915,81 @@ mod tests {
         let results_b = engine.search_text("user_b", None, "Secret", 10, false, None).await?;
         assert_eq!(results_b.len(), 1);
         assert_eq!(results_b[0].user_id, "user_b");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_mark_event_failed_clears_retry_state() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let event = Event::new(
+            TEST_USER.into(),
+            TEST_APP.into(),
+            Uuid::new_v4(),
+            EventContent::Text("retry me".into()),
+        );
+        let event_id = event.id.to_string();
+        engine.ingest_event_directly(event).await?;
+
+        assert_eq!(engine.increment_retry_count_if_pending(&event_id).await?, Some(1));
+        assert_eq!(engine.get_retry_count(&event_id).await?, 1);
+
+        engine.mark_event_failed(&event_id, "simulated failure").await?;
+
+        assert_eq!(engine.get_retry_count(&event_id).await?, 0);
+        assert_eq!(engine.increment_retry_count_if_pending(&event_id).await?, None);
+        assert!(engine.fetch_pending_events().await?.is_empty());
+        let failed_key = format!("failed:{}", event_id);
+        assert!(engine.system_kv().get(failed_key.as_bytes())?.is_some());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_bump_l1_count_tracks_threshold_crossing() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        for i in 0..4 {
+            let unit = MemoryUnit::new(
+                TEST_USER.into(),
+                TEST_APP.into(),
+                stream_id,
+                format!("base {}", i),
+                None,
+            );
+            engine.store_memory_unit(unit).await?;
+        }
+
+        for i in 0..2 {
+            let unit = MemoryUnit::new(
+                TEST_USER.into(),
+                TEST_APP.into(),
+                stream_id,
+                format!("delta {}", i),
+                None,
+            );
+            engine.store_memory_unit(unit).await?;
+        }
+
+        let (before, after) = engine.bump_l1_count_and_get_range(TEST_USER, 2).await?;
+        assert_eq!((before, after), (4, 6));
+        assert!(before / 5 < after / 5);
+
+        let unit = MemoryUnit::new(
+            TEST_USER.into(),
+            TEST_APP.into(),
+            stream_id,
+            "delta 2".into(),
+            None,
+        );
+        engine.store_memory_unit(unit).await?;
+        let (before, after) = engine.bump_l1_count_and_get_range(TEST_USER, 1).await?;
+        assert_eq!((before, after), (6, 7));
+        assert!(!(before / 5 < after / 5));
 
         Ok(())
     }

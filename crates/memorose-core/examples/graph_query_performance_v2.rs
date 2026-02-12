@@ -17,7 +17,7 @@ async fn main() -> Result<()> {
     // 初始化引擎
     let data_dir = PathBuf::from("./data_perf_test_v2");
     if data_dir.exists() { std::fs::remove_dir_all(&data_dir)?; }
-    let engine = MemoroseEngine::new(&data_dir, 1000, true, true).await?;
+    let engine = MemoroseEngine::new_with_default_threshold(&data_dir, 1000, true, true).await?;
 
     let user_id = "perf_test_user";
     let app_id = "perf_test_app";

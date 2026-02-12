@@ -30,7 +30,7 @@ async fn main() -> anyhow::Result<()> {
 
     for id in node_ids {
         let dir = tempdir()?;
-        let engine = MemoroseEngine::new(dir.path(), 1000, true, true).await?;
+        let engine = MemoroseEngine::new_with_default_threshold(dir.path(), 1000, true, true).await?;
         
         let mut node_config = config.clone();
         node_config.raft.node_id = id;
