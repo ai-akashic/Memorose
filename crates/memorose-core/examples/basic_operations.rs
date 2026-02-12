@@ -18,7 +18,7 @@ async fn main() -> Result<()> {
     println!("📂 Data directory: {:?}", data_dir);
 
     // 2. Initialize the Engine
-    let engine = MemoroseEngine::new(&data_dir, 1000, true, true).await?;
+    let engine = MemoroseEngine::new_with_default_threshold(&data_dir, 1000, true, true).await?;
     let stream_id = Uuid::new_v4();
 
     // 3. Store some memories (L1) with simulated embeddings

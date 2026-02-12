@@ -36,6 +36,7 @@ pub struct MemoroseRaftStorage {
     commit_interval_ms: u64,
     auto_planner: bool,
     task_reflection: bool,
+    auto_link_similarity_threshold: f32,
 }
 
 impl MemoroseRaftStorage {
@@ -43,12 +44,14 @@ impl MemoroseRaftStorage {
         let commit_interval_ms = engine.commit_interval_ms();
         let auto_planner = engine.auto_planner();
         let task_reflection = engine.task_reflection();
+        let auto_link_similarity_threshold = engine.auto_link_similarity_threshold;
         Self {
             engine: Arc::new(RwLock::new(Some(engine))),
             current_snapshot: Arc::new(Mutex::new(None)),
             commit_interval_ms,
             auto_planner,
             task_reflection,
+            auto_link_similarity_threshold,
         }
     }
 
@@ -557,6 +560,7 @@ impl RaftStorage<MemoroseTypeConfig> for MemoroseRaftStorage {
             self.commit_interval_ms,
             self.auto_planner,
             self.task_reflection,
+            self.auto_link_similarity_threshold,
         ).await.map_err(|e| StorageError::IO {
              source: openraft::StorageIOError::new(
                 openraft::ErrorSubject::Snapshot(None),
@@ -609,7 +613,7 @@ mod tests {
     #[tokio::test]
     async fn test_save_and_read_vote() -> anyhow::Result<()> {
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new(temp_dir.path(), 1000, true, true).await?;
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let mut store = MemoroseRaftStorage::new(engine);
 
         let vote = Vote::new(1, 100);
@@ -624,7 +628,7 @@ mod tests {
     #[tokio::test]
     async fn test_append_and_read_logs() -> anyhow::Result<()> {
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new(temp_dir.path(), 1000, true, true).await?;
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let mut store = MemoroseRaftStorage::new(engine);
 
         let entry1 = Entry {
@@ -652,7 +656,7 @@ mod tests {
     #[tokio::test]
     async fn test_state_machine_application() -> anyhow::Result<()> {
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new(temp_dir.path(), 1000, true, true).await?;
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let mut store = MemoroseRaftStorage::new(engine.clone());
 
         let event = Event::new("test_user".into(), "test_app".into(), Uuid::new_v4(), memorose_common::EventContent::Text("test".into()));
@@ -677,7 +681,7 @@ mod tests {
     #[ignore] // Snapshot build/install requires full RocksDB + LanceDB lifecycle; tracked for future fix
     async fn test_snapshot_build_and_install() -> anyhow::Result<()> {
         let temp_dir_src = tempdir()?;
-        let engine_src = MemoroseEngine::new(temp_dir_src.path(), 1000, true, true).await?;
+        let engine_src = MemoroseEngine::new_with_default_threshold(temp_dir_src.path(), 1000, true, true).await?;
         let mut store_src = MemoroseRaftStorage::new(engine_src.clone());
 
         // Add dummy data
@@ -694,7 +698,7 @@ mod tests {
 
         // 2. Install snapshot into a new engine
         let temp_dir_dst = tempdir()?;
-        let engine_dst = MemoroseEngine::new(temp_dir_dst.path(), 1000, true, true).await?;
+        let engine_dst = MemoroseEngine::new_with_default_threshold(temp_dir_dst.path(), 1000, true, true).await?;
         let mut store_dst = MemoroseRaftStorage::new(engine_dst);
 
         store_dst.install_snapshot(&snapshot.meta, snapshot.snapshot).await?;

@@ -446,6 +446,13 @@ function MemoryListTab({ userId }: { userId?: string }) {
                   <TableRow
                     key={m.id}
                     onClick={() => {
+                      const selection = window.getSelection();
+                      const selectingText =
+                        !!selection &&
+                        selection.type === "Range" &&
+                        selection.toString().trim().length > 0;
+                      if (selectingText) return;
+
                       if (canOpenDetail) {
                         handleViewDetail(m.id);
                       }

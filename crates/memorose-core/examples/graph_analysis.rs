@@ -9,7 +9,7 @@ use std::fs;
 async fn main() -> Result<()> {
     let data_dir = PathBuf::from("./data_example_graph");
     if data_dir.exists() { fs::remove_dir_all(&data_dir)?; }    
-    let engine = MemoroseEngine::new(&data_dir, 1000, true, true).await?;
+    let engine = MemoroseEngine::new_with_default_threshold(&data_dir, 1000, true, true).await?;
     let stream_id = Uuid::new_v4();
     let user_id = "example_user".to_string();
     let app_id = "example_app".to_string();
