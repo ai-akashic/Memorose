@@ -1,21 +1,31 @@
 # Memorose
 
 <p align="center">
-  <img src=".github/assets/logo.png" alt="Memorose Logo" width="200"/>
+  <img src="https://raw.githubusercontent.com/ai-akashic/Memorose/main/.github/assets/logo.png" alt="Memorose Logo" width="200"/>
 </p>
 
 <p align="center">
+  <em>"Stat rosa pristina nomine, nomina nuda tenemus."</em><br/>
+  <em>"The rose of old remains only in its name; we possess naked names."</em><br/>
+  — Bernard of Cluny, 12th Century
+</p>
+
+---
+
+**Memorose** (Memory + Rose) — inspired by the eternal rose — is a distributed, multimodal long-term memory lake for the AI era. Built on a timeless truth: **while things fade, memory endures**. We are crafting the most **reliable**, **evolving**, and **shared** memory infrastructure where humans and AI agents collaborate through unified context, transforming ephemeral data into enduring wisdom.
+
+---
+
+<p align="center">
   <b>⭐ If you find Memorose useful, please star this repo! ⭐</b><br/>
-  <i>Your support helps us build better AI memory systems</i>
+  <i>Your support helps us build the future of AI memory</i>
 </p>
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
-[![GitHub stars](https://img.shields.io/github/stars/yourusername/memorose?style=social)](https://github.com/yourusername/memorose/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/ai-akashic/Memorose?style=social)](https://github.com/ai-akashic/Memorose/stargazers)
 
 **AI Memory Database Inspired by Human Cognition**
-
-Memorose is a distributed long-term memory system for AI agents that mimics human memory: it **consolidates**, **forgets**, and **associates** automatically across three hierarchical layers.
 
 ## ✨ Key Features
 
@@ -44,7 +54,7 @@ Memorose is a distributed long-term memory system for AI agents that mimics huma
 
 ```bash
 # 1. Setup
-git clone https://github.com/yourusername/memorose.git
+git clone https://github.com/ai-akashic/Memorose.git
 cd memorose
 cp .env.example .env
 # Add your GOOGLE_API_KEY to .env
@@ -65,7 +75,7 @@ open http://localhost:3000/dashboard  # Login: admin/admin
 ## 📸 Dashboard
 
 <p align="center">
-  <img src="docs/images/memorose-memories.png" alt="Memory Browser" width="800"/>
+  <img src="https://raw.githubusercontent.com/ai-akashic/Memorose/main/docs/images/memorose-memories.png" alt="Memory Browser" width="800"/>
 </p>
 
 *Browse memories, visualize knowledge graphs, and monitor cluster status in real-time*
@@ -139,16 +149,6 @@ memorose/
 └── docs/                   # Architecture docs
 ```
 
-## 📊 Performance
-
-Benchmark results in [ai-memory-benchmark/](../ai-memory-benchmark/):
-- ✅ HaluMem: 100% recall, 50% QA accuracy
-- ✅ PersonaMem: 100% accuracy
-- ✅ LoCoMo L2: 0% → 100% quality
-- 🚀 1273x cache speedup for repeated queries
-
-See [FINAL_PROJECT_REPORT.md](../ai-memory-benchmark/FINAL_PROJECT_REPORT.md) for details.
-
 ## 🔌 API Reference
 
 **Ingest Event:**
@@ -175,9 +175,11 @@ Full API docs: [docs/API.md](docs/API.md)
 
 ## 🔮 Roadmap
 
-**Completed:** Three-layer architecture • Distributed Raft cluster • Active forgetting • Auto graph construction • Web dashboard • Production benchmarks
+**Completed:** Three-layer architecture • Distributed Raft cluster • Active forgetting • Auto graph construction • Web dashboard
 
-**In Progress:** Test coverage • Docker/K8s deployment • Multi-model support • Cost optimization
+**In Progress:**
+- Comprehensive benchmarks (HaluMem, PersonaMem, LoCoMo, LongMemEval)
+- Test coverage • Docker/K8s deployment • Multi-model support • Cost optimization
 
 **Future:** Multi-modal memory (images/audio) • Rerank plugins • Federated learning • GNN-based insights
 
