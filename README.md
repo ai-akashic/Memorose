@@ -1,7 +1,7 @@
 # Memorose
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ai-akashic/Memorose/main/.github/assets/logo.png" alt="Memorose Logo" width="200"/>
+  <img src=".github/assets/logo.png" alt="Memorose Logo" width="200"/>
 </p>
 
 <p align="center">
@@ -75,7 +75,7 @@ open http://localhost:3000/dashboard  # Login: admin/admin
 ## 📸 Dashboard
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ai-akashic/Memorose/main/docs/images/memorose-memories.png" alt="Memory Browser" width="800"/>
+  <img src="docs/images/memorose-memories.png" alt="Memory Browser" width="800"/>
 </p>
 
 *Browse memories, visualize knowledge graphs, and monitor cluster status in real-time*
