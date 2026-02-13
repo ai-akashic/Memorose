@@ -2,6 +2,14 @@
 name = "memorose-core"
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0"
+authors = ["Akashic Project Contributors"]
+repository = "https://github.com/yourusername/akashic"
+homepage = "https://github.com/yourusername/akashic"
+description = "Core memory engine for Memorose - AI memory database"
+keywords = ["ai", "memory", "database", "rag", "llm"]
+categories = ["database", "ai"]
+readme = "../../README.md"
 
 [dependencies]
 memorose-common = { path = "../memorose-common" }

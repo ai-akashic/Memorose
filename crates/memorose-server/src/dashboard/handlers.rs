@@ -273,17 +273,32 @@ pub async fn stats(
         let engine = shard.engine.clone();
         let uid_filter = user_id_filter.clone();
 
+        let edge_count = if let Some(ref uid) = uid_filter {
+            match engine.graph().get_all_edges_for_user(uid).await {
+                Ok(edges) => edges.len(),
+                Err(e) => {
+                    tracing::warn!("Failed to load graph edges for user {}: {:?}", uid, e);
+                    0
+                }
+            }
+        } else {
+            match engine.graph().scan_all_edges().await {
+                Ok(edges) => edges.len(),
+                Err(e) => {
+                    tracing::warn!("Failed to scan graph edges: {:?}", e);
+                    0
+                }
+            }
+        };
+
         let scan_result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             let kv = engine.kv();
 
             let pending_count = engine.system_kv().scan(b"pending:")?.len();
 
-            let (event_count, edge_count, units, l1_count, l2_count) = if let Some(ref uid) = uid_filter {
+            let (event_count, units, l1_count, l2_count) = if let Some(ref uid) = uid_filter {
                 let event_prefix = format!("u:{}:event:", uid);
                 let event_count = kv.scan(event_prefix.as_bytes())?.len();
-
-                let edge_prefix = format!("u:{}:edge:out:", uid);
-                let edge_count = kv.scan(edge_prefix.as_bytes())?.len();
 
                 let unit_prefix = format!("u:{}:unit:", uid);
                 let unit_pairs = kv.scan(unit_prefix.as_bytes())?;
@@ -300,20 +315,17 @@ pub async fn stats(
                         }
                     }
                 }
-                (event_count, edge_count, total_units, l1_count, l2_count)
+                (event_count, total_units, l1_count, l2_count)
             } else {
                 let all_pairs = kv.scan(b"u:")?;
                 tracing::debug!("Scanning all pairs: found {} keys starting with 'u:'", all_pairs.len());
                 let mut event_count = 0usize;
-                let mut edge_count = 0usize;
                 let mut total_units = 0usize;
                 let mut l1_count = 0usize;
                 let mut l2_count = 0usize;
                 for (k, val) in &all_pairs {
                     if k.windows(7).any(|w| w == b":event:") {
                         event_count += 1;
-                    } else if k.windows(10).any(|w| w == b":edge:out:") {
-                        edge_count += 1;
                     } else if k.windows(6).any(|w| w == b":unit:") {
                         if let Ok(unit) = serde_json::from_slice::<MemoryUnit>(val) {
                             total_units += 1;
@@ -325,18 +337,18 @@ pub async fn stats(
                         }
                     }
                 }
-                tracing::debug!("Scan results: events={}, edges={}, units={}, l1={}, l2={}",
-                    event_count, edge_count, total_units, l1_count, l2_count);
-                (event_count, edge_count, total_units, l1_count, l2_count)
+                tracing::debug!("Scan results: events={}, units={}, l1={}, l2={}",
+                    event_count, total_units, l1_count, l2_count);
+                (event_count, total_units, l1_count, l2_count)
             };
 
-            Ok((pending_count, event_count, edge_count, units, l1_count, l2_count))
+            Ok((pending_count, event_count, units, l1_count, l2_count))
         }).await;
 
-        if let Ok(Ok((pending, events, edges, units, l1, l2))) = scan_result {
+        if let Ok(Ok((pending, events, units, l1, l2))) = scan_result {
             total_pending += pending;
             total_events += events;
-            total_edges += edges;
+            total_edges += edge_count;
             total_units += units;
             total_l1 += l1;
             total_l2 += l2;

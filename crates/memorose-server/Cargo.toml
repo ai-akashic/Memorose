@@ -2,6 +2,13 @@
 name = "memorose-server"
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0"
+authors = ["Akashic Project Contributors"]
+repository = "https://github.com/yourusername/akashic"
+homepage = "https://github.com/yourusername/akashic"
+description = "HTTP server and Raft node for Memorose memory database"
+keywords = ["ai", "memory", "database", "server", "raft"]
+categories = ["database", "web-programming::http-server"]
 
 [dependencies]
 axum = "0.7"
@@ -27,3 +34,4 @@ anyhow = "1.0"
 async-recursion = "1.0"
 async-stream = "0.3"
 futures-util = "0.3"
+reqwest = { version = "0.12", features = ["json"] }

@@ -359,6 +359,46 @@ function SearchPlayground({ globalUserId }: { globalUserId?: string }) {
   );
 }
 
+function MemoryContent({ content }: { content: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleToggle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpanded(!expanded);
+  };
+
+  return (
+    <div className="flex items-start w-full gap-4">
+      <div className={`text-[13px] leading-snug max-w-[600px] ${expanded ? 'whitespace-pre-wrap' : 'line-clamp-2'}`}>
+        {content}
+      </div>
+      <div className="ml-auto flex gap-2 items-center flex-shrink-0">
+        <button
+          onClick={handleToggle}
+          className="text-[11px] text-primary hover:text-primary/80 hover:underline whitespace-nowrap bg-transparent border-none cursor-pointer p-0 font-normal"
+        >
+          {expanded ? "collapse" : "view"}
+        </button>
+        <span className="text-muted-foreground/30">·</span>
+        <button
+          onClick={handleCopy}
+          className="text-[11px] text-primary hover:text-primary/80 hover:underline whitespace-nowrap bg-transparent border-none cursor-pointer p-0 font-normal"
+        >
+          {copied ? "copied!" : "copy"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function MemoryListTab({ userId }: { userId?: string }) {
   const [levelFilter, setLevelFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
@@ -467,9 +507,9 @@ function MemoryListTab({ userId }: { userId?: string }) {
                     <TableCell className="text-center font-mono text-xs">{m.access_count}</TableCell>
                     <TableCell className="text-center font-mono text-xs">{m.reference_count}</TableCell>
                     <TableCell>
-                      <p className="line-clamp-2 text-[13px] leading-snug">{m.content}</p>
+                      <MemoryContent content={m.content} />
                       {m.keywords.length > 0 && (
-                        <div className="flex gap-1.5 mt-1">
+                        <div className="flex gap-1.5 mt-2">
                           {m.keywords.slice(0, 3).map((kw) => (
                             <span key={kw} className="text-[11px] text-muted-foreground/70">{kw}</span>
                           ))}
