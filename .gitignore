@@ -82,5 +82,6 @@ longmem_results_*.json
 node*.log
 
 # Local configuration
+config.toml
 config.local.*
 *.local.toml
