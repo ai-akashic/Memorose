@@ -2,6 +2,13 @@
 name = "memorose-gateway"
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0"
+authors = ["Akashic Project Contributors"]
+repository = "https://github.com/yourusername/akashic"
+homepage = "https://github.com/yourusername/akashic"
+description = "Stateless gateway with tenant sharding for Memorose"
+keywords = ["ai", "memory", "database", "gateway", "proxy"]
+categories = ["database", "web-programming::http-server"]
 
 [dependencies]
 axum = "0.7"

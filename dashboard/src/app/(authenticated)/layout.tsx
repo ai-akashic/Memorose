@@ -82,7 +82,7 @@ export default function AuthenticatedLayout({
             )}
           >
             <div className="flex items-center gap-2 px-3 h-12 border-b border-border">
-              <MemoroseLogo size={22} />
+              <MemoroseLogo size={32} />
               {!collapsed && (
                 <span className="font-semibold text-sm tracking-tight">Memorose</span>
               )}

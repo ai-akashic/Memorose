@@ -1,0 +1,187 @@
+# Memorose Configuration Example
+# Copy this file to config.toml and customize for your environment
+
+[server]
+# Server bind address and port
+host = "0.0.0.0"
+port = 3000
+# Number of worker threads (0 = number of CPU cores)
+workers = 0
+
+[database]
+# Data storage directory
+data_dir = "./data"
+# WAL sync mode: "normal" | "full" | "none"
+# - normal: balance between performance and durability
+# - full: maximum durability, slower writes
+# - none: fastest, risk of data loss on crash
+wal_sync_mode = "normal"
+
+# RocksDB configuration
+[database.rocksdb]
+max_open_files = 1000
+write_buffer_size_mb = 64
+max_write_buffer_number = 3
+
+# LanceDB configuration
+[database.lance]
+index_cache_size_mb = 256
+use_legacy_format = false
+
+# Tantivy configuration
+[database.tantivy]
+heap_size_mb = 128
+num_threads = 2
+
+# ============================================
+# Memory Consolidation (L0 -> L1)
+# ============================================
+[consolidation]
+# Enable background consolidation
+enabled = true
+# Run consolidation every N seconds (1000ms = 1 sec)
+interval_secs = 1
+# Maximum events to process per batch
+batch_size = 200
+# Minimum Shannon entropy to accept (filters "um", "ok", etc.)
+entropy_threshold = 2.5
+# Cosine similarity threshold for auto-linking memories
+similarity_threshold = 0.3
+
+# LLM configuration for semantic compression
+[consolidation.llm]
+# Provider: "gemini" | "openai" | "mock"
+provider = "gemini"
+# Model for semantic compression
+model = "gemini-3-flash-preview"
+# Embedding model
+embedding_model = "gemini-embedding-001"
+# API request settings
+max_retries = 3
+timeout_secs = 30
+# Temperature for generation (0.0-1.0)
+temperature = 0.3
+
+# ============================================
+# Active Forgetting
+# ============================================
+[forgetting]
+# Enable automatic forgetting
+enabled = true
+# Memory importance decays by half every N days
+decay_half_life_days = 30
+# Delete memories below this importance threshold
+min_importance = 0.1
+# Run pruning every N seconds (60 secs from .env)
+prune_interval_secs = 60
+
+# ============================================
+# Knowledge Graph (L2)
+# ============================================
+[graph]
+# Automatically create edges between similar memories
+auto_link_threshold = 0.3
+# Maximum outgoing edges per node
+max_edges_per_node = 100
+# Enable PageRank calculation
+enable_page_rank = true
+# Run community detection for insights
+enable_community_detection = true
+# Community detection interval (seconds) (1000ms = 1 sec)
+community_detection_interval_secs = 1
+
+# ============================================
+# Distributed Raft Configuration
+# ============================================
+[raft]
+# Node ID (unique across cluster)
+node_id = 1
+# Raft bind address
+raft_addr = "127.0.0.1:5001"
+# Election timeout range (milliseconds)
+election_timeout_min_ms = 150
+election_timeout_max_ms = 300
+# Heartbeat interval (milliseconds)
+heartbeat_interval_ms = 50
+# Create snapshot every N log entries
+snapshot_interval = 1000
+# Snapshot retention
+max_snapshot_count = 5
+
+# Cluster peers (for bootstrapping)
+[[raft.peers]]
+node_id = 2
+raft_addr = "127.0.0.1:5002"
+
+[[raft.peers]]
+node_id = 3
+raft_addr = "127.0.0.1:5003"
+
+# ============================================
+# Cache Configuration
+# ============================================
+[cache]
+# Enable query result caching
+enabled = true
+# Maximum cache memory (MB)
+max_memory_mb = 512
+# Cache entry TTL (seconds)
+ttl_secs = 300
+# Cache eviction policy: "lru" | "lfu"
+eviction_policy = "lru"
+
+# ============================================
+# Multi-modal Support (Experimental)
+# ============================================
+[multimodal]
+# Enable image/audio processing
+enabled = false
+# CLIP model for image embeddings
+clip_model = "openai/clip-vit-base-patch32"
+# Whisper model for audio transcription
+whisper_model = "openai/whisper-base"
+# Video processing: extract N keyframes
+video_keyframe_count = 10
+
+# ============================================
+# Security & Authentication
+# ============================================
+[security]
+# Enable authentication
+require_auth = false
+# JWT secret (use env var in production: JWT_SECRET)
+jwt_secret = "change-me-in-production"
+# JWT expiration (seconds)
+jwt_expiration_secs = 86400
+# Enable API rate limiting
+enable_rate_limit = true
+# Requests per minute per tenant
+rate_limit_rpm = 1000
+
+# ============================================
+# Telemetry & Observability
+# ============================================
+[telemetry]
+# Enable metrics export
+enabled = true
+# Prometheus metrics port
+metrics_port = 9090
+# OpenTelemetry tracing endpoint
+tracing_endpoint = "http://localhost:4317"
+# Log level: "error" | "warn" | "info" | "debug" | "trace"
+log_level = "info"
+# Enable access logs
+access_logs = true
+
+# ============================================
+# Development & Testing
+# ============================================
+[development]
+# Enable debug mode
+debug = false
+# Use mock LLM (no API calls)
+use_mock_llm = false
+# Enable hot reload (requires cargo-watch)
+hot_reload = false
+# Seed for deterministic testing
+random_seed = 42

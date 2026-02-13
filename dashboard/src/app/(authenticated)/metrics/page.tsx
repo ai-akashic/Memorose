@@ -7,8 +7,6 @@ import {
   Activity,
   Database,
   GitBranch,
-  ArrowRight,
-  BarChart3,
 } from "lucide-react";
 import {
   BarChart,
@@ -23,9 +21,10 @@ import {
 } from "recharts";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import type { GraphData } from "@/lib/types";
+import { RainbowWaterfall } from "@/components/RainbowWaterfall";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import type { GraphData } from "@/lib/types";
 
 function StatCard({
   label,
@@ -46,43 +45,6 @@ function StatCard({
           <Icon className={`w-3.5 h-3.5 ${color} opacity-60`} />
         </div>
         <div className="text-xl font-bold tracking-tight">{typeof value === "number" ? formatNumber(value) : value}</div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function MemoryFunnel({ stats }: { stats: NonNullable<ReturnType<typeof useStats>["data"]> }) {
-  const steps = [
-    { label: "Events", count: stats.total_events, bg: "bg-blue-500/10", text: "text-blue-400" },
-    { label: "Pending (L0)", count: stats.pending_events, bg: "bg-warning/10", text: "text-warning" },
-    { label: "L1 Units", count: stats.memory_by_level.l1, bg: "bg-primary/10", text: "text-primary" },
-    { label: "L2 Insights", count: stats.memory_by_level.l2, bg: "bg-success/10", text: "text-success" },
-  ];
-
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-xs flex items-center gap-1.5">
-          <BarChart3 className="w-3.5 h-3.5 text-primary" />
-          Memory Pipeline
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="flex items-center justify-between">
-          {steps.map((step, i) => (
-            <div key={step.label} className="flex items-center">
-              <div className="text-center">
-                <div className={`w-14 h-14 rounded-lg flex items-center justify-center ${step.bg}`}>
-                  <span className={`text-sm font-bold ${step.text}`}>{formatNumber(step.count)}</span>
-                </div>
-                <p className="text-[11px] text-muted-foreground mt-1">{step.label}</p>
-              </div>
-              {i < steps.length - 1 && (
-                <ArrowRight className="w-3.5 h-3.5 text-muted-foreground/50 mx-2" />
-              )}
-            </div>
-          ))}
-        </div>
       </CardContent>
     </Card>
   );
@@ -266,7 +228,7 @@ export default function MetricsPage() {
       </div>
 
       {/* Pipeline Funnel */}
-      {stats && <MemoryFunnel stats={stats} />}
+      {stats && <RainbowWaterfall stats={stats} />}
 
       {/* Charts Row */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

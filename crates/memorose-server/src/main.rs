@@ -8,7 +8,7 @@ use axum::{
 use memorose_common::{Event, EventContent, GraphEdge, MemoryUnit, RelationType, TimeRange, config::AppConfig};
 use memorose_common::sharding::decode_raft_node_id;
 use memorose_core::{MemoroseEngine, LLMClient, GeminiClient};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -227,6 +227,89 @@ fn not_leader_response(current_leader: Option<u64>, is_sharded: bool) -> axum::r
     }
 }
 
+/// Forward request to leader node
+async fn forward_to_leader<T: serde::Serialize>(
+    _state: &AppState,
+    leader_id: u64,
+    path: &str,
+    payload: &T,
+) -> Result<axum::response::Response, axum::response::Response> {
+    // Calculate leader address
+    let leader_port = 3000 + leader_id - 1;
+    let leader_url = format!("http://localhost:{}{}", leader_port, path);
+
+    tracing::info!("Forwarding request to leader node {} at {}", leader_id, leader_url);
+
+    // Create HTTP client (can be optimized to reuse)
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| {
+            tracing::error!("Failed to create HTTP client: {}", e);
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to create HTTP client",
+                    "details": e.to_string()
+                }))
+            ).into_response()
+        })?;
+
+    // Forward request
+    let response = client
+        .post(&leader_url)
+        .json(payload)
+        .send()
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to forward to leader: {}", e);
+            (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": "Failed to forward to leader",
+                    "leader_id": leader_id,
+                    "details": e.to_string()
+                }))
+            ).into_response()
+        })?;
+
+    // Convert response
+    let status = response.status();
+    let headers = response.headers().clone();
+    let body_bytes = response.bytes().await.map_err(|e| {
+        tracing::error!("Failed to read leader response: {}", e);
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": "Failed to read leader response",
+                "details": e.to_string()
+            }))
+        ).into_response()
+    })?;
+
+    // Build response
+    let mut builder = axum::http::Response::builder().status(status);
+
+    // Copy important headers
+    for (key, value) in headers.iter() {
+        if key == "content-type" || key == "content-length" {
+            builder = builder.header(key, value);
+        }
+    }
+
+    builder
+        .body(axum::body::Body::from(body_bytes))
+        .map_err(|e| {
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to build response",
+                    "details": e.to_string()
+                }))
+            ).into_response()
+        })
+}
+
 async fn add_edge(
     State(state): State<Arc<AppState>>,
     Path(user_id): Path<String>,
@@ -237,7 +320,24 @@ async fn add_edge(
     let current_leader = metrics.current_leader;
     let node_id = metrics.id;
 
+    // Forward to leader if not leader
     if current_leader != Some(node_id) {
+        if let Some(leader_id) = current_leader {
+            let path = format!("/v1/users/{}/graph/edges", user_id);
+
+            tracing::info!(
+                "Not leader (I'm {}, leader is {}), forwarding request",
+                node_id,
+                leader_id
+            );
+
+            match forward_to_leader(&state, leader_id, &path, &payload).await {
+                Ok(response) => return response,
+                Err(err_response) => return err_response,
+            }
+        }
+
+        // If no leader, return error
         return not_leader_response(current_leader, state.config.is_sharded());
     }
 
@@ -255,7 +355,7 @@ async fn add_edge(
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct AddEdgeRequest {
     source_id: Uuid,
     target_id: Uuid,
@@ -284,7 +384,7 @@ async fn pending_count(
     }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct IngestRequest {
     content: String,
     #[serde(default = "default_content_type")]
@@ -313,7 +413,27 @@ async fn ingest_event(
     let current_leader = metrics.current_leader;
     let node_id = metrics.id;
 
+    // Forward to leader if not leader
     if current_leader != Some(node_id) {
+        if let Some(leader_id) = current_leader {
+            let path = format!(
+                "/v1/users/{}/apps/{}/streams/{}/events",
+                user_id, app_id, stream_id
+            );
+
+            tracing::info!(
+                "Not leader (I'm {}, leader is {}), forwarding request",
+                node_id,
+                leader_id
+            );
+
+            match forward_to_leader(&state, leader_id, &path, &payload).await {
+                Ok(response) => return response,
+                Err(err_response) => return err_response,
+            }
+        }
+
+        // If no leader, return error
         return not_leader_response(current_leader, state.config.is_sharded());
     }
 
