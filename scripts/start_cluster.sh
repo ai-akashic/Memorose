@@ -420,11 +420,15 @@ start_cluster() {
 
         log_info "Starting Node ${node_id} (Port ${port})..."
 
-        NODE_ID="${node_id}" PORT="${port}" RAFT_ADDR="${raft_addr}" \
+        # Use env command to ensure environment variables are properly passed
+        env NODE_ID="${node_id}" PORT="${port}" RAFT_ADDR="${raft_addr}" \
             "${SERVER_BIN}" > "${log_file}" 2>&1 &
 
         local pid=$!
         save_pid "${node_id}" "${pid}"
+
+        # Give each node time to start before launching the next
+        sleep 2
     done
 
     log_info "Waiting for all nodes to be ready..."

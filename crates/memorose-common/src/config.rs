@@ -228,6 +228,7 @@ impl AppConfig {
             .set_override_option("llm.google_api_key", env::var("GOOGLE_API_KEY").ok())?
             .set_override_option("llm.model", env::var("LLM_MODEL").ok())?
             .set_override_option("llm.embedding_model", env::var("EMBEDDING_MODEL").ok())?
+            .set_override_option("raft.node_id", env::var("NODE_ID").ok().and_then(|v| v.parse::<u64>().ok()))?
             .set_override_option("raft.raft_addr", env::var("RAFT_ADDR").ok())?
             
             .build()?;
