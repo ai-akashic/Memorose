@@ -25,7 +25,7 @@
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
 [![GitHub stars](https://img.shields.io/github/stars/ai-akashic/Memorose?style=social)](https://github.com/ai-akashic/Memorose/stargazers)
 
-**AI Memory Database Inspired by Human Cognition**
+**Next-generation AI memory infrastructure** — A scalable, multimodal memory lake that self-evolves through automatic consolidation, intelligent forgetting, and semantic knowledge graphs.
 
 ## ✨ Key Features
 
