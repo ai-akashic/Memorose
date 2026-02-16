@@ -723,10 +723,24 @@ impl MemoroseEngine {
             Ok::<(), anyhow::Error>(())
         }).await??;
 
-        // 4. Automatic Semantic Linking
-        for unit in &units {
-            self.auto_link_memory(unit).await?;
-            self.semantic_link_memory(unit).await?;
+        // 4. Automatic Semantic Linking (Parallelized)
+        let mut join_set = tokio::task::JoinSet::new();
+        for unit in units {
+            let engine = self.clone();
+            join_set.spawn(async move {
+                if let Err(e) = engine.auto_link_memory(&unit).await {
+                    tracing::error!("Auto-linking failed for unit {}: {:?}", unit.id, e);
+                }
+                if let Err(e) = engine.semantic_link_memory(&unit).await {
+                    tracing::error!("Semantic linking failed for unit {}: {:?}", unit.id, e);
+                }
+            });
+        }
+
+        while let Some(res) = join_set.join_next().await {
+            if let Err(e) = res {
+                tracing::error!("Parallel linking task panicked: {:?}", e);
+            }
         }
 
         Ok(())

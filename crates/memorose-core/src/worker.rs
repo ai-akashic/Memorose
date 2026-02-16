@@ -67,8 +67,9 @@ impl BackgroundWorker {
     }
 
     pub async fn run(&self) {
-        tracing::info!("Background Worker started.");
-        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        let tick_ms = self.config.tick_interval_ms.max(10);
+        tracing::info!("Background Worker started (Loop interval: {}ms).", tick_ms);
+        let mut interval = tokio::time::interval(Duration::from_millis(tick_ms));
         let mut tick_count: u64 = 0;
 
         loop {
@@ -78,27 +79,27 @@ impl BackgroundWorker {
                 continue;
             }
 
-            tick_count += 1;
+            tick_count += tick_ms;
 
             // 1. Forgetting (Decay) - scan active_user markers
-            let decay_interval = Duration::from_secs(self.config.decay_interval_secs.max(1));
-            if tick_count % decay_interval.as_secs() == 0 {
+            let decay_interval_ms = self.config.decay_interval_secs.max(1) * 1000;
+            if tick_count % decay_interval_ms == 0 {
                 if let Err(e) = self.run_decay_cycle().await {
                     tracing::error!("Decay cycle failed: {:?}", e);
                 }
             }
 
             // 2. L0 -> L1 (Consolidation)
-            let consolidation_interval = Duration::from_millis(self.config.consolidation_interval_ms);
-            if tick_count % consolidation_interval.as_secs().max(1) == 0 {
+            let consolidation_interval_ms = self.config.consolidation_interval_ms.max(tick_ms);
+            if tick_count % consolidation_interval_ms == 0 {
                 if let Err(e) = self.run_consolidation_cycle().await {
                     tracing::error!("Consolidation cycle failed: {:?}", e);
                 }
             }
 
             // 3. Compaction
-            let compaction_interval = Duration::from_secs(self.config.compaction_interval_secs.max(1));
-            if tick_count % compaction_interval.as_secs() == 0 {
+            let compaction_interval_ms = self.config.compaction_interval_secs.max(1) * 1000;
+            if tick_count % compaction_interval_ms == 0 {
                 if let Err(e) = self.run_compaction_cycle().await {
                     tracing::error!("Compaction cycle failed: {:?}", e);
                 }
@@ -107,20 +108,25 @@ impl BackgroundWorker {
             // 4. Cognitive Cycles (Requires LLM) - marker-driven
             if self.llm_client.is_some() {
                 // Insight Cycle (Reflection) - driven by needs_reflect markers
-                let insight_interval = Duration::from_millis(self.config.insight_interval_ms);
-                if tick_count % insight_interval.as_secs().max(1) == 0 {
+                let insight_interval_ms = self.config.insight_interval_ms.max(tick_ms);
+                if tick_count % insight_interval_ms == 0 {
                     if let Err(e) = self.run_insight_cycle().await {
                         tracing::error!("Insight cycle failed: {:?}", e);
                     }
                 }
 
                 // Community Cycle (L2) - driven by needs_community markers
-                let community_interval = Duration::from_millis(self.config.community_interval_ms);
-                if tick_count % community_interval.as_secs().max(1) == 0 {
+                let community_interval_ms = self.config.community_interval_ms.max(tick_ms);
+                if tick_count % community_interval_ms == 0 {
                     if let Err(e) = self.run_community_cycle().await {
                         tracing::error!("Community cycle failed: {:?}", e);
                     }
                 }
+            }
+
+            // Reset tick_count periodically to avoid overflow
+            if tick_count > 86400 * 1000 * 7 { // Reset every week
+                tick_count = 0;
             }
         }
     }
