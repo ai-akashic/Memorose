@@ -1,5 +1,5 @@
-// Graph Query Builder - 借鉴 lance-graph 的声明式理念
-// 但使用纯 Rust API，无需 Cypher 解析
+// Graph Query Builder - Borrowing lance-graph's declarative concepts
+// But using pure Rust APIs, requiring no Cypher parsing
 
 use crate::storage::graph::GraphStore;
 use memorose_common::{GraphEdge, RelationType};
@@ -7,7 +7,7 @@ use uuid::Uuid;
 use anyhow::Result;
 use std::collections::HashSet;
 
-/// 图遍历配置
+/// Graph traversal configuration
 #[derive(Debug, Clone)]
 pub struct TraversalSpec {
     pub relation_types: Vec<RelationType>,
@@ -24,7 +24,7 @@ pub enum TraversalDirection {
     Both,
 }
 
-/// 图查询构建器
+/// Graph query builder
 pub struct GraphQueryBuilder {
     user_id: String,
     start_nodes: Vec<Uuid>,
@@ -65,14 +65,14 @@ impl GraphQueryBuilder {
         self
     }
 
-    /// 执行优化后的查询计划
+    /// Execute the optimized query plan
     pub async fn execute(self, graph: &GraphStore) -> Result<Vec<Uuid>> {
         let planner = QueryPlanner::new(graph);
         planner.execute_plan(self).await
     }
 }
 
-/// 遍历配置构建器
+/// Traversal configuration builder
 pub struct TraversalBuilder {
     query: GraphQueryBuilder,
     spec: TraversalSpec,
@@ -100,7 +100,7 @@ impl TraversalBuilder {
     }
 }
 
-/// 查询优化器和执行器
+/// Query optimizer and executor
 struct QueryPlanner<'a> {
     graph: &'a GraphStore,
 }
@@ -110,20 +110,20 @@ impl<'a> QueryPlanner<'a> {
         Self { graph }
     }
 
-    /// 核心优化：将多跳查询转换为批量操作
+    /// Core optimization: Convert multi-hop queries into batch operations
     async fn execute_plan(&self, query: GraphQueryBuilder) -> Result<Vec<Uuid>> {
         if query.traversals.is_empty() {
             return Ok(query.start_nodes);
         }
 
-        // 策略：批量查询代替循环
+        // Strategy: Batch queries instead of loops
         let mut current_frontier = query.start_nodes.clone();
         let mut all_visited = HashSet::new();
 
         for traversal in &query.traversals {
             let mut next_frontier = HashSet::new();
 
-            // 关键优化：批量获取所有边，而非逐个查询
+            // Key optimization: Batch retrieve all edges, rather than querying individually
             let edges = self.batch_get_edges(
                 &query.user_id,
                 &current_frontier,
@@ -131,7 +131,7 @@ impl<'a> QueryPlanner<'a> {
                 traversal.direction,
             ).await?;
 
-            // 过滤和收集目标节点
+            // Filter and collect target nodes
             for edge in edges {
                 if let Some(threshold) = traversal.weight_threshold {
                     if edge.weight < threshold {
@@ -166,7 +166,7 @@ impl<'a> QueryPlanner<'a> {
         Ok(results)
     }
 
-    /// 批量边查询 - 消除 N+1 问题
+    /// Batch edge queries - eliminates N+1 problem
     async fn batch_get_edges(
         &self,
         user_id: &str,
@@ -174,7 +174,7 @@ impl<'a> QueryPlanner<'a> {
         relation_types: &[RelationType],
         direction: TraversalDirection,
     ) -> Result<Vec<GraphEdge>> {
-        // 优化：使用 IN 查询而非多次单独查询
+        // Optimization: Use IN queries instead of multiple individual queries
         let mut all_edges = Vec::new();
 
         match direction {
@@ -217,11 +217,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_builder_api() {
-        // 演示 API 用法
+        // Demonstrate API usage
         let user_id = "test_user".to_string();
         let start = Uuid::new_v4();
 
-        // 构建查询：找到 2 跳内的高权重相关节点
+        // Build query: Find highly weighted related nodes within 2 hops
         let _query = GraphQueryBuilder::new(user_id)
             .start_from(vec![start])
             .traverse(RelationType::RelatedTo)
@@ -230,6 +230,6 @@ mod tests {
                 .build()
             .limit(10);
 
-        // 执行: let results = query.execute(&graph).await?;
+        // Execute: let results = query.execute(&graph).await?;
     }
 }

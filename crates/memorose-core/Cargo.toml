@@ -49,6 +49,7 @@ candle-transformers = "0.7.0"
 tokenizers = "0.19"
 image = "0.25"  # For image processing
 hf-hub = "0.3"  # For downloading models
+moka = { version = "0.12.13", features = ["future"] }
 
 [build-dependencies]
 tonic-build = "0.12"

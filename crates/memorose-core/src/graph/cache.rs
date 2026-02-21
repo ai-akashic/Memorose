@@ -1,29 +1,27 @@
-// Query Cache - 借鉴 lance-graph 的查询缓存思想
-// 缓存常用的查询结果，避免重复计算
+// Query Cache - Borrowed from lance-graph's query cache ideas
+// Caches frequently used query results to avoid redundant computations
 
 use uuid::Uuid;
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::time::Duration;
+use moka::future::Cache;
 use memorose_common::GraphEdge;
 
-/// 缓存键类型
+/// Cache key types
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub enum CacheKey {
-    /// 1-hop 邻居缓存
+    /// 1-hop neighborhood cache
     OneHopNeighbors {
         user_id: String,
         node_id: Uuid,
         direction: Direction,
     },
-    /// 多跳查询缓存
+    /// Multi-hop traversal cache
     MultiHopTraversal {
         user_id: String,
         start_nodes: Vec<Uuid>,
         max_hops: usize,
     },
-    /// 社区检测结果缓存
+    /// Community detection results cache
     CommunityDetection {
         user_id: String,
         algorithm: String,
@@ -36,52 +34,30 @@ pub enum Direction {
     Incoming,
 }
 
-/// 缓存条目
-#[derive(Debug, Clone)]
-struct CacheEntry<T> {
-    value: T,
-    created_at: Instant,
-    access_count: usize,
-}
-
-impl<T> CacheEntry<T> {
-    fn new(value: T) -> Self {
-        Self {
-            value,
-            created_at: Instant::now(),
-            access_count: 0,
-        }
-    }
-
-    fn is_expired(&self, ttl: Duration) -> bool {
-        self.created_at.elapsed() > ttl
-    }
-}
-
-/// 查询结果缓存
+/// Query result cache
 pub struct QueryCache {
-    /// 边查询结果缓存
-    edge_cache: Arc<RwLock<HashMap<CacheKey, CacheEntry<Vec<GraphEdge>>>>>,
-    /// 节点 ID 列表缓存
-    node_list_cache: Arc<RwLock<HashMap<CacheKey, CacheEntry<Vec<Uuid>>>>>,
-    /// 缓存配置
+    /// Edge query result cache
+    edge_cache: Cache<CacheKey, Vec<GraphEdge>>,
+    /// Node ID list cache
+    node_list_cache: Cache<CacheKey, Vec<Uuid>>,
+    /// Cache configuration
     config: CacheConfig,
 }
 
 #[derive(Debug, Clone)]
 pub struct CacheConfig {
-    /// 缓存生存时间
+    /// Cache time-to-live
     pub ttl: Duration,
-    /// 最大缓存条目数
+    /// Maximum number of cache entries
     pub max_entries: usize,
-    /// 是否启用缓存
+    /// Whether caching is enabled
     pub enabled: bool,
 }
 
 impl Default for CacheConfig {
     fn default() -> Self {
         Self {
-            ttl: Duration::from_secs(300),  // 5 分钟
+            ttl: Duration::from_secs(300),  // 5 minutes
             max_entries: 10000,
             enabled: true,
         }
@@ -90,121 +66,78 @@ impl Default for CacheConfig {
 
 impl QueryCache {
     pub fn new(config: CacheConfig) -> Self {
+        let edge_cache = Cache::builder()
+            .time_to_live(config.ttl)
+            .max_capacity(config.max_entries as u64)
+            .build();
+
+        let node_list_cache = Cache::builder()
+            .time_to_live(config.ttl)
+            .max_capacity(config.max_entries as u64)
+            .build();
+
         Self {
-            edge_cache: Arc::new(RwLock::new(HashMap::new())),
-            node_list_cache: Arc::new(RwLock::new(HashMap::new())),
+            edge_cache,
+            node_list_cache,
             config,
         }
     }
 
-    /// 获取缓存的边查询结果
+    /// Retrieve cached edge query results
     pub async fn get_edges(&self, key: &CacheKey) -> Option<Vec<GraphEdge>> {
         if !self.config.enabled {
             return None;
         }
 
-        let mut cache = self.edge_cache.write().await;
-
-        if let Some(entry) = cache.get_mut(key) {
-            if entry.is_expired(self.config.ttl) {
-                cache.remove(key);
-                return None;
-            }
-
-            entry.access_count += 1;
-            tracing::debug!(
-                "Cache HIT for {:?} (access_count={})",
-                key,
-                entry.access_count
-            );
-            return Some(entry.value.clone());
+        if let Some(value) = self.edge_cache.get(key).await {
+            tracing::debug!("Cache HIT for {:?}", key);
+            return Some(value);
         }
 
         tracing::debug!("Cache MISS for {:?}", key);
         None
     }
 
-    /// 缓存边查询结果
+    /// Cache edge query results
     pub async fn put_edges(&self, key: CacheKey, edges: Vec<GraphEdge>) {
         if !self.config.enabled {
             return;
         }
-
-        let mut cache = self.edge_cache.write().await;
-
-        // LRU 驱逐策略
-        if cache.len() >= self.config.max_entries {
-            self.evict_lru(&mut cache).await;
-        }
-
-        cache.insert(key, CacheEntry::new(edges));
+        self.edge_cache.insert(key, edges).await;
     }
 
-    /// 获取缓存的节点列表
+    /// Retrieve cached node list
     pub async fn get_node_list(&self, key: &CacheKey) -> Option<Vec<Uuid>> {
         if !self.config.enabled {
             return None;
         }
-
-        let mut cache = self.node_list_cache.write().await;
-
-        if let Some(entry) = cache.get_mut(key) {
-            if entry.is_expired(self.config.ttl) {
-                cache.remove(key);
-                return None;
-            }
-
-            entry.access_count += 1;
-            return Some(entry.value.clone());
-        }
-
-        None
+        self.node_list_cache.get(key).await
     }
 
-    /// 缓存节点列表
+    /// Cache node list
     pub async fn put_node_list(&self, key: CacheKey, nodes: Vec<Uuid>) {
         if !self.config.enabled {
             return;
         }
-
-        let mut cache = self.node_list_cache.write().await;
-
-        if cache.len() >= self.config.max_entries {
-            // 简单驱逐：移除最旧的条目
-            if let Some(oldest_key) = cache.iter()
-                .min_by_key(|(_, v)| v.created_at)
-                .map(|(k, _)| k.clone())
-            {
-                cache.remove(&oldest_key);
-            }
-        }
-
-        cache.insert(key, CacheEntry::new(nodes));
+        self.node_list_cache.insert(key, nodes).await;
     }
 
-    /// LRU 驱逐策略：移除访问次数最少且最旧的条目
-    async fn evict_lru(&self, cache: &mut HashMap<CacheKey, CacheEntry<Vec<GraphEdge>>>) {
-        if let Some(lru_key) = cache.iter()
-            .min_by_key(|(_, v)| (v.access_count, v.created_at))
-            .map(|(k, _)| k.clone())
-        {
-            cache.remove(&lru_key);
-            tracing::debug!("Evicted LRU cache entry: {:?}", lru_key);
-        }
-    }
-
-    /// 失效指定用户的所有缓存（例如用户新增边时）
+    /// Invalidate all caches for a specific user (e.g., when the user adds new edges)
     pub async fn invalidate_user(&self, user_id: &str) {
-        let mut edge_cache = self.edge_cache.write().await;
-        let mut node_cache = self.node_list_cache.write().await;
+        let uid = user_id.to_string();
+        let _ = self.edge_cache.invalidate_entries_if(move |k: &CacheKey, _v| {
+            Self::key_matches_user(k, &uid)
+        });
 
-        edge_cache.retain(|key, _| !self.key_matches_user(key, user_id));
-        node_cache.retain(|key, _| !self.key_matches_user(key, user_id));
+        let uid2 = user_id.to_string();
+        let _ = self.node_list_cache.invalidate_entries_if(move |k: &CacheKey, _v| {
+            Self::key_matches_user(k, &uid2)
+        });
 
         tracing::info!("Invalidated cache for user: {}", user_id);
     }
 
-    fn key_matches_user(&self, key: &CacheKey, user_id: &str) -> bool {
+    fn key_matches_user(key: &CacheKey, user_id: &str) -> bool {
         match key {
             CacheKey::OneHopNeighbors { user_id: uid, .. } => uid == user_id,
             CacheKey::MultiHopTraversal { user_id: uid, .. } => uid == user_id,
@@ -212,22 +145,22 @@ impl QueryCache {
         }
     }
 
-    /// 获取缓存统计信息
+    /// Get cache statistics
     pub async fn stats(&self) -> CacheStats {
-        let edge_count = self.edge_cache.read().await.len();
-        let node_count = self.node_list_cache.read().await.len();
+        self.edge_cache.run_pending_tasks().await;
+        self.node_list_cache.run_pending_tasks().await;
 
         CacheStats {
-            edge_cache_size: edge_count,
-            node_cache_size: node_count,
+            edge_cache_size: self.edge_cache.entry_count() as usize,
+            node_cache_size: self.node_list_cache.entry_count() as usize,
             max_entries: self.config.max_entries,
         }
     }
 
-    /// 清空所有缓存
+    /// Clear all caches
     pub async fn clear(&self) {
-        self.edge_cache.write().await.clear();
-        self.node_list_cache.write().await.clear();
+        self.edge_cache.invalidate_all();
+        self.node_list_cache.invalidate_all();
         tracing::info!("Cleared all query caches");
     }
 }
@@ -253,14 +186,14 @@ mod tests {
             direction: Direction::Outgoing,
         };
 
-        // 初始应该 MISS
+        // Initially it should MISS
         assert!(cache.get_edges(&key).await.is_none());
 
-        // 写入缓存
+        // Write to cache
         let edges = vec![];
         cache.put_edges(key.clone(), edges.clone()).await;
 
-        // 现在应该 HIT
+        // Now it should HIT
         assert!(cache.get_edges(&key).await.is_some());
     }
 
@@ -279,13 +212,13 @@ mod tests {
 
         cache.put_edges(key.clone(), vec![]).await;
 
-        // 立即查询应该命中
+        // Immediate query should hit
         assert!(cache.get_edges(&key).await.is_some());
 
-        // 等待过期
+        // Wait for expiration
         tokio::time::sleep(Duration::from_millis(150)).await;
 
-        // 现在应该失效
+        // Now it should be invalidated
         assert!(cache.get_edges(&key).await.is_none());
     }
 
@@ -308,13 +241,17 @@ mod tests {
         cache.put_edges(key1.clone(), vec![]).await;
         cache.put_edges(key2.clone(), vec![]).await;
 
-        // 失效 user1 的缓存
+        // Invalidate cache for user1
         cache.invalidate_user("user1").await;
+        
+        // Let background tasks complete
+        cache.edge_cache.run_pending_tasks().await;
+        cache.node_list_cache.run_pending_tasks().await;
 
-        // user1 的缓存应该被清除
+        // Cache for user1 should be cleared
         assert!(cache.get_edges(&key1).await.is_none());
 
-        // user2 的缓存应该保留
+        // Cache for user2 should be preserved
         assert!(cache.get_edges(&key2).await.is_some());
     }
 }

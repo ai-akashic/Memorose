@@ -1,7 +1,7 @@
-// Graph Query 模块导出
+// Graph Query Module Exports
 //
-// 借鉴 lance-graph 的设计理念，实现高性能图查询层
-// 无需 Cypher 解析，无依赖冲突，纯 Rust API
+// Borrowing from lance-graph's design philosophy to implement a high-performance graph query layer
+// No Cypher parsing required, no dependency conflicts, pure Rust API
 
 pub mod query_builder;
 pub mod optimizer;

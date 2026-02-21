@@ -1,5 +1,5 @@
-// Batch Executor - 借鉴 lance-graph 的批量执行理念
-// 但直接基于 LanceDB 的 Arrow 接口，避免依赖冲突
+// Batch Executor - Borrowed from lance-graph's batch execution concept
+// But built directly on top of LanceDB's Arrow interfaces to avoid dependency conflicts
 
 use crate::storage::graph::GraphStore;
 use memorose_common::GraphEdge;
@@ -7,7 +7,7 @@ use uuid::Uuid;
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 
-/// 批量边查询执行器
+/// Batch edge query executor
 pub struct BatchExecutor {
     pub(crate) graph_store: GraphStore,
 }
@@ -17,34 +17,34 @@ impl BatchExecutor {
         Self { graph_store }
     }
 
-    /// 获取内部 GraphStore 的引用（用于高级操作）
+    /// Get a reference to the internal GraphStore (for advanced operations)
     pub fn graph_store(&self) -> &GraphStore {
         &self.graph_store
     }
 
-    /// 批量查询多个节点的出边（真正的批量优化）
+    /// Batch query outgoing edges for multiple nodes (true batch optimization)
     pub async fn batch_get_outgoing_edges(
         &self,
         user_id: &str,
         source_nodes: &[Uuid],
     ) -> Result<HashMap<Uuid, Vec<GraphEdge>>> {
-        // ✅ 使用 GraphStore 的批量 API（单次 SQL IN 查询）
+        // ✅ Use GraphStore's batch API (single SQL IN query)
         self.graph_store.batch_get_outgoing_edges(user_id, source_nodes).await
     }
 
-    /// 批量查询入边
+    /// Batch query incoming edges
     pub async fn batch_get_incoming_edges(
         &self,
         user_id: &str,
         target_nodes: &[Uuid],
     ) -> Result<HashMap<Uuid, Vec<GraphEdge>>> {
-        // ✅ 使用 GraphStore 的批量 API
+        // ✅ Use GraphStore's batch API
         self.graph_store.batch_get_incoming_edges(user_id, target_nodes).await
     }
 
-    /// 多跳遍历的批量优化版本
+    /// Batch optimized version of multi-hop traversal
     ///
-    /// 示例：找到距离起始节点 2 跳以内的所有节点
+    /// Example: Find all nodes within 2 hops from start nodes
     pub async fn batch_multi_hop_traverse(
         &self,
         user_id: &str,
@@ -54,28 +54,31 @@ impl BatchExecutor {
     ) -> Result<Vec<Uuid>> {
         let mut current_frontier = start_nodes.clone();
         let mut all_visited: HashSet<Uuid> = start_nodes.into_iter().collect();
+        
+        // Hard limit to prevent OOM in extremely dense graphs
+        const MAX_FRONTIER_SIZE: usize = 10_000;
 
         for hop in 0..max_hops {
             if current_frontier.is_empty() {
                 break;
             }
 
-            // 关键优化：批量获取当前层所有节点的边
+            // Key optimization: batch retrieve edges for all nodes in the current layer
             let edges_map = self.batch_get_outgoing_edges(user_id, &current_frontier).await?;
 
             let mut next_frontier = Vec::new();
 
-            // 收集下一层节点
+            // Collect next layer of nodes
             for edges in edges_map.values() {
                 for edge in edges {
-                    // 应用权重过滤
+                    // Apply weight filtering
                     if let Some(threshold) = weight_threshold {
                         if edge.weight < threshold {
                             continue;
                         }
                     }
 
-                    // 避免重复访问
+                    // Avoid redundant visits
                     if !all_visited.contains(&edge.target_id) {
                         all_visited.insert(edge.target_id);
                         next_frontier.push(edge.target_id);
@@ -83,9 +86,20 @@ impl BatchExecutor {
                 }
             }
 
+            // Enforce limit to prevent exponential explosion
+            if next_frontier.len() > MAX_FRONTIER_SIZE {
+                tracing::warn!(
+                    "Hop {} frontier size ({}) exceeds MAX_FRONTIER_SIZE ({}). Truncating.",
+                    hop + 1,
+                    next_frontier.len(),
+                    MAX_FRONTIER_SIZE
+                );
+                next_frontier.truncate(MAX_FRONTIER_SIZE);
+            }
+
             current_frontier = next_frontier;
 
-            // 性能监控
+            // Performance monitoring
             tracing::debug!(
                 "Hop {}: visited {} nodes, frontier size = {}",
                 hop + 1,
@@ -97,13 +111,13 @@ impl BatchExecutor {
         Ok(all_visited.into_iter().collect())
     }
 
-    /// 预取优化：预先加载常用的邻居信息
+    /// Prefetch optimization: pre-load commonly used neighborhood information
     pub async fn prefetch_neighborhoods(
         &self,
         user_id: &str,
         node_ids: &[Uuid],
     ) -> Result<NeighborhoodCache> {
-        // 一次性加载所有邻居（使用批量 API）
+        // Load all neighbors at once (using batch API)
         let outgoing = self.batch_get_outgoing_edges(user_id, node_ids).await?;
         let incoming = self.batch_get_incoming_edges(user_id, node_ids).await?;
 
@@ -114,7 +128,7 @@ impl BatchExecutor {
     }
 }
 
-/// 邻居缓存（用于预取优化）
+/// Neighborhood cache (for prefetch optimization)
 pub struct NeighborhoodCache {
     outgoing: HashMap<Uuid, Vec<GraphEdge>>,
     incoming: HashMap<Uuid, Vec<GraphEdge>>,
@@ -148,25 +162,25 @@ mod tests {
 
     #[tokio::test]
     async fn test_batch_vs_sequential_performance() {
-        // 演示批量查询的性能优势
+        // Demonstrate the performance advantage of batch queries
 
-        // 假设有 100 个节点需要查询
+        // Assume there are 100 nodes to query
         let node_ids: Vec<Uuid> = (0..100).map(|_| Uuid::new_v4()).collect();
 
-        // ❌ 传统方式（伪代码）:
+        // ❌ Traditional approach (pseudo-code):
         // let mut all_edges = Vec::new();
         // for node_id in &node_ids {
         //     let edges = graph.get_outgoing_edges(user_id, *node_id).await?;
         //     all_edges.extend(edges);
         // }
-        // 预期延迟: 100 次查询 × 2ms = 200ms
+        // Expected latency: 100 queries × 2ms = 200ms
 
-        // ✅ 批量方式:
+        // ✅ Batch approach:
         // let executor = BatchExecutor::new(graph_store);
         // let edges_map = executor.batch_get_outgoing_edges(user_id, &node_ids).await?;
-        // 预期延迟: 1 次查询 × 5ms = 5ms
+        // Expected latency: 1 query × 5ms = 5ms
         //
-        // 性能提升: 40x
+        // Performance improvement: 40x
     }
 
     #[test]

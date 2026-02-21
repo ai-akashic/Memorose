@@ -1,4 +1,4 @@
-// 快速性能验证测试
+// Quick performance validation tests
 
 #[cfg(test)]
 mod performance_tests {
@@ -10,18 +10,18 @@ mod performance_tests {
         println!("\n🔬 Performance Comparison Test");
         println!("================================\n");
 
-        // 模拟数据
+        // Simulated data
         let node_count = 20;
         let node_ids: Vec<Uuid> = (0..node_count).map(|_| Uuid::new_v4()).collect();
 
         println!("Test scenario: Query {} nodes' neighbors", node_count);
         println!();
 
-        // ❌ 传统方式模拟：N 次查询
+        // ❌ Traditional approach simulation: N queries
         let start = Instant::now();
         let mut total_queries = 0;
         for _id in &node_ids {
-            // 模拟单次查询延迟
+            // Simulate single query latency
             tokio::time::sleep(tokio::time::Duration::from_micros(100)).await;
             total_queries += 1;
         }
@@ -32,9 +32,9 @@ mod performance_tests {
         println!("   Time: {:?}", sequential_time);
         println!();
 
-        // ✅ 批量方式模拟：1 次查询
+        // ✅ Batch approach simulation: 1 query
         let start = Instant::now();
-        // 模拟批量查询延迟（稍长但只一次）
+        // Simulate batch query latency (slightly longer but only once)
         tokio::time::sleep(tokio::time::Duration::from_micros(200)).await;
         let batch_queries = 1;
         let batch_time = start.elapsed();
@@ -48,7 +48,7 @@ mod performance_tests {
         println!("🚀 Speedup: {:.2}x", speedup);
         println!();
 
-        // 验证批量方式确实更快
+        // Validate that the batch approach is indeed faster
         assert!(batch_time < sequential_time);
         assert!(speedup > 5.0, "Expected at least 5x speedup");
     }

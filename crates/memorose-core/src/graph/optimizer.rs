@@ -1,30 +1,30 @@
-// Query Optimizer - 借鉴 lance-graph 的查询优化理念
-// 将声明式查询转换为高效的执行计划
+// Query Optimizer - Borrowing lance-graph's query optimization concepts
+// Converts declarative queries into efficient execution plans
 
 use uuid::Uuid;
 use std::collections::HashMap;
 
-/// 查询执行计划节点
+/// Query execution plan node
 #[derive(Debug, Clone)]
 pub enum ExecutionPlan {
-    /// 扫描起始节点（类似 lance-graph 的 ScanByLabel）
+    /// Scan starting nodes (similar to ScanByLabel in lance-graph)
     ScanNodes {
         node_ids: Vec<Uuid>,
     },
 
-    /// 批量边扩展（优化的核心）
+    /// Batch edge expansion (core of optimization)
     BatchExpand {
         input: Box<ExecutionPlan>,
         edge_filter: EdgeFilter,
-        batch_size: usize,  // 每批处理多少节点
+        batch_size: usize,  // How many nodes to process per batch
     },
 
-    /// 去重（类似 SQL DISTINCT）
+    /// Deduplication (similar to SQL DISTINCT)
     Distinct {
         input: Box<ExecutionPlan>,
     },
 
-    /// 限制结果数量
+    /// Limit the number of results
     Limit {
         input: Box<ExecutionPlan>,
         count: usize,
@@ -38,16 +38,16 @@ pub struct EdgeFilter {
     pub max_weight: Option<f32>,
 }
 
-/// 查询优化器
+/// Query Optimizer
 pub struct QueryOptimizer {
     stats: QueryStats,
 }
 
 #[derive(Debug, Default)]
 struct QueryStats {
-    /// 每种关系类型的平均扇出度
+    /// Average fanout degree per relation type
     avg_fanout: HashMap<String, f32>,
-    /// 节点总数估计
+    /// Estimated total node count
     #[allow(dead_code)]
     total_nodes: usize,
 }
@@ -59,26 +59,26 @@ impl QueryOptimizer {
         }
     }
 
-    /// 优化执行计划（类似 lance-graph 的 DataFusion Planner）
+    /// Optimize execution plan (similar to DataFusion Planner in lance-graph)
     pub fn optimize(&self, plan: ExecutionPlan) -> ExecutionPlan {
-        // 优化规则 1: 谓词下推（Predicate Pushdown）
+        // Optimization Rule 1: Predicate Pushdown
         let plan = self.push_down_filters(plan);
 
-        // 优化规则 2: 批量大小调整
+        // Optimization Rule 2: Batch Size Adjustment
         let plan = self.adjust_batch_sizes(plan);
 
-        // 优化规则 3: 提前终止（Early Termination）
+        // Optimization Rule 3: Early Termination
         let plan = self.apply_early_termination(plan);
 
         plan
     }
 
-    /// 规则 1: 将过滤条件下推到数据源
+    /// Rule 1: Push down filter conditions to the data source
     fn push_down_filters(&self, plan: ExecutionPlan) -> ExecutionPlan {
         match plan {
             ExecutionPlan::Limit { input, count } => {
                 if let ExecutionPlan::BatchExpand { input: inner, edge_filter, batch_size } = *input {
-                    // 如果 limit 很小，减小批量大小
+                    // If limit is small, reduce the batch size
                     let optimized_batch = batch_size.min(count * 2);
                     ExecutionPlan::Limit {
                         input: Box::new(ExecutionPlan::BatchExpand {
@@ -96,20 +96,20 @@ impl QueryOptimizer {
         }
     }
 
-    /// 规则 2: 根据统计信息调整批量大小
+    /// Rule 2: Adjust batch size based on statistics
     fn adjust_batch_sizes(&self, plan: ExecutionPlan) -> ExecutionPlan {
         match plan {
             ExecutionPlan::BatchExpand { input, edge_filter, batch_size } => {
-                // 根据关系类型的扇出度动态调整
+                // Dynamically adjust based on relation type fanout degree
                 let estimated_fanout = edge_filter.relation_types.iter()
                     .filter_map(|t| self.stats.avg_fanout.get(t))
                     .sum::<f32>() / edge_filter.relation_types.len().max(1) as f32;
 
                 let optimal_batch = if estimated_fanout > 100.0 {
-                    // 高扇出：减小批量避免内存爆炸
+                    // High fanout: decrease batch size to prevent memory explosion
                     32
                 } else if estimated_fanout < 5.0 {
-                    // 低扇出：增大批量减少 I/O
+                    // Low fanout: increase batch size to reduce I/O
                     512
                 } else {
                     batch_size
@@ -125,14 +125,14 @@ impl QueryOptimizer {
         }
     }
 
-    /// 规则 3: 提前终止优化
+    /// Rule 3: Early Termination optimization
     fn apply_early_termination(&self, plan: ExecutionPlan) -> ExecutionPlan {
-        // 如果有 LIMIT，包装一个提前终止的 Distinct
+        // If there is a LIMIT, wrap an early terminating Distinct
         plan
     }
 }
 
-/// 执行计划解释器（用于调试）
+/// Execution Plan Explainer (for debugging)
 pub struct PlanExplainer;
 
 impl PlanExplainer {
@@ -187,7 +187,7 @@ mod tests {
 
         let optimized = optimizer.optimize(plan);
 
-        // 验证优化后的计划
+        // Validate optimized plan
         println!("{}", PlanExplainer::explain(&optimized));
     }
 
@@ -213,7 +213,7 @@ mod tests {
         let explanation = PlanExplainer::explain(&plan);
         println!("Execution Plan:\n{}", explanation);
 
-        // 应该输出类似：
+        // Should output something like:
         // Limit (count=10)
         //   Distinct
         //     BatchExpand (batch_size=256, filter=...)

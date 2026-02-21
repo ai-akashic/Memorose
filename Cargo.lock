@@ -4982,6 +4982,7 @@ dependencies = [
  "langchain-rust",
  "log",
  "memorose-common",
+ "moka 0.12.13",
  "openraft",
  "petgraph",
  "prost 0.13.5",

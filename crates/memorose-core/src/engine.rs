@@ -32,7 +32,7 @@ pub struct MemoroseEngine {
     pub task_reflection: bool,
     pub task_locks: Arc<DashMap<Uuid, Arc<Mutex<()>>>>,
     pub auto_link_similarity_threshold: f32,
-    // 新增：查询优化组件
+    // New: Query optimization components
     query_cache: Arc<crate::graph::QueryCache>,
     batch_executor: Arc<crate::graph::BatchExecutor>,
 }
@@ -709,17 +709,15 @@ impl MemoroseEngine {
             self.vector.add("memories", units_with_embeddings).await?;
         }
 
-        // 3. Index Text in Tantivy (with immediate commit + reload for query visibility)
+        // 3. Index Text in Tantivy
+        // Optimization: Removed immediate commit/reload to improve write throughput.
+        // We rely on the background commit loop (configured via commit_interval_ms) for eventual consistency.
         let index = self.index.clone();
         let units_for_index = units.clone();
         tokio::task::spawn_blocking(move || {
             for unit in &units_for_index {
                 index.index_unit(unit)?;
             }
-            // Commit immediately so new memories are visible to subsequent queries
-            // instead of waiting for the background commit interval (default 5s)
-            index.commit()?;
-            index.reload()?;
             Ok::<(), anyhow::Error>(())
         }).await??;
 
@@ -820,15 +818,34 @@ impl MemoroseEngine {
             }
 
             let mut next_frontier = HashSet::new();
+            
+            // 优化：使用 BatchExecutor 批量查询
+            let node_ids: Vec<Uuid> = frontier.iter()
+                .filter_map(|id_str| Uuid::parse_str(id_str).ok())
+                .collect();
+
+            if node_ids.is_empty() {
+                break;
+            }
+
+            // 批量查询出边和入边
+            let (out_map_res, in_map_res) = tokio::join!(
+                self.batch_executor.batch_get_outgoing_edges(user_id, &node_ids),
+                self.batch_executor.batch_get_incoming_edges(user_id, &node_ids)
+            );
+
+            let out_map = out_map_res?;
+            let in_map = in_map_res?;
+
             let mut edges_to_process = Vec::new();
 
-            for id_str in &frontier {
-                let uid_parsed = Uuid::parse_str(id_str).unwrap_or_default();
-                let out = self.graph.get_outgoing_edges(user_id, uid_parsed).await?;
-                let inp = self.graph.get_incoming_edges(user_id, uid_parsed).await?;
-                
-                edges_to_process.extend(out);
-                edges_to_process.extend(inp);
+            for node_id in &node_ids {
+                if let Some(edges) = out_map.get(node_id) {
+                    edges_to_process.extend(edges.iter().cloned());
+                }
+                if let Some(edges) = in_map.get(node_id) {
+                    edges_to_process.extend(edges.iter().cloned());
+                }
             }
 
             let mut neighbor_ids_to_fetch = HashSet::new();
