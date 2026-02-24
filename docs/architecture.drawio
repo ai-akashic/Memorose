@@ -1,0 +1,88 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/29.5.2 Chrome/142.0.7444.265 Electron/39.6.1 Safari/537.36" version="29.5.2">
+  <diagram id="memorose_arch" name="Architecture">
+    <mxGraphModel dx="1226" dy="841" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="_esB385w_TJjFPwCM5Ai-1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;strokeColor=none;" value="" vertex="1">
+          <mxGeometry height="690" width="850" as="geometry" />
+        </mxCell>
+        <mxCell id="core_engine" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;verticalAlign=top;fontStyle=1;spacingTop=10" value="Core Engine &amp; Memory" vertex="1">
+          <mxGeometry height="260" width="650" x="100" y="160" as="geometry" />
+        </mxCell>
+        <mxCell id="storage_stack" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;verticalAlign=top;fontStyle=1;spacingTop=10" value="Hybrid Storage Stack" vertex="1">
+          <mxGeometry height="150" width="650" x="100" y="480" as="geometry" />
+        </mxCell>
+        <mxCell id="app" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1" value="Client Apps &amp; AI Agents" vertex="1">
+          <mxGeometry height="60" width="160" x="180" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="dash" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1" value="Web Dashboard" vertex="1">
+          <mxGeometry height="60" width="160" x="510" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="raft" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1" value="Auto-Evolution Worker" vertex="1">
+          <mxGeometry height="60" width="150" x="350" y="220" as="geometry" />
+        </mxCell>
+        <mxCell id="l0" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1" value="L0: Raw Events WAL" vertex="1">
+          <mxGeometry height="60" width="160" x="140" y="330" as="geometry" />
+        </mxCell>
+        <mxCell id="l1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1" value="L1: Consolidated Memory" vertex="1">
+          <mxGeometry height="60" width="160" x="345" y="330" as="geometry" />
+        </mxCell>
+        <mxCell id="l2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1" value="L2: Insights &amp; Graphs" vertex="1">
+          <mxGeometry height="60" width="160" x="550" y="330" as="geometry" />
+        </mxCell>
+        <mxCell id="rocksdb" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1" value="RocksDB&#xa;(KV &amp; Edges)" vertex="1">
+          <mxGeometry height="80" width="100" x="170" y="530" as="geometry" />
+        </mxCell>
+        <mxCell id="lancedb" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1" value="LanceDB&#xa;(Vector HNSW)" vertex="1">
+          <mxGeometry height="80" width="100" x="375" y="530" as="geometry" />
+        </mxCell>
+        <mxCell id="tantivy" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1" value="Tantivy&#xa;(Full-Text BM25)" vertex="1">
+          <mxGeometry height="80" width="100" x="580" y="530" as="geometry" />
+        </mxCell>
+        <mxCell id="e_app_raft" edge="1" parent="1" source="app" style="endArrow=classic;html=1;rounded=0;exitX=0.5;exitY=1;entryX=0;entryY=0.5;" target="raft" value="Events &amp; Queries">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_dash_raft" edge="1" parent="1" source="dash" style="endArrow=classic;html=1;dashed=1;rounded=0;exitX=0.5;exitY=1;entryX=1;entryY=0.5;" target="raft" value="Observability">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_raft_l0" edge="1" parent="1" source="raft" style="endArrow=classic;html=1;rounded=0;exitX=0;exitY=1;entryX=0.5;entryY=0;" target="l0" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_raft_l1" edge="1" parent="1" source="raft" style="endArrow=classic;html=1;rounded=0;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="l1" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_raft_l2" edge="1" parent="1" source="raft" style="endArrow=classic;html=1;rounded=0;exitX=1;exitY=1;entryX=0.5;entryY=0;" target="l2" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_l0_rocks" edge="1" parent="1" source="l0" style="endArrow=classic;html=1;rounded=0;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="rocksdb" value="Writes">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_l1_rocks" edge="1" parent="1" source="l1" style="endArrow=classic;html=1;rounded=0;exitX=0.25;exitY=1;entryX=0.5;entryY=0;" target="rocksdb" value="KV / Meta">
+          <mxGeometry relative="1" x="-0.4" y="-3" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_l1_lance" edge="1" parent="1" source="l1" style="endArrow=classic;html=1;rounded=0;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="lancedb" value="Vectors">
+          <mxGeometry relative="1" x="-0.4286" y="-5" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_l1_tantivy" edge="1" parent="1" source="l1" style="endArrow=classic;html=1;rounded=0;exitX=0.75;exitY=1;entryX=0.25;entryY=0;" target="tantivy" value="Text">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_l2_rocks" edge="1" parent="1" source="l2" style="endArrow=classic;html=1;rounded=0;exitX=0.25;exitY=1;entryX=0.75;entryY=0;" target="rocksdb" value="Edges">
+          <mxGeometry relative="1" x="0.3266" y="-3" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_l2_lance" edge="1" parent="1" source="l2" style="endArrow=classic;html=1;rounded=0;exitX=0.5;exitY=1;entryX=0.75;entryY=0;" target="lancedb" value="Vectors">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_l2_tantivy" edge="1" parent="1" source="l2" style="endArrow=classic;html=1;rounded=0;exitX=0.75;exitY=1;entryX=0.5;entryY=0;" target="tantivy" value="Text">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

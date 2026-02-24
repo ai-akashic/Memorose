@@ -38,6 +38,12 @@
 
 ## 🏗 Architecture
 
+<p align="center">
+  <img src="docs/architecture.png" alt="Memorose Architecture" width="800"/>
+  <br/>
+  <em>✏️ <a href="docs/architecture.drawio">Click here to edit the architecture diagram in Draw.io</a></em>
+</p>
+
 **Storage Stack:**
 - **RocksDB**: L0 WAL writes, metadata, graph edges
 - **LanceDB**: Vector search with HNSW indexing
@@ -46,7 +52,6 @@
 **Distributed Features:**
 - Raft consensus for strong consistency
 - Automatic failover and leader election
-- Tenant sharding with consistent hashing
 
 ## 🚀 Quick Start
 
@@ -126,7 +131,7 @@ client.ingest("user_123", "session_1", "User loves hiking")
 
 # Retrieve memories
 results = client.retrieve(
-    tenant_id="user_123",
+    user_id="user_123",
     stream_id="session_1",
     query="outdoor activities",
     top_k=5
@@ -142,7 +147,7 @@ memorose/
 ├── crates/
 │   ├── memorose-core/      # Core engine (storage, consolidation, graph)
 │   ├── memorose-server/    # HTTP server + Raft node
-│   ├── memorose-gateway/   # Stateless gateway with tenant sharding
+│   ├── memorose-gateway/   # API Gateway and request router
 │   └── memorose-common/    # Shared types and config
 ├── dashboard/              # Next.js web UI
 ├── examples/               # Rust examples + Python SDK
@@ -155,7 +160,7 @@ memorose/
 ```http
 POST /api/v1/events
 {
-  "tenant_id": "user_123",
+  "user_id": "user_123",
   "stream_id": "chat_session_1",
   "content": "User mentioned they prefer dark mode"
 }
@@ -165,7 +170,7 @@ POST /api/v1/events
 ```http
 POST /api/v1/retrieve
 {
-  "tenant_id": "user_123",
+  "user_id": "user_123",
   "query": "What are the user's UI preferences?",
   "top_k": 10
 }
