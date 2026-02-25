@@ -6,14 +6,37 @@ import { getToken } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
-import { Loader2, Send, User, Bot } from "lucide-react";
+import { Loader2, Send, User, Bot, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { motion, AnimatePresence } from "framer-motion";
 
 interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
   timestamp: Date;
+}
+
+function TypingIndicator() {
+  return (
+    <div className="flex space-x-1.5 items-center p-2">
+      <motion.div
+        className="w-1.5 h-1.5 bg-primary/60 rounded-full"
+        animate={{ y: [0, -4, 0] }}
+        transition={{ duration: 0.6, repeat: Infinity, delay: 0 }}
+      />
+      <motion.div
+        className="w-1.5 h-1.5 bg-primary/60 rounded-full"
+        animate={{ y: [0, -4, 0] }}
+        transition={{ duration: 0.6, repeat: Infinity, delay: 0.2 }}
+      />
+      <motion.div
+        className="w-1.5 h-1.5 bg-primary/60 rounded-full"
+        animate={{ y: [0, -4, 0] }}
+        transition={{ duration: 0.6, repeat: Infinity, delay: 0.4 }}
+      />
+    </div>
+  );
 }
 
 export default function PlaygroundPage() {
@@ -50,7 +73,6 @@ export default function PlaygroundPage() {
     streamingMessageRef.current = "";
 
     try {
-      // Persist user message to memory system
       await api.ingestEvent({
         user_id: userId,
         app_id: appId,
@@ -61,7 +83,6 @@ export default function PlaygroundPage() {
         },
       });
 
-      // Create SSE connection for chat
       const response = await fetch("/v1/dashboard/chat", {
         method: "POST",
         headers: {
@@ -87,7 +108,7 @@ export default function PlaygroundPage() {
         throw new Error("No response body");
       }
 
-      let assistantMessage: Message = {
+      const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
         content: "",
@@ -153,120 +174,150 @@ export default function PlaygroundPage() {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-6rem)]">
-      <div className="mb-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Chat Playground</h1>
-            <p className="text-muted-foreground mt-2">
-              Test the chat interface with memory persistence
-            </p>
+    <div className="flex flex-col h-[calc(100vh-6rem)] max-w-5xl mx-auto w-full relative">
+      <div className="mb-6 flex items-end justify-between">
+        <motion.div 
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.5 }}
+        >
+          <div className="flex items-center gap-2 mb-2">
+             <Sparkles className="w-5 h-5 text-primary" />
+             <h1 className="text-2xl font-semibold tracking-tight">Interactive Canvas</h1>
           </div>
-          <div className="flex gap-2">
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-muted-foreground px-1">User ID</label>
-              <Input
-                type="text"
-                value={userId}
-                onChange={(e) => setUserId(e.target.value)}
-                placeholder="User ID"
-                className="w-32 h-9 text-xs"
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-muted-foreground px-1">App ID</label>
-              <Input
-                type="text"
-                value={appId}
-                onChange={(e) => setAppId(e.target.value)}
-                placeholder="App ID"
-                className="w-32 h-9 text-xs"
-              />
-            </div>
-          </div>
-        </div>
-      </div>
+          <p className="text-sm text-muted-foreground">
+            Engage with your memory-augmented agent in real-time
+          </p>
+        </motion.div>
 
-      <Card className="flex-1 flex flex-col overflow-hidden shadow-md">
-        <div className="flex-1 overflow-y-auto p-4" ref={scrollRef}>
-          <div className="space-y-4">
-            {messages.length === 0 && (
-              <div className="flex items-center justify-center h-full text-muted-foreground">
-                <div className="text-center space-y-2">
-                  <Bot className="w-12 h-12 mx-auto opacity-20" />
-                  <p className="text-sm">Start a conversation</p>
-                  <p className="text-xs">Your messages will be automatically saved to memory</p>
-                </div>
-              </div>
-            )}
-
-            {messages.map((message) => (
-              <div
-                key={message.id}
-                className={cn(
-                  "flex gap-3",
-                  message.role === "user" ? "justify-end" : "justify-start"
-                )}
-              >
-                {message.role === "assistant" && (
-                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                    <Bot className="w-4 h-4 text-primary" />
-                  </div>
-                )}
-                <div
-                  className={cn(
-                    "max-w-[70%] rounded-lg px-4 py-2",
-                    message.role === "user"
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted"
-                  )}
-                >
-                  <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-                  <p className="text-xs opacity-50 mt-1">
-                    {message.timestamp.toLocaleTimeString()}
-                  </p>
-                </div>
-                {message.role === "user" && (
-                  <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center shrink-0">
-                    <User className="w-4 h-4 text-primary-foreground" />
-                  </div>
-                )}
-              </div>
-            ))}
-
-            {streaming && (
-              <div className="flex gap-3">
-                <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                  <Loader2 className="w-4 h-4 text-primary animate-spin" />
-                </div>
-                <div className="text-sm text-muted-foreground">Thinking...</div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="border-t p-4">
-          <div className="flex gap-2">
+        <motion.div 
+          initial={{ opacity: 0, x: 20 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.5, delay: 0.1 }}
+          className="flex gap-4 p-3 glass-card rounded-xl shadow-lg border-white/5"
+        >
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold px-1">Session Entity</label>
             <Input
               type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyPress={handleKeyPress}
-              placeholder="Type your message..."
-              disabled={loading}
-              className="flex-1"
+              value={userId}
+              onChange={(e) => setUserId(e.target.value)}
+              placeholder="User ID"
+              className="w-32 h-8 text-xs font-mono bg-black/20 border-white/10"
             />
-            <Button onClick={handleSend} disabled={loading || !input.trim()} size="icon">
-              {loading ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Send className="w-4 h-4" />
-              )}
-            </Button>
           </div>
-          <p className="text-xs text-muted-foreground mt-2">
-            Messages are automatically saved to your memory system
-          </p>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold px-1">Context Scope</label>
+            <Input
+              type="text"
+              value={appId}
+              onChange={(e) => setAppId(e.target.value)}
+              placeholder="App ID"
+              className="w-32 h-8 text-xs font-mono bg-black/20 border-white/10"
+            />
+          </div>
+        </motion.div>
+      </div>
+
+      <Card className="flex-1 flex flex-col overflow-hidden glass-card rounded-2xl border-white/10 shadow-2xl relative">
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/20 pointer-events-none" />
+        
+        <div className="flex-1 overflow-y-auto p-6 z-10 scroll-smooth" ref={scrollRef}>
+          <div className="space-y-6 max-w-3xl mx-auto">
+            <AnimatePresence>
+              {messages.length === 0 && (
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  className="flex flex-col items-center justify-center h-[50vh] text-muted-foreground"
+                >
+                  <div className="w-16 h-16 rounded-3xl bg-white/[0.03] backdrop-blur-xl border border-white/10 flex items-center justify-center mb-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.1)]">
+                    <Bot className="w-8 h-8 opacity-40" />
+                  </div>
+                  <h3 className="text-lg font-medium text-foreground/80 mb-2">Initialize Cognitive Stream</h3>
+                  <p className="text-sm opacity-60 max-w-xs text-center">
+                    All dialogs are persistently encoded into the L0/L1/L2 memory hierarchy in real-time.
+                  </p>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <AnimatePresence initial={false}>
+              {messages.map((message) => (
+                <motion.div
+                  key={message.id}
+                  initial={{ opacity: 0, y: 15, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                  className={cn(
+                    "flex gap-4",
+                    message.role === "user" ? "justify-end" : "justify-start"
+                  )}
+                >
+                  {message.role === "assistant" && (
+                    <div className="w-8 h-8 rounded-full bg-white/[0.05] border border-white/10 flex items-center justify-center shrink-0 shadow-sm mt-1">
+                      <Bot className="w-4 h-4 text-primary" />
+                    </div>
+                  )}
+                  <div
+                    className={cn(
+                      "max-w-[75%] rounded-2xl px-5 py-3.5 shadow-sm text-sm leading-relaxed",
+                      message.role === "user"
+                        ? "bg-primary text-primary-foreground shadow-[0_0_15px_rgba(255,255,255,0.1)] rounded-tr-sm"
+                        : "glass-card bg-black/40 border-white/5 rounded-tl-sm text-foreground/90"
+                    )}
+                  >
+                    <p className="whitespace-pre-wrap">{message.content}</p>
+                    {message.role === "assistant" && message.content === "" && !streaming && (
+                      <span className="opacity-50 italic">Error retrieving response.</span>
+                    )}
+                    {message.role === "assistant" && message.content === "" && streaming && (
+                      <TypingIndicator />
+                    )}
+                  </div>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </div>
+        </div>
+
+        {/* Input Area */}
+        <div className="p-4 z-20">
+          <div className="max-w-3xl mx-auto relative group">
+            <div className="absolute -inset-1 bg-gradient-to-r from-primary/20 via-white/5 to-primary/20 rounded-xl blur opacity-30 group-hover:opacity-60 transition duration-1000 group-hover:duration-200" />
+            <div className="relative flex gap-3 items-center glass-card bg-black/60 rounded-xl p-2 border-white/10">
+              <Input
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyPress={handleKeyPress}
+                placeholder="Message the agent..."
+                disabled={loading}
+                className="flex-1 bg-transparent border-none shadow-none focus-visible:ring-0 text-base h-12 px-4 placeholder:text-muted-foreground/50"
+              />
+              <Button 
+                onClick={handleSend} 
+                disabled={loading || !input.trim()} 
+                size="icon"
+                className={cn(
+                  "h-10 w-10 rounded-lg transition-all duration-300",
+                  input.trim() ? "bg-primary text-primary-foreground shadow-[0_0_15px_rgba(255,255,255,0.3)]" : "bg-white/5 text-muted-foreground hover:bg-white/10"
+                )}
+              >
+                {loading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Send className="w-4 h-4" />
+                )}
+              </Button>
+            </div>
+          </div>
+          <div className="text-center mt-3">
+            <p className="text-[10px] text-muted-foreground/60 uppercase tracking-widest">
+              Secured by Memorose Engine
+            </p>
+          </div>
         </div>
       </Card>
     </div>

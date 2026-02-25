@@ -213,46 +213,88 @@ function KnowledgeGraph({ userId }: { userId?: string }) {
   }, []);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const linkWidth = useCallback((link: any) => {
-    return (link.weight ?? 0.5) * 2;
+  const linkCanvasObject = useCallback((link: any, ctx: CanvasRenderingContext2D, scale: number) => {
+    if (!link.source || !link.target) return;
+    const start = link.source;
+    const end = link.target;
+    
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(end.x, end.y);
+    
+    const isLevel2 = start.level === 2 || end.level === 2;
+    const color = isLevel2 ? 'rgba(34, 197, 94, 0.4)' : 'rgba(56, 125, 255, 0.4)';
+    const glowColor = isLevel2 ? 'rgba(34, 197, 94, 0.8)' : 'rgba(56, 125, 255, 0.8)';
+    
+    ctx.strokeStyle = color;
+    ctx.lineWidth = ((link.weight ?? 0.5) * 2) / scale;
+    ctx.shadowColor = glowColor;
+    ctx.shadowBlur = 8 / scale;
+    ctx.stroke();
+    ctx.shadowBlur = 0; // reset
   }, []);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const nodeCanvasObject = useCallback((node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
+    const label = node.label || "";
+    const fontSize = 12 / globalScale;
+    ctx.font = `${fontSize}px Sans-Serif`;
+    const r = Math.sqrt(Math.max(0, nodeVal(node)));
+    
+    // Add breathing glow effect using Date.now()
+    const t = Date.now() / 1000;
+    const pulse = Math.sin(t * 2 + node.id.charCodeAt(0)) * 0.5 + 0.5;
+    
+    const color = nodeColor(node);
+    
+    ctx.beginPath();
+    ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
+    ctx.fillStyle = color;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = (r * 2 + pulse * 4) / globalScale;
+    ctx.fill();
+    ctx.shadowBlur = 0; // reset
+
+    // Node label
+    if (globalScale > 1.5) {
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+      ctx.fillText(label, node.x, node.y + r + fontSize);
+    }
+  }, [nodeColor, nodeVal]);
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-[400px] text-muted-foreground">
-        <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading graph...
+      <div className="flex items-center justify-center h-[500px] text-muted-foreground glass-card rounded-xl">
+        <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading neural graph...
       </div>
     );
   }
 
   if (!data || data.nodes.length === 0) {
     return (
-      <div className="flex items-center justify-center h-[400px] text-muted-foreground">
-        <Network className="w-5 h-5 mr-2" /> No graph data available
+      <div className="flex items-center justify-center h-[500px] text-muted-foreground glass-card rounded-xl">
+        <Network className="w-5 h-5 mr-2 opacity-50" /> No neural pathways established yet
       </div>
     );
   }
 
   return (
-    <div>
-      <div className="flex items-center gap-4 mb-2 text-xs text-muted-foreground">
-        <span>{data.stats.node_count} nodes</span>
-        <span>{data.stats.edge_count} edges</span>
-        {Object.entries(data.stats.relation_distribution).map(([rel, count]) => (
-          <span key={rel}>{rel}: {count}</span>
-        ))}
+    <div className="flex flex-col h-full relative group">
+      <div className="absolute top-4 left-4 z-10 flex gap-3 text-[11px] font-mono uppercase tracking-wider text-muted-foreground bg-background/40 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10">
+        <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" /> {data.stats.node_count} nodes</span>
+        <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-primary/50" /> {data.stats.edge_count} edges</span>
       </div>
-      <div className="rounded-lg bg-background border border-border overflow-hidden" style={{ height: 400 }}>
+      <div className="flex-1 min-h-[500px] rounded-xl glass-card overflow-hidden">
         <ForceGraph2D
           graphData={graphData}
-          nodeColor={nodeColor}
           nodeVal={nodeVal}
-          linkWidth={linkWidth}
-          linkColor={() => "rgba(56, 125, 255, 0.2)"}
-          nodeLabel={(node: any) => node.label || ""}
-          width={undefined}
-          height={400}
+          linkCanvasObject={linkCanvasObject}
+          nodeCanvasObject={nodeCanvasObject}
           backgroundColor="transparent"
+          d3VelocityDecay={0.3}
+          d3AlphaDecay={0.02}
         />
       </div>
     </div>

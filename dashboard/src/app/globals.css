@@ -106,6 +106,29 @@
     background-image: radial-gradient(hsl(var(--muted-foreground) / 0.15) 1px, transparent 1px);
     background-size: 20px 20px;
   }
+  
+  .glass-card {
+    @apply bg-card/80 backdrop-blur-md border border-white/[0.05] shadow-[0_8px_32px_rgba(0,0,0,0.2)];
+  }
+
+  @keyframes spin-slow {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .blob-bg {
+    background: conic-gradient(from 0deg, hsl(var(--primary) / 0.1), hsl(var(--chart-1) / 0.1), hsl(var(--chart-4) / 0.1), hsl(var(--primary) / 0.1));
+    filter: blur(60px); /* Reduced from 120px for performance */
+    animation: spin-slow 30s linear infinite; /* Slowed down to save CPU */
+    border-radius: 50%;
+    /* Removed mix-blend-screen for performance */
+    transform: translateZ(0); /* Hardware acceleration */
+  }
+
   ::selection {
     background: hsl(var(--primary) / 0.2);
     color: hsl(var(--primary));

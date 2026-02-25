@@ -22,7 +22,9 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { CommandPalette } from "@/components/CommandPalette";
 import { MemoroseLogo } from "@/components/haku-logo";
+import { motion } from "framer-motion";
 
 const UserFilterContext = createContext<{
   userId: string;
@@ -55,7 +57,13 @@ export default function AuthenticatedLayout({
 
   useEffect(() => {
     setMounted(true);
-  }, []);
+    const handleLogout = () => {
+      clearToken();
+      router.push("/login/");
+    };
+    window.addEventListener("logout", handleLogout);
+    return () => window.removeEventListener("logout", handleLogout);
+  }, [router]);
 
   useEffect(() => {
     if (mounted && !isAuthenticated()) {
@@ -74,21 +82,27 @@ export default function AuthenticatedLayout({
   return (
     <UserFilterContext.Provider value={{ userId, setUserId }}>
       <TooltipProvider delayDuration={0}>
-        <div className="h-screen flex bg-background overflow-hidden">
+        <div className="h-screen flex bg-background overflow-hidden relative">
+          <CommandPalette />
           <aside
             className={cn(
-              "flex flex-col shrink-0 border-r border-border bg-card/80 backdrop-blur-sm transition-all duration-200 z-30 h-full overflow-hidden",
-              collapsed ? "w-14" : "w-52"
+              "flex flex-col shrink-0 border-r border-white/5 bg-black/40 backdrop-blur-xl transition-all duration-300 z-30 h-full overflow-hidden shadow-[inset_-1px_0_0_rgba(255,255,255,0.02)]",
+              collapsed ? "w-16" : "w-60"
             )}
           >
-            <div className="flex items-center gap-2 px-3 h-12 border-b border-border">
-              <MemoroseLogo size={32} />
+            <div className="flex items-center gap-3 px-4 h-16 border-b border-white/5 relative">
+              <div className="absolute inset-0 bg-gradient-to-r from-primary/10 to-transparent opacity-50" />
+              <div className="relative z-10 drop-shadow-[0_0_10px_rgba(255,255,255,0.3)]">
+                <MemoroseLogo size={32} />
+              </div>
               {!collapsed && (
-                <span className="font-semibold text-sm tracking-tight">Memorose</span>
+                <span className="font-bold text-base tracking-tight relative z-10 bg-clip-text text-transparent bg-gradient-to-r from-white to-white/70">
+                  Memorose
+                </span>
               )}
             </div>
 
-            <nav className="flex-1 py-2 space-y-0.5 px-2">
+            <nav className="flex-1 py-4 space-y-1.5 px-3 overflow-y-auto">
               {navItems.map((item) => {
                 const isActive = pathname === item.href || pathname?.startsWith(item.href.replace(/\/$/, ""));
                 const link = (
@@ -96,14 +110,25 @@ export default function AuthenticatedLayout({
                     key={item.href}
                     href={item.href}
                     className={cn(
-                      "flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-[13px] transition-colors",
+                      "relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200 group overflow-hidden",
                       isActive
-                        ? "bg-primary/10 text-primary font-medium"
-                        : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                        ? "text-primary-foreground font-medium"
+                        : "text-muted-foreground hover:text-foreground"
                     )}
                   >
-                    <item.icon className="w-3.5 h-3.5 shrink-0" />
-                    {!collapsed && item.label}
+                    {isActive && (
+                      <motion.div
+                        layoutId="active-nav-bg"
+                        className="absolute inset-0 bg-gradient-to-r from-primary/80 to-primary/40 rounded-lg -z-10 shadow-[0_0_15px_rgba(56,125,255,0.3)]"
+                        initial={false}
+                        transition={{ type: "spring", stiffness: 350, damping: 30 }}
+                      />
+                    )}
+                    {!isActive && (
+                       <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg -z-10" />
+                    )}
+                    <item.icon className={cn("w-4 h-4 shrink-0 transition-transform group-hover:scale-110", isActive ? "opacity-100" : "opacity-70")} />
+                    {!collapsed && <span className="truncate">{item.label}</span>}
                   </Link>
                 );
 
@@ -111,7 +136,7 @@ export default function AuthenticatedLayout({
                   return (
                     <Tooltip key={item.href}>
                       <TooltipTrigger asChild>{link}</TooltipTrigger>
-                      <TooltipContent side="right" className="text-xs">{item.label}</TooltipContent>
+                      <TooltipContent side="right" className="text-xs border-white/10 glass-card bg-black/80">{item.label}</TooltipContent>
                     </Tooltip>
                   );
                 }
@@ -120,19 +145,19 @@ export default function AuthenticatedLayout({
               })}
             </nav>
 
-            <div className="border-t border-border p-1.5 space-y-0.5">
+            <div className="border-t border-white/5 p-3 space-y-1 bg-black/20">
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => setCollapsed(!collapsed)}
                 className={cn(
-                  "w-full h-7 justify-start gap-2.5 text-xs text-muted-foreground hover:text-foreground",
+                  "w-full h-9 justify-start gap-3 text-sm text-muted-foreground hover:text-foreground hover:bg-white/5",
                   collapsed && "justify-center"
                 )}
               >
                 <ChevronLeft
                   className={cn(
-                    "w-3.5 h-3.5 shrink-0 transition-transform",
+                    "w-4 h-4 shrink-0 transition-transform duration-300",
                     collapsed && "rotate-180"
                   )}
                 />
@@ -146,11 +171,11 @@ export default function AuthenticatedLayout({
                   router.push("/login/");
                 }}
                 className={cn(
-                  "w-full h-7 justify-start gap-2.5 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10",
+                  "w-full h-9 justify-start gap-3 text-sm text-muted-foreground hover:text-destructive hover:bg-destructive/10 group",
                   collapsed && "justify-center"
                 )}
               >
-                <LogOut className="w-3.5 h-3.5 shrink-0" />
+                <LogOut className="w-4 h-4 shrink-0 group-hover:-translate-x-1 transition-transform" />
                 {!collapsed && "Logout"}
               </Button>
             </div>
