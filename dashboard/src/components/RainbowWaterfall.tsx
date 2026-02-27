@@ -15,46 +15,52 @@ interface RainbowWaterfallProps {
 
 export function RainbowWaterfall({ stats }: RainbowWaterfallProps) {
   const steps = [
-    { label: "L0 Stream", count: stats.total_events, color: "hsl(220 70% 50%)", width: 85 }, // Reduced block width to make room for text
+    { label: "L0 Stream", count: stats.total_events, color: "hsl(220 70% 50%)", width: 85 },
     { label: "Queue", count: stats.pending_events, color: "hsl(38 92% 50%)", width: 70 },
     { label: "L1 Memory", count: stats.memory_by_level.l1, color: "hsl(142 76% 36%)", width: 55 },
     { label: "L2 Insights", count: stats.memory_by_level.l2, color: "hsl(280 65% 60%)", width: 40 },
   ];
 
-  // We increase svgWidth to 550 and keep blocks aligned towards the left/center 
-  // to ensure numbers on the right have plenty of space.
-  const svgWidth = 550;
-  const centerX = 200; // Offset center to the left
-  const stepHeight = 44;
-  const stepGap = 48; 
-  const totalHeight = steps.length * stepHeight + (steps.length - 1) * stepGap;
+  const svgWidth = 600;
+  const svgHeight = 400;
+  const centerY = 200; 
+  const stepWidth = 100;
+  const stepGap = 50; 
+  const totalWidth = steps.length * stepWidth + (steps.length - 1) * stepGap;
+  const startOffsetX = (svgWidth - totalWidth) / 2;
 
   return (
-    <div className="w-full h-full flex items-center justify-center p-2">
+    <div className="w-full h-full flex items-center justify-center">
       <svg
-        viewBox={`0 0 ${svgWidth} ${totalHeight}`}
+        viewBox={`0 0 ${svgWidth} ${svgHeight}`}
         className="max-h-full w-full drop-shadow-2xl"
         preserveAspectRatio="xMidYMid meet"
         style={{ overflow: 'visible' }}
       >
         <defs>
+          <linearGradient id="flowPatternGrad" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="white" stopOpacity="0.1" />
+            <stop offset="50%" stopColor="white" stopOpacity="0.3" />
+            <stop offset="100%" stopColor="white" stopOpacity="0.1" />
+          </linearGradient>
+
           {/* Gradients for flows */}
           {steps.slice(0, -1).map((step, i) => (
-            <linearGradient key={`grad-${i}`} id={`flowGradient${i}`} x1="0" y1="0" x2="0" y2="1">
+            <linearGradient key={`grad-${i}`} id={`flowGradient${i}`} x1="0" y1="0" x2="1" y2="0">
               <stop offset="0%" stopColor={step.color} stopOpacity="0.3" />
               <stop offset="100%" stopColor={steps[i + 1].color} stopOpacity="0.3" />
             </linearGradient>
           ))}
 
           {/* Animated Pattern for Flow Effect */}
-          <pattern id="flowPattern" x="0" y="0" width="20" height="20" patternUnits="userSpaceOnUse">
-            <circle cx="2" cy="2" r="1" fill="white" opacity="0.2" />
+          <pattern id="flowPattern" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
+             <rect width="2" height="40" fill="url(#flowPatternGrad)" />
             <animateTransform 
               attributeName="patternTransform" 
               type="translate" 
               from="0 0" 
-              to="0 20" 
-              dur="2s" 
+              to="40 0" 
+              dur="3s" 
               repeatCount="indefinite" 
             />
           </pattern>
@@ -65,26 +71,31 @@ export function RainbowWaterfall({ stats }: RainbowWaterfallProps) {
           if (i >= steps.length - 1) return null;
           
           const nextStep = steps[i + 1];
-          const blockWidth = (step.width / 100) * 400; // Use 400 as reference width
-          const nextBlockWidth = (nextStep.width / 100) * 400;
+          const blockHeight = (step.width / 100) * 300;
+          const nextBlockHeight = (nextStep.width / 100) * 300;
           
-          const x = centerX - blockWidth / 2;
-          const nextX = centerX - nextBlockWidth / 2;
+          const x = startOffsetX + i * (stepWidth + stepGap);
+          const nextX = startOffsetX + (i + 1) * (stepWidth + stepGap);
           
-          const y = i * (stepHeight + stepGap);
-          const nextY = (i + 1) * (stepHeight + stepGap);
+          const y = centerY - blockHeight / 2;
+          const nextY = centerY - nextBlockHeight / 2;
           
-          const startY = y + stepHeight;
-          const endY = nextY;
+          const startX = x + stepWidth;
+          const endX = nextX;
 
-          const c1y = startY + stepGap * 0.4;
-          const c2y = endY - stepGap * 0.4;
+          const yTop1 = y;
+          const yBottom1 = y + blockHeight;
+          const yTop2 = nextY;
+          const yBottom2 = nextY + nextBlockHeight;
+
+          const c1x = startX + stepGap * 0.5;
+          const c2x = endX - stepGap * 0.5;
 
           const pathD = `
-            M ${x + 5} ${startY}
-            C ${x + 5} ${c1y}, ${nextX + 5} ${c2y}, ${nextX + 5} ${endY}
-            L ${nextX + nextBlockWidth - 5} ${endY}
-            C ${nextX + nextBlockWidth - 5} ${c2y}, ${x + blockWidth - 5} ${c1y}, ${x + blockWidth - 5} ${startY}
+            M ${startX} ${yTop1 + 4}
+            C ${c1x} ${yTop1 + 4}, ${c2x} ${yTop2 + 4}, ${endX} ${yTop2 + 4}
+            L ${endX} ${yBottom2 - 4}
+            C ${c2x} ${yBottom2 - 4}, ${c1x} ${yBottom1 - 4}, ${startX} ${yBottom1 - 4}
             Z
           `;
 
@@ -98,9 +109,9 @@ export function RainbowWaterfall({ stats }: RainbowWaterfallProps) {
 
         {/* Draw Blocks */}
         {steps.map((step, i) => {
-          const blockWidth = (step.width / 100) * 400;
-          const x = centerX - blockWidth / 2;
-          const y = i * (stepHeight + stepGap);
+          const blockHeight = (step.width / 100) * 300;
+          const x = startOffsetX + i * (stepWidth + stepGap);
+          const y = centerY - blockHeight / 2;
 
           return (
             <g key={step.label}>
@@ -108,49 +119,55 @@ export function RainbowWaterfall({ stats }: RainbowWaterfallProps) {
               <rect
                 x={x}
                 y={y}
-                width={blockWidth}
-                height={stepHeight}
-                rx="8"
+                width={stepWidth}
+                height={blockHeight}
+                rx="6"
                 fill={step.color}
-                opacity="0.25"
-                style={{ filter: 'blur(10px)' }}
+                opacity="0.2"
+                style={{ filter: 'blur(8px)' }}
               />
               {/* Block */}
               <rect
                 x={x}
                 y={y}
-                width={blockWidth}
-                height={stepHeight}
-                rx="8"
+                width={stepWidth}
+                height={blockHeight}
+                rx="6"
                 fill={step.color}
-                className="stroke-white/20"
-                strokeWidth="1.5"
+                className="stroke-white/10"
+                strokeWidth="1"
               />
               
-              {/* Label - Increased to 15px */}
-              <text
-                x={centerX}
-                y={y + stepHeight / 2}
-                dy="0.3em"
-                textAnchor="middle"
-                fill="white"
-                className="font-sans font-extrabold pointer-events-none uppercase tracking-widest"
-                style={{ fontSize: '15px', textShadow: "0px 2px 4px rgba(0,0,0,0.6)" }}
-              >
-                {step.label}
-              </text>
-              
-              {/* Count - Increased to 16px and moved to avoid clipping */}
-              <text 
-                x={centerX + blockWidth/2 + 18} 
-                y={y + stepHeight/2} 
-                dy="0.3em"
-                textAnchor="start" 
-                className="font-mono text-[16px] font-black fill-white"
-                style={{ filter: "drop-shadow(0 0 10px rgba(255,255,255,0.4))" }}
-              >
-                {formatNumber(step.count)}
-              </text>
+              {/* Label - Rotated or split to fit narrow block */}
+              <g transform={`translate(${x + stepWidth / 2}, ${centerY})`}>
+                <text
+                  y="-10"
+                  textAnchor="middle"
+                  fill="white"
+                  className="font-sans font-black pointer-events-none uppercase tracking-tighter"
+                  style={{ fontSize: '11px', textShadow: "0px 1px 2px rgba(0,0,0,0.8)" }}
+                >
+                  {step.label.split(' ')[0]}
+                </text>
+                <text
+                  y="4"
+                  textAnchor="middle"
+                  fill="white"
+                  className="font-sans font-black pointer-events-none uppercase tracking-tighter"
+                  style={{ fontSize: '11px', textShadow: "0px 1px 2px rgba(0,0,0,0.8)" }}
+                >
+                  {step.label.split(' ')[1] || ''}
+                </text>
+                
+                {/* Count */}
+                <text 
+                  y="24" 
+                  textAnchor="middle" 
+                  className="font-mono text-[14px] font-bold fill-white/90"
+                >
+                  {formatNumber(step.count)}
+                </text>
+              </g>
             </g>
           );
         })}
