@@ -186,16 +186,9 @@ function HeartbeatCard({ cluster }: { cluster: ClusterStatusSingle }) {
           </div>
         </div>
 
-        {/* Health Summary */}
-        <div className="rounded-lg bg-success/5 border border-success/20 p-2">
-          <div className="flex items-center gap-2 text-xs text-success">
-            <div className="w-1.5 h-1.5 rounded-full bg-success" />
-            <span className="font-medium">All nodes healthy</span>
-          </div>
-          <p className="text-[10px] text-muted-foreground mt-1">
-            Heartbeats active every {config.heartbeat_interval_ms}ms
-          </p>
-        </div>
+        <p className="text-[10px] text-muted-foreground mt-1">
+          Heartbeats active every {config.heartbeat_interval_ms}ms
+        </p>
       </CardContent>
     </Card>
   );

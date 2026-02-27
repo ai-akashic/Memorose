@@ -21,11 +21,11 @@ export function RainbowWaterfall({ stats }: RainbowWaterfallProps) {
     { label: "L2 Insights", count: stats.memory_by_level.l2, color: "hsl(280 65% 60%)", width: 40 },
   ];
 
-  const svgWidth = 600;
-  const svgHeight = 400;
-  const centerY = 200; 
-  const stepWidth = 100;
-  const stepGap = 50; 
+  const svgWidth = 700;
+  const svgHeight = 320; // Trimmed vertical empty space
+  const centerY = 160;   // Perfectly centered in 320
+  const stepWidth = 130; // Wider blocks
+  const stepGap = 40;    // Tighter gaps
   const totalWidth = steps.length * stepWidth + (steps.length - 1) * stepGap;
   const startOffsetX = (svgWidth - totalWidth) / 2;
 
@@ -33,7 +33,7 @@ export function RainbowWaterfall({ stats }: RainbowWaterfallProps) {
     <div className="w-full h-full flex items-center justify-center">
       <svg
         viewBox={`0 0 ${svgWidth} ${svgHeight}`}
-        className="max-h-full w-full drop-shadow-2xl"
+        className="w-full h-full drop-shadow-2xl"
         preserveAspectRatio="xMidYMid meet"
         style={{ overflow: 'visible' }}
       >
@@ -71,7 +71,7 @@ export function RainbowWaterfall({ stats }: RainbowWaterfallProps) {
           if (i >= steps.length - 1) return null;
           
           const nextStep = steps[i + 1];
-          const blockHeight = (step.width / 100) * 300;
+          const blockHeight = (step.width / 100) * 300; // Scaled up height
           const nextBlockHeight = (nextStep.width / 100) * 300;
           
           const x = startOffsetX + i * (stepWidth + stepGap);
@@ -141,29 +141,29 @@ export function RainbowWaterfall({ stats }: RainbowWaterfallProps) {
               {/* Label - Rotated or split to fit narrow block */}
               <g transform={`translate(${x + stepWidth / 2}, ${centerY})`}>
                 <text
-                  y="-10"
+                  y="-12"
                   textAnchor="middle"
                   fill="white"
                   className="font-sans font-black pointer-events-none uppercase tracking-tighter"
-                  style={{ fontSize: '11px', textShadow: "0px 1px 2px rgba(0,0,0,0.8)" }}
+                  style={{ fontSize: '13px', textShadow: "0px 1px 3px rgba(0,0,0,0.8)" }}
                 >
                   {step.label.split(' ')[0]}
                 </text>
                 <text
-                  y="4"
+                  y="6"
                   textAnchor="middle"
                   fill="white"
                   className="font-sans font-black pointer-events-none uppercase tracking-tighter"
-                  style={{ fontSize: '11px', textShadow: "0px 1px 2px rgba(0,0,0,0.8)" }}
+                  style={{ fontSize: '13px', textShadow: "0px 1px 3px rgba(0,0,0,0.8)" }}
                 >
                   {step.label.split(' ')[1] || ''}
                 </text>
                 
                 {/* Count */}
                 <text 
-                  y="24" 
+                  y="30" 
                   textAnchor="middle" 
-                  className="font-mono text-[14px] font-bold fill-white/90"
+                  className="font-mono text-[16px] font-bold fill-white/90"
                 >
                   {formatNumber(step.count)}
                 </text>

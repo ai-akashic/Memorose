@@ -98,6 +98,8 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    user-select: text;
+    -webkit-user-select: text;
   }
   body {
     @apply bg-background text-foreground antialiased;
@@ -162,9 +164,13 @@
 }
 
 
-/* Allow text selection/copy in main content areas even if child components disable it. */
-.allow-select,
-.allow-select * {
+/* Allow text selection/copy globally. */
+body, body * {
   -webkit-user-select: text !important;
   user-select: text !important;
+}
+
+.select-none {
+  user-select: none !important;
+  -webkit-user-select: none !important;
 }

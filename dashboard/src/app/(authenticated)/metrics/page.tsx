@@ -291,7 +291,7 @@ export default function MetricsPage() {
                <Layers className="w-3.5 h-3.5 text-primary opacity-70" />
                <span className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground/80">Cognitive Flow</span>
              </div>
-             <div className="flex-1 relative z-10">
+             <div className="flex-1 w-full h-full relative z-10 min-h-0 flex items-center justify-center pt-2 pb-4">
                {stats && <RainbowWaterfall stats={stats} />}
              </div>
           </Card>
