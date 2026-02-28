@@ -184,9 +184,17 @@ Full API docs: [docs/API.md](docs/API.md)
 
 **In Progress:**
 - Comprehensive benchmarks (HaluMem, PersonaMem, LoCoMo, LongMemEval)
-- Test coverage • Docker/K8s deployment • Multi-model support • Cost optimization
+- Test coverage • Docker/K8s deployment
+- **Multi-Model Provider Support**: Expanding the `LLMClient` trait beyond Gemini to officially support OpenAI (GPT-4o, text-embedding-3), DeepSeek, and local open-source models (vLLM/Ollama) for cost/performance routing.
+- **Token & Cost Optimization**: Advanced prompt packing, semantic deduplication, and caching strategies to minimize LLM token burn during continuous consolidation.
+- **Dual-Track Memory Pipelines**: Architectural separation of `User Memory` (factual profile extraction) and `Agent Memory` (procedural state & trajectory summaries) using isolated namespaces and specialized LLM extraction prompts.
 
-**Future:** Multi-modal memory (images/audio) • Rerank plugins • Federated learning • GNN-based insights
+**Future:**
+- **Native Multi-modal Memory**: Seamlessly encode, compress, and retrieve images, audio, and visual screen-states alongside text semantics.
+- **Deep Graph Reasoning (GraphRAG)**: Advanced multi-hop entity reasoning across the auto-constructed knowledge graph to answer complex relational queries.
+- **Episodic & Action Memory**: Specialized memory pathways for agent tool-use, capturing execution history, outcomes, and reflexions (experience-based learning) distinct from factual knowledge.
+- **Custom Rerankers (Cross-Encoders/LLMs)**: Pluggable reranking interfaces allowing users to bring their own BGE-Reranker or LLM-based judges to override the default heuristic scoring.
+- Federated learning
 
 ## 📄 License
 
