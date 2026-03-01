@@ -180,15 +180,13 @@ Full API docs: [docs/API.md](docs/API.md)
 
 ## 🔮 Roadmap
 
-**Completed:** Three-layer architecture • Distributed Raft cluster • Active forgetting • Auto graph construction • Web dashboard • Multi-Model Provider Support • Dual-Track Memory Pipelines • Token & Cost Optimization
+**Completed:** Three-layer architecture • Distributed Raft cluster • Active forgetting • Auto graph construction • Web dashboard • Multi-Model Provider Support • Dual-Track Memory Pipelines • Token & Cost Optimization • Deep Graph Reasoning (GraphRAG) • Native Multi-modal Memory (Vision)
 
 **In Progress:**
 - Comprehensive benchmarks (HaluMem, PersonaMem, LoCoMo, LongMemEval)
 - Test coverage • Docker/K8s deployment
 
 **Future:**
-- **Native Multi-modal Memory**: Seamlessly encode, compress, and retrieve images, audio, and visual screen-states alongside text semantics.
-- **Deep Graph Reasoning (GraphRAG)**: Advanced multi-hop entity reasoning across the auto-constructed knowledge graph to answer complex relational queries.
 - **Episodic & Action Memory**: Specialized memory pathways for agent tool-use, capturing execution history, outcomes, and reflexions (experience-based learning) distinct from factual knowledge.
 - **Custom Rerankers (Cross-Encoders/LLMs)**: Pluggable reranking interfaces allowing users to bring their own BGE-Reranker or LLM-based judges to override the default heuristic scoring.
 - Federated learning
