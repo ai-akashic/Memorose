@@ -7,7 +7,7 @@ services:
     environment:
       - RUST_LOG=info
       - SHARD_COUNT=2
-      - NODE_PREFIX=http://memorose-node-
+      - NODES=1=http://memorose-node-0:3000,2=http://memorose-node-1:3000
     ports:
       - "8080:8080"
     depends_on:

@@ -86,7 +86,10 @@ async fn main() {
         shard_count,
         node_addresses,
         shard_leaders: RwLock::new(HashMap::new()),
-        http_client: reqwest::Client::new(),
+        http_client: reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("Failed to build gateway HTTP client"),
     });
 
     let app = Router::new()

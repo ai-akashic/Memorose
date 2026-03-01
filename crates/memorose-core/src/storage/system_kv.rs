@@ -27,6 +27,14 @@ impl SystemKvStore {
         self.inner.scan(prefix)
     }
 
+    pub fn scan_range(&self, start_key: &[u8], end_key_exclusive: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        self.inner.scan_range(start_key, end_key_exclusive)
+    }
+
+    pub fn count_prefix(&self, prefix: &[u8]) -> Result<usize> {
+        self.inner.count_prefix(prefix)
+    }
+
     pub fn multi_get(&self, keys: &[&[u8]]) -> Result<Vec<Option<Vec<u8>>>> {
         self.inner.multi_get(keys)
     }

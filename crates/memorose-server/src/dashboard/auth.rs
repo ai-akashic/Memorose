@@ -8,6 +8,7 @@ use axum::{
 use bcrypt::{hash, DEFAULT_COST};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
+use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -58,24 +59,36 @@ impl DashboardAuth {
             secret
         };
 
-        // Create default admin user if auth file doesn't exist
-        if !auth_path.exists() {
-            let initial_password = std::env::var("DASHBOARD_ADMIN_PASSWORD")
-                .unwrap_or_else(|_| "admin".to_string());
-            let must_change = initial_password == "admin";
-            let password_hash = hash(&initial_password, DEFAULT_COST)?;
-            let auth_data = AuthData {
-                username: "admin".to_string(),
-                password_hash,
-                must_change_password: must_change,
-            };
-            let json = serde_json::to_string_pretty(&auth_data)?;
-            std::fs::write(&auth_path, json)?;
-            if must_change {
-                tracing::warn!("Dashboard using default credentials (admin/admin). Set DASHBOARD_ADMIN_PASSWORD or change via Settings.");
-            } else {
-                tracing::info!("Dashboard admin user created with password from DASHBOARD_ADMIN_PASSWORD env var.");
+        // Use create_new(true) for an atomic create -- prevents TOCTOU race between
+        // check and write when multiple processes start simultaneously.
+        let initial_password = std::env::var("DASHBOARD_ADMIN_PASSWORD")
+            .unwrap_or_else(|_| "admin".to_string());
+        let must_change = initial_password == "admin";
+        let password_hash = hash(&initial_password, DEFAULT_COST)?;
+        let auth_data = AuthData {
+            username: "admin".to_string(),
+            password_hash,
+            must_change_password: must_change,
+        };
+        let json = serde_json::to_string_pretty(&auth_data)?;
+
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&auth_path)
+        {
+            Ok(mut file) => {
+                file.write_all(json.as_bytes())?;
+                if must_change {
+                    tracing::warn!("Dashboard using default credentials (admin/admin). Set DASHBOARD_ADMIN_PASSWORD or change via Settings.");
+                } else {
+                    tracing::info!("Dashboard admin user created with password from DASHBOARD_ADMIN_PASSWORD env var.");
+                }
             }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // Another process created the file first — that's fine, use theirs.
+            }
+            Err(e) => return Err(e.into()),
         }
 
         // Generate a real bcrypt dummy hash for timing-attack prevention

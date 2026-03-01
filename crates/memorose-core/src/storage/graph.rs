@@ -27,26 +27,54 @@ pub struct GraphStore {
     db: Arc<Connection>,
     buffer: Arc<Mutex<Vec<GraphEdge>>>,
     table_name: String,
+    _shutdown: Arc<tokio::sync::Notify>,
     _flush_task: Arc<tokio::task::JoinHandle<()>>,
+}
+
+impl Drop for GraphStore {
+    fn drop(&mut self) {
+        // Signal the background task to exit when the last GraphStore clone is dropped.
+        // At that point strong_count is 2: this struct's copy + the task's copy.
+        if Arc::strong_count(&self._shutdown) == 2 {
+            self._shutdown.notify_one();
+        }
+    }
 }
 
 impl GraphStore {
     pub async fn new(db: Arc<Connection>) -> Result<Self> {
         let buffer = Arc::new(Mutex::new(Vec::new()));
         let table_name = "relationships".to_string();
-        let store = Self {
-            db: db.clone(),
-            buffer: buffer.clone(),
-            table_name: table_name.clone(),
-            _flush_task: Arc::new(tokio::spawn(async move {
-                let mut interval = tokio::time::interval(Duration::from_secs(5));
-                loop {
-                    interval.tick().await;
-                    if let Err(e) = GraphStore::flush_with_refs(&db, &buffer, &table_name).await {
-                        tracing::error!("GraphStore periodic flush failed: {:?}", e);
+        let shutdown = Arc::new(tokio::sync::Notify::new());
+
+        let db_clone = db.clone();
+        let buffer_clone = buffer.clone();
+        let table_clone = table_name.clone();
+        let shutdown_clone = shutdown.clone();
+
+        let flush_task = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        if let Err(e) = GraphStore::flush_with_refs(&db_clone, &buffer_clone, &table_clone).await {
+                            tracing::error!("GraphStore periodic flush failed: {:?}", e);
+                        }
+                    }
+                    _ = shutdown_clone.notified() => {
+                        tracing::debug!("GraphStore background flush task stopping");
+                        break;
                     }
                 }
-            })),
+            }
+        });
+
+        let store = Self {
+            db,
+            buffer,
+            table_name,
+            _shutdown: shutdown,
+            _flush_task: Arc::new(flush_task),
         };
         store.init().await?;
         Ok(store)
@@ -86,14 +114,13 @@ impl GraphStore {
         buffer: &Arc<Mutex<Vec<GraphEdge>>>,
         table_name: &str,
     ) -> Result<()> {
+        // Atomically drain the buffer. New edges can be added concurrently while we write.
         let edges = {
             let mut buf = buffer.lock().await;
             if buf.is_empty() {
                 return Ok(());
             }
-            let edges = buf.clone();
-            buf.clear();
-            edges
+            std::mem::take(&mut *buf)
         };
 
         let schema = create_graph_schema();
@@ -115,11 +142,24 @@ impl GraphStore {
                 Arc::new(Float32Array::from(weights)),
                 Arc::new(TimestampMicrosecondArray::from(times).with_timezone("UTC")),
             ],
-        )?;
+        );
 
-        let reader = RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema);
-        let table = db.open_table(table_name).execute().await?;
-        table.add(reader).execute().await?;
+        let write_result = async {
+            let batch = batch?;
+            let reader = RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema);
+            let table = db.open_table(table_name).execute().await?;
+            table.add(reader).execute().await?;
+            Ok::<_, anyhow::Error>(())
+        }.await;
+
+        // On failure, put the edges back into the buffer so they are retried on the next flush.
+        if let Err(e) = write_result {
+            let mut buf = buffer.lock().await;
+            let new_edges = std::mem::take(&mut *buf);
+            *buf = edges;
+            buf.extend(new_edges);
+            return Err(e);
+        }
 
         Ok(())
     }
@@ -135,6 +175,29 @@ impl GraphStore {
         } else {
             delta.min(1.0)
         };
+
+        // Delete stale rows for this (source, target, RelatedTo) tuple from LanceDB
+        // and from the in-memory buffer. Without this, every reinforce_edge call
+        // appends a new row, causing unbounded storage growth.
+        if existing_edge.is_some() {
+            let escaped_user = user_id.replace('\'', "''");
+            let filter = format!(
+                "user_id = '{}' AND source_id = '{}' AND target_id = '{}' AND relation = 'RelatedTo'",
+                escaped_user, source_id, target_id
+            );
+            let table = self.db.open_table(&self.table_name).execute().await?;
+            table.delete(&filter).await?;
+
+            // Also purge from the in-memory write buffer so a pending flush doesn't
+            // re-insert the old weight on top of the new row.
+            let mut buf = self.buffer.lock().await;
+            buf.retain(|e| !(
+                e.user_id == user_id
+                && e.source_id == source_id
+                && e.target_id == target_id
+                && e.relation == RelationType::RelatedTo
+            ));
+        }
 
         let edge = GraphEdge::new(user_id.to_string(), source_id, target_id, RelationType::RelatedTo, new_weight);
         self.add_edge(&edge).await
@@ -398,8 +461,19 @@ impl GraphStore {
                     _ => RelationType::RelatedTo,
                 };
                 let ts_micros = time_col.value(i);
-                let timestamp = chrono::TimeZone::timestamp_opt(&Utc, ts_micros / 1_000_000, (ts_micros % 1_000_000 * 1000) as u32)
-                    .unwrap();
+                // Use Euclidean division so the nanosecond remainder is always non-negative,
+                // which correctly handles timestamps before the Unix epoch.
+                let secs = ts_micros.div_euclid(1_000_000);
+                let nanos = (ts_micros.rem_euclid(1_000_000) * 1_000) as u32;
+                let timestamp = chrono::TimeZone::timestamp_opt(&Utc, secs, nanos)
+                    .single()
+                    .unwrap_or_else(|| {
+                        tracing::warn!(
+                            "Invalid graph edge timestamp {}µs (secs={}, nanos={}), defaulting to current time",
+                            ts_micros, secs, nanos
+                        );
+                        Utc::now()
+                    });
 
                 edges.push(GraphEdge {
                     user_id,

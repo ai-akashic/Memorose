@@ -5,7 +5,7 @@ use crate::storage::vector::VectorStore;
 use crate::storage::index::TextIndex;
 use crate::storage::graph::GraphStore;
 use crate::arbitrator::Arbitrator;
-use crate::reranker::{Reranker, WeightedReranker};
+use crate::reranker::Reranker;
 use memorose_common::{Event, MemoryUnit, GraphEdge, RelationType, TimeRange};
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
@@ -75,10 +75,10 @@ fn cosine_similarity(v1: &[f32], v2: &[f32]) -> f32 {
     let dot_product: f32 = v1.iter().zip(v2.iter()).map(|(a, b)| a * b).sum();
     let magnitude_v1: f32 = v1.iter().map(|v| v * v).sum::<f32>().sqrt();
     let magnitude_v2: f32 = v2.iter().map(|v| v * v).sum::<f32>().sqrt();
-    if magnitude_v1 == 0.0 || magnitude_v2 == 0.0 {
+    if magnitude_v1 < f32::EPSILON || magnitude_v2 < f32::EPSILON {
         return 0.0;
     }
-    dot_product / (magnitude_v1 * magnitude_v2)
+    (dot_product / (magnitude_v1 * magnitude_v2)).clamp(-1.0, 1.0)
 }
 
 impl MemoroseEngine {
@@ -281,6 +281,13 @@ impl MemoroseEngine {
 
     pub async fn fetch_pending_events(&self) -> Result<Vec<Event>> {
         self.fetch_pending_events_limited(usize::MAX).await
+    }
+
+    /// Count pending events without deserialising their bodies — much cheaper than
+    /// `fetch_pending_events().len()` for systems with many pending events.
+    pub async fn count_pending_events(&self) -> Result<usize> {
+        let skv = self.system_kv();
+        tokio::task::spawn_blocking(move || skv.count_prefix(b"pending:")).await?
     }
 
     pub async fn fetch_pending_events_limited(&self, limit: usize) -> Result<Vec<Event>> {
@@ -636,13 +643,25 @@ impl MemoroseEngine {
 
         // Handle Auto-Planning for L3 Goals
         if is_goal && self.auto_planner && depth < 5 {
+            // Write a "pending" marker so callers can observe the in-flight planning state.
+            // The task clears it to "done" or "failed" when it finishes.
+            let planning_key = format!("planning:{}", unit_id);
+            let _ = self.system_kv().put(planning_key.as_bytes(), b"pending");
+
             let engine = self.clone();
             let uid = user_id.clone();
             let aid = app_id.clone();
             let cnt = content.clone();
             tokio::spawn(async move {
-                if let Err(e) = engine.auto_plan_goal(uid, aid, stream_id, unit_id, cnt, depth + 1).await {
-                    tracing::error!("Auto-planning failed for goal {}: {:?}", unit_id, e);
+                let key = format!("planning:{}", unit_id);
+                match engine.auto_plan_goal(uid, aid, stream_id, unit_id, cnt, depth + 1).await {
+                    Ok(()) => {
+                        let _ = engine.system_kv().put(key.as_bytes(), b"done");
+                    }
+                    Err(e) => {
+                        tracing::error!("Auto-planning failed for goal {}: {:?}", unit_id, e);
+                        let _ = engine.system_kv().put(key.as_bytes(), b"failed");
+                    }
                 }
             });
         }
@@ -708,6 +727,24 @@ impl MemoroseEngine {
             }
             Ok::<(), anyhow::Error>(())
         }).await??;
+
+        // Maintain L1 secondary index for efficient fetch_recent_l1_units.
+        // Key: "l1_idx:{user_id}:{id}" -> timestamp_micros as little-endian bytes (fast sort, no JSON).
+        // The user_id prefix is critical: without it the global scan mixes all users' L1 units.
+        let l1_units: Vec<(String, String, i64)> = units.iter()
+            .filter(|u| u.level == 1)
+            .map(|u| (u.user_id.clone(), u.id.to_string(), u.transaction_time.timestamp_micros()))
+            .collect();
+        if !l1_units.is_empty() {
+            let kv_l1 = self._kv.clone();
+            tokio::task::spawn_blocking(move || {
+                for (uid, id, ts_micros) in &l1_units {
+                    let key = format!("l1_idx:{}:{}", uid, id);
+                    kv_l1.put(key.as_bytes(), &ts_micros.to_le_bytes())?;
+                }
+                Ok::<(), anyhow::Error>(())
+            }).await??;
+        }
 
         // 2. Store Vector in Lance (single "memories" table)
         let units_with_embeddings: Vec<MemoryUnit> = units.iter()
@@ -970,7 +1007,10 @@ impl MemoroseEngine {
         let vector_hits = match vector_results {
             Ok(hits) => hits,
             Err(e) => {
-                if e.to_string().contains("not found") {
+                let msg = e.to_string().to_lowercase();
+                // "Table 'memories' not found" is expected on a fresh node with no ingested data.
+                // Require both a table-related term AND "not found" to avoid swallowing real errors.
+                if (msg.contains("table") || msg.contains("no such")) && msg.contains("not found") {
                     Vec::new()
                 } else {
                     return Err(e);
@@ -1035,7 +1075,11 @@ impl MemoroseEngine {
             return Ok(Vec::new());
         }
 
-        // Semantic Dedup
+        // Semantic Dedup — O(N²·D); cap input so cost stays bounded even after subgraph expansion.
+        let dedup_cap = (limit * 4).max(20);
+        if final_results.len() > dedup_cap {
+            final_results.truncate(dedup_cap);
+        }
         let mut deduped_results: Vec<(MemoryUnit, f32)> = Vec::new();
         for (unit, score) in final_results {
             let mut is_duplicate = false;
@@ -1146,55 +1190,92 @@ impl MemoroseEngine {
     // ── Forgetting ──────────────────────────────────────────────────
 
     /// Apply importance decay to memories for a specific user.
+    /// Updates only the KV store — does NOT re-index into LanceDB/Tantivy
+    /// or trigger auto-linking/LLM calls.
     pub async fn decay_importance(&self, user_id: &str, factor: f32) -> Result<()> {
-        let mut updated_units = Vec::new();
         let prefix = format!("u:{}:unit:", user_id);
-
         let kv = self._kv.clone();
         let prefix_bytes = prefix.into_bytes();
-        let pairs = tokio::task::spawn_blocking(move || {
-            kv.scan(&prefix_bytes)
-        }).await??;
 
-        for (_, val) in pairs {
-            if let Ok(mut unit) = serde_json::from_slice::<MemoryUnit>(&val) {
-                unit.importance *= factor;
-                updated_units.push(unit);
+        let pairs = tokio::task::spawn_blocking(move || kv.scan(&prefix_bytes)).await??;
+
+        let kv = self._kv.clone();
+        tokio::task::spawn_blocking(move || {
+            for (key, val) in pairs {
+                if let Ok(mut unit) = serde_json::from_slice::<MemoryUnit>(&val) {
+                    unit.importance *= factor;
+                    if let Ok(new_val) = serde_json::to_vec(&unit) {
+                        kv.put(&key, &new_val)?;
+                    }
+                }
             }
-        }
-
-        if !updated_units.is_empty() {
-            self.store_memory_units(updated_units).await?;
-        }
+            Ok::<(), anyhow::Error>(())
+        }).await??;
 
         Ok(())
     }
 
     /// Remove memories with importance below the threshold for a specific user.
+    /// Deletes from KV, LanceDB vector store, and Tantivy text index.
     pub async fn prune_memories(&self, user_id: &str, threshold: f32) -> Result<usize> {
         let prefix = format!("u:{}:unit:", user_id);
         let kv = self._kv.clone();
 
-        let kv_for_scan = kv.clone();
         let prefix_bytes = prefix.into_bytes();
-        let pairs = tokio::task::spawn_blocking(move || {
-            kv_for_scan.scan(&prefix_bytes)
+        let pairs = tokio::task::spawn_blocking({
+            let kv = kv.clone();
+            move || kv.scan(&prefix_bytes)
         }).await??;
 
-        let mut count = 0;
+        // Collect units to prune first, then delete from all stores.
+        let mut to_prune: Vec<(Vec<u8>, MemoryUnit)> = Vec::new();
         for (key, val) in pairs {
             if let Ok(unit) = serde_json::from_slice::<MemoryUnit>(&val) {
                 if unit.importance < threshold {
-                    let key_clone = key.clone();
-                    let kv_inner = kv.clone();
-                    tokio::task::spawn_blocking(move || {
-                        kv_inner.delete(&key_clone)
-                    }).await??;
-
-                    count += 1;
+                    to_prune.push((key, unit));
                 }
             }
         }
+
+        let count = to_prune.len();
+        if count == 0 {
+            return Ok(0);
+        }
+
+        // 1. Delete from KV + L1 secondary index
+        let kv_clone = kv.clone();
+        let keys_and_levels: Vec<(Vec<u8>, String, u8)> = to_prune
+            .iter()
+            .map(|(k, u)| (k.clone(), u.id.to_string(), u.level))
+            .collect();
+        let user_id_owned = user_id.to_string();
+        tokio::task::spawn_blocking(move || {
+            for (key, id, level) in &keys_and_levels {
+                kv_clone.delete(key)?;
+                if *level == 1 {
+                    let l1_key = format!("l1_idx:{}:{}", user_id_owned, id);
+                    kv_clone.delete(l1_key.as_bytes()).ok();
+                }
+            }
+            Ok::<(), anyhow::Error>(())
+        }).await??;
+
+        // 2. Delete from LanceDB vector store
+        for (_, unit) in &to_prune {
+            if let Err(e) = self.vector.delete_by_id("memories", &unit.id.to_string()).await {
+                tracing::warn!("Failed to delete unit {} from vector store during pruning: {:?}", unit.id, e);
+            }
+        }
+
+        // 3. Delete from Tantivy text index
+        let index = self.index.clone();
+        let ids: Vec<String> = to_prune.iter().map(|(_, u)| u.id.to_string()).collect();
+        tokio::task::spawn_blocking(move || {
+            for id in &ids {
+                index.delete_unit(id)?;
+            }
+            Ok::<(), anyhow::Error>(())
+        }).await??;
 
         Ok(count)
     }
@@ -1448,27 +1529,68 @@ impl MemoroseEngine {
     // ── Fetch Helpers ───────────────────────────────────────────────
 
     /// Fetch the latest L1 memory units for a specific user.
+    /// Uses the "l1_idx:{user_id}:{id}" secondary index to avoid loading all units into memory.
     pub async fn fetch_recent_l1_units(&self, user_id: &str, limit: usize) -> Result<Vec<MemoryUnit>> {
         let prefix = format!("u:{}:unit:", user_id);
         let store = self._kv.clone();
         let prefix_bytes = prefix.into_bytes();
 
-        let pairs = tokio::task::spawn_blocking(move || {
-            store.scan(&prefix_bytes)
+        // Scan the compact L1 index (values are 8-byte timestamps, much cheaper than full units).
+        // The prefix is user-scoped so we only read this user's entries.
+        let l1_index_prefix = format!("l1_idx:{}:", user_id).into_bytes();
+        let strip_prefix = format!("l1_idx:{}:", user_id);
+        let index_pairs = tokio::task::spawn_blocking({
+            let store = store.clone();
+            move || store.scan(&l1_index_prefix)
         }).await??;
 
-        let mut results = Vec::new();
-        for (_, val) in pairs {
-            if let Ok(unit) = serde_json::from_slice::<MemoryUnit>(&val) {
-                if unit.level == 1 {
-                    results.push(unit);
-                }
-            }
+        if index_pairs.is_empty() {
+            // Fallback for nodes that pre-date the L1 index: scan full units.
+            return self.fetch_recent_l1_units_fallback(prefix_bytes, limit).await;
         }
 
+        // Sort by timestamp descending, take top `limit` IDs.
+        let mut id_ts: Vec<(String, i64)> = index_pairs
+            .into_iter()
+            .filter_map(|(k, v)| {
+                let key_str = String::from_utf8(k).ok()?;
+                let id = key_str.strip_prefix(&strip_prefix)?.to_string();
+                let ts = i64::from_le_bytes(v.as_slice().try_into().ok()?);
+                Some((id, ts))
+            })
+            .collect();
+
+        id_ts.sort_by(|a, b| b.1.cmp(&a.1));
+        id_ts.truncate(limit);
+
+        // Multi-get the actual units by their KV keys.
+        let keys: Vec<String> = id_ts.iter()
+            .map(|(id, _)| format!("u:{}:unit:{}", user_id, id))
+            .collect();
+
+        let values = tokio::task::spawn_blocking({
+            let store = store.clone();
+            let key_refs_owned: Vec<Vec<u8>> = keys.iter().map(|k| k.as_bytes().to_vec()).collect();
+            move || store.multi_get(&key_refs_owned.iter().map(|k| k.as_slice()).collect::<Vec<_>>())
+        }).await??;
+
+        let results: Vec<MemoryUnit> = values.into_iter()
+            .filter_map(|v| v.and_then(|bytes| serde_json::from_slice(&bytes).ok()))
+            .collect();
+
+        Ok(results)
+    }
+
+    async fn fetch_recent_l1_units_fallback(&self, prefix_bytes: Vec<u8>, limit: usize) -> Result<Vec<MemoryUnit>> {
+        let store = self._kv.clone();
+        let pairs = tokio::task::spawn_blocking(move || store.scan(&prefix_bytes)).await??;
+        let mut results: Vec<MemoryUnit> = pairs
+            .into_iter()
+            .filter_map(|(_, val)| serde_json::from_slice::<MemoryUnit>(&val).ok())
+            .filter(|u| u.level == 1)
+            .collect();
         results.sort_by(|a, b| b.transaction_time.cmp(&a.transaction_time));
         results.truncate(limit);
-
         Ok(results)
     }
 
@@ -1478,16 +1600,25 @@ impl MemoroseEngine {
         let store = self._kv.clone();
         let prefix_bytes = prefix.into_bytes();
 
+        // Try the L1 index first (only counts IDs, much cheaper).
+        // Prefix is user-scoped so this returns only this user's L1 count.
+        let l1_index_prefix = format!("l1_idx:{}:", user_id).into_bytes();
+        let index_pairs = tokio::task::spawn_blocking({
+            let store = store.clone();
+            move || store.scan(&l1_index_prefix)
+        }).await??;
+
+        if !index_pairs.is_empty() {
+            return Ok(index_pairs.len());
+        }
+
+        // Fallback: scan all units and count level-1 ones.
         let count = tokio::task::spawn_blocking(move || {
             let pairs = store.scan(&prefix_bytes)?;
-            let mut count = 0;
-            for (_, val) in pairs {
-                if let Ok(unit) = serde_json::from_slice::<MemoryUnit>(&val) {
-                    if unit.level == 1 {
-                        count += 1;
-                    }
-                }
-            }
+            let count = pairs.into_iter()
+                .filter_map(|(_, val)| serde_json::from_slice::<MemoryUnit>(&val).ok())
+                .filter(|u| u.level == 1)
+                .count();
             Ok::<usize, anyhow::Error>(count)
         }).await??;
 

@@ -7,7 +7,7 @@ use axum::{
 };
 use memorose_common::{Event, EventContent, GraphEdge, MemoryUnit, RelationType, TimeRange, config::AppConfig};
 use memorose_common::sharding::decode_raft_node_id;
-use memorose_core::{MemoroseEngine, LLMClient, GeminiClient};
+use memorose_core::{MemoroseEngine, LLMClient};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -32,6 +32,10 @@ struct AppState {
     dashboard_auth: dashboard::auth::DashboardAuth,
     login_limiter: Cache<String, u32>,
     dashboard_cache: Cache<String, serde_json::Value>,
+    /// Shared HTTP client for leader-forwarding; reusing it preserves connection pools.
+    http_client: reqwest::Client,
+    /// Optional API key required on all /v1/ endpoints.  None means auth is disabled.
+    api_key: Option<String>,
 }
 
 #[tokio::main]
@@ -63,14 +67,10 @@ async fn main() {
         ShardManager::new_single_shard(&config).await.expect("Failed to start single-shard ShardManager")
     };
 
-    let api_key = config.get_active_key().expect("Fatal: API Key is required for Memorose Server");
-    let llm_client: Arc<dyn LLMClient> = Arc::new(GeminiClient::new(
-        api_key,
-        config.get_model_name(),
-        config.get_embedding_model_name(),
-    ));
-    tracing::info!("Initialized Gemini client (model: {}, embedding: {})",
-        config.get_model_name(), config.get_embedding_model_name());
+    let llm_client: Arc<dyn LLMClient> = memorose_core::llm::create_llm_client(&config.llm)
+        .expect("Fatal: API Key is required. Set GOOGLE_API_KEY (Gemini) or OPENAI_API_KEY (OpenAI).");
+    tracing::info!("Initialized {:?} LLM client (model: {}, embedding: {})",
+        config.llm.provider, config.get_model_name(), config.get_embedding_model_name());
 
     let embedding_cache = Cache::new(10_000);
 
@@ -98,6 +98,11 @@ async fn main() {
         dashboard_auth,
         login_limiter,
         dashboard_cache,
+        http_client: reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("Failed to build HTTP client"),
+        api_key: std::env::var("MEMOROSE_API_KEY").ok(),
     });
 
     // Dashboard API routes (auth-protected)
@@ -147,8 +152,8 @@ async fn main() {
     let dashboard_static = ServeDir::new(&dashboard_dir)
         .append_index_html_on_directories(true);
 
-    let app = Router::new()
-        .route("/", get(root))
+    // API routes that require optional key auth
+    let v1_routes = Router::new()
         .route("/v1/users/:user_id/apps/:app_id/streams/:stream_id/events", post(ingest_event))
         .route("/v1/users/:user_id/apps/:app_id/streams/:stream_id/retrieve", post(retrieve_memory))
         .route("/v1/users/:user_id/apps/:app_id/streams/:stream_id/tasks/tree", get(get_task_tree))
@@ -157,6 +162,11 @@ async fn main() {
         .route("/v1/cluster/initialize", post(initialize_cluster))
         .route("/v1/cluster/join", post(join_cluster))
         .route("/v1/cluster/nodes/:node_id", delete(leave_cluster))
+        .route_layer(axum_middleware::from_fn_with_state(state.clone(), api_key_auth));
+
+    let app = Router::new()
+        .route("/", get(root))
+        .merge(v1_routes)
         .nest("/v1/dashboard", dashboard_routes)
         .nest_service("/dashboard", dashboard_static)
         .layer(
@@ -197,6 +207,53 @@ async fn main() {
     tracing::info!("Memorose Server stopped.");
 }
 
+/// Middleware: enforce API key when one is configured.
+/// If `MEMOROSE_API_KEY` is set, every /v1/ request must supply a matching
+/// `X-Api-Key` header.  Requests without it receive 401 Unauthorized.
+async fn api_key_auth(
+    State(state): State<Arc<AppState>>,
+    req: axum::extract::Request,
+    next: axum_middleware::Next,
+) -> axum::response::Response {
+    if let Some(ref required_key) = state.api_key {
+        let provided = req
+            .headers()
+            .get("x-api-key")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        if provided != required_key {
+            return (
+                axum::http::StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "Unauthorized: missing or invalid X-Api-Key"})),
+            ).into_response();
+        }
+    }
+    next.run(req).await
+}
+
+/// Validate that a user_id or app_id supplied via URL path is within acceptable bounds.
+/// Returns an error response if the value is too long or contains characters that
+/// would break the internal RocksDB key scheme.
+fn validate_id(value: &str, field: &str) -> Result<(), axum::response::Response> {
+    if value.len() > 256 {
+        return Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!("{} must not exceed 256 characters", field)
+            })),
+        ).into_response());
+    }
+    if value.is_empty() {
+        return Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!("{} must not be empty", field)
+            })),
+        ).into_response());
+    }
+    Ok(())
+}
+
 /// Build a "Not Leader" response with shard info when applicable.
 fn not_leader_response(current_leader: Option<u64>, is_sharded: bool) -> axum::response::Response {
     if is_sharded {
@@ -229,7 +286,7 @@ fn not_leader_response(current_leader: Option<u64>, is_sharded: bool) -> axum::r
 
 /// Forward request to leader node
 async fn forward_to_leader<T: serde::Serialize>(
-    _state: &AppState,
+    state: &AppState,
     leader_id: u64,
     path: &str,
     payload: &T,
@@ -240,23 +297,8 @@ async fn forward_to_leader<T: serde::Serialize>(
 
     tracing::info!("Forwarding request to leader node {} at {}", leader_id, leader_url);
 
-    // Create HTTP client (can be optimized to reuse)
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| {
-            tracing::error!("Failed to create HTTP client: {}", e);
-            (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "Failed to create HTTP client",
-                    "details": e.to_string()
-                }))
-            ).into_response()
-        })?;
-
-    // Forward request
-    let response = client
+    // Reuse the shared HTTP client — avoids creating a new connection pool per request.
+    let response = state.http_client
         .post(&leader_url)
         .json(payload)
         .send()
@@ -374,8 +416,8 @@ async fn pending_count(
 ) -> Json<serde_json::Value> {
     let mut total_pending: usize = 0;
     for (_shard_id, shard) in state.shard_manager.all_shards() {
-        if let Ok(events) = shard.engine.fetch_pending_events().await {
-            total_pending += events.len();
+        if let Ok(n) = shard.engine.count_pending_events().await {
+            total_pending += n;
         }
     }
     Json(serde_json::json!({
@@ -408,6 +450,8 @@ async fn ingest_event(
     Path((user_id, app_id, stream_id)): Path<(String, String, Uuid)>,
     Json(payload): Json<IngestRequest>,
 ) -> axum::response::Response {
+    if let Err(r) = validate_id(&user_id, "user_id") { return r; }
+    if let Err(r) = validate_id(&app_id, "app_id") { return r; }
     let shard = state.shard_manager.shard_for_user(&user_id);
     let metrics = shard.raft.metrics().borrow().clone();
     let current_leader = metrics.current_leader;
@@ -440,6 +484,7 @@ async fn ingest_event(
     let content = match payload.content_type.to_lowercase().as_str() {
         "image" => EventContent::Image(payload.content),
         "audio" => EventContent::Audio(payload.content),
+        "video" => EventContent::Video(payload.content),
         "json" => EventContent::Json(serde_json::from_str(&payload.content).unwrap_or(serde_json::json!({"error": "invalid json"}))),
         _ => EventContent::Text(payload.content),
     };
@@ -504,6 +549,8 @@ async fn retrieve_memory(
     Path((user_id, app_id, stream_id)): Path<(String, String, Uuid)>,
     Json(payload): Json<RetrieveRequest>,
 ) -> axum::response::Response {
+    if let Err(r) = validate_id(&user_id, "user_id") { return r; }
+    if let Err(r) = validate_id(&app_id, "app_id") { return r; }
     let shard = state.shard_manager.shard_for_user(&user_id);
 
     let query_key = payload.query.clone();

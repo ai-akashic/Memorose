@@ -6,12 +6,20 @@ pub fn user_id_to_shard(user_id: &str, shard_count: u32) -> u32 {
         return 0;
     }
     let hash = Sha256::digest(user_id.as_bytes());
-    hash[0] as u32 % shard_count
+    // Use 4 bytes (32 bits) for ~4 billion pre-modulo values, giving much
+    // better distribution than the single-byte approach (256 buckets).
+    u32::from_le_bytes([hash[0], hash[1], hash[2], hash[3]]) % shard_count
 }
 
 /// Encode (shard_id, physical_node_id) into a single Raft node ID.
 /// Layout: `shard_id * 1000 + physical_node_id`
+/// Panics if `physical_node_id >= 1000` to prevent ID space collisions.
 pub fn encode_raft_node_id(shard_id: u32, physical_node_id: u32) -> u64 {
+    assert!(
+        physical_node_id < 1000,
+        "physical_node_id must be < 1000 (got {}); the encoding scheme reserves 3 digits for it",
+        physical_node_id
+    );
     shard_id as u64 * 1000 + physical_node_id as u64
 }
 
@@ -23,8 +31,10 @@ pub fn decode_raft_node_id(raft_node_id: u64) -> (u32, u32) {
 }
 
 /// Compute the Raft gRPC address for a given shard on a base port.
+/// Uses saturating addition to prevent u16 overflow on large shard IDs.
 pub fn raft_addr_for_shard(host: &str, base_port: u16, shard_id: u32) -> String {
-    format!("{}:{}", host, base_port + shard_id as u16)
+    let port = (base_port as u32 + shard_id).min(u16::MAX as u32) as u16;
+    format!("{}:{}", host, port)
 }
 
 #[cfg(test)]

@@ -66,8 +66,21 @@ impl RaftLogReader<MemoroseTypeConfig> for MemoroseRaftStorage {
         range: RB,
     ) -> Result<Vec<Entry<MemoroseTypeConfig>>, StorageError<u64>> {
         let engine = self.get_engine().await;
-        let prefix = b"raft:log:";
-        let pairs = engine.system_kv().scan(prefix)
+
+        let start_index = match range.start_bound() {
+            std::ops::Bound::Included(&s) => s,
+            std::ops::Bound::Excluded(&s) => s.saturating_add(1),
+            std::ops::Bound::Unbounded => 0,
+        };
+        let start_key = format!("raft:log:{:020}", start_index);
+        // '~' sorts after all digit characters in ASCII, acting as an unbounded sentinel
+        let end_key = match range.end_bound() {
+            std::ops::Bound::Included(&e) => format!("raft:log:{:020}", e.saturating_add(1)),
+            std::ops::Bound::Excluded(&e) => format!("raft:log:{:020}", e),
+            std::ops::Bound::Unbounded => "raft:log:~".to_string(),
+        };
+
+        let pairs = engine.system_kv().scan_range(start_key.as_bytes(), end_key.as_bytes())
             .map_err(|e| StorageError::IO {
                 source: openraft::StorageIOError::new(
                     openraft::ErrorSubject::Store,
@@ -77,26 +90,16 @@ impl RaftLogReader<MemoroseTypeConfig> for MemoroseRaftStorage {
             })?;
 
         let mut entries = Vec::new();
-        for (k, v) in pairs {
-            let key_str = String::from_utf8(k.to_vec())
-                .map_err(|e| storage_io_error(openraft::ErrorSubject::Store, openraft::ErrorVerb::Read, e))?;
-            let index_str = key_str
-                .strip_prefix("raft:log:")
-                .ok_or_else(|| storage_io_error(openraft::ErrorSubject::Store, openraft::ErrorVerb::Read, "Invalid raft log key"))?;
-            let index: u64 = index_str
-                .parse()
-                .map_err(|e| storage_io_error(openraft::ErrorSubject::Store, openraft::ErrorVerb::Read, e))?;
-            if range.contains(&index) {
-                let entry: Entry<MemoroseTypeConfig> = serde_json::from_slice(&v)
-                    .map_err(|e| StorageError::IO {
-                        source: openraft::StorageIOError::new(
-                            openraft::ErrorSubject::Log(openraft::LogId::new(openraft::LeaderId::default(), index)),
-                            openraft::ErrorVerb::Read,
-                            openraft::AnyError::new(&std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
-                        )
-                    })?;
-                entries.push(entry);
-            }
+        for (_, v) in pairs {
+            let entry: Entry<MemoroseTypeConfig> = serde_json::from_slice(&v)
+                .map_err(|e| StorageError::IO {
+                    source: openraft::StorageIOError::new(
+                        openraft::ErrorSubject::Store,
+                        openraft::ErrorVerb::Read,
+                        openraft::AnyError::new(&std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                    )
+                })?;
+            entries.push(entry);
         }
         Ok(entries)
     }
@@ -299,8 +302,9 @@ impl RaftStorage<MemoroseTypeConfig> for MemoroseRaftStorage {
 
     async fn delete_conflict_logs_since(&mut self, log_id: LogId<u64>) -> Result<(), StorageError<u64>> {
         let engine = self.get_engine().await;
-        let prefix = b"raft:log:";
-        let pairs = engine.system_kv().scan(prefix)
+        let start_key = format!("raft:log:{:020}", log_id.index);
+        let end_key = "raft:log:~".to_string();
+        let pairs = engine.system_kv().scan_range(start_key.as_bytes(), end_key.as_bytes())
             .map_err(|e| StorageError::IO {
                 source: openraft::StorageIOError::new(
                     openraft::ErrorSubject::Log(openraft::LogId::new(openraft::LeaderId::default(), log_id.index)),
@@ -310,48 +314,38 @@ impl RaftStorage<MemoroseTypeConfig> for MemoroseRaftStorage {
             })?;
 
         for (k, _) in pairs {
-            let key_str = String::from_utf8(k.to_vec()).unwrap();
-            let index_str = key_str.strip_prefix("raft:log:").unwrap();
-            if let Ok(index) = index_str.parse::<u64>() {
-                if index >= log_id.index {
-                    engine.system_kv().delete(&k)
-                        .map_err(|e| StorageError::IO {
-                            source: openraft::StorageIOError::new(
-                                openraft::ErrorSubject::Log(openraft::LogId::new(openraft::LeaderId::default(), index)),
-                                openraft::ErrorVerb::Delete,
-                                openraft::AnyError::new(&std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
-                            )
-                        })?;
-                }
-            }
+            engine.system_kv().delete(&k)
+                .map_err(|e| StorageError::IO {
+                    source: openraft::StorageIOError::new(
+                        openraft::ErrorSubject::Store,
+                        openraft::ErrorVerb::Delete,
+                        openraft::AnyError::new(&std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                    )
+                })?;
         }
-        
+
         let new_last_index = if log_id.index > 0 { log_id.index - 1 } else { 0 };
         let index_val = serde_json::to_vec(&new_last_index).unwrap();
-        engine.system_kv().put(b"raft:last_log_index", &index_val).ok(); 
+        engine.system_kv().put(b"raft:last_log_index", &index_val).ok();
 
         Ok(())
     }
 
     async fn purge_logs_upto(&mut self, log_id: LogId<u64>) -> Result<(), StorageError<u64>> {
         let engine = self.get_engine().await;
-        let prefix = b"raft:log:";
-        let pairs = engine.system_kv().scan(prefix).map_err(|e| StorageError::IO {
-            source: openraft::StorageIOError::new(
-                openraft::ErrorSubject::Store,
-                openraft::ErrorVerb::Read,
-                openraft::AnyError::new(&std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
-            )
-        })?;
+        let start_key = "raft:log:00000000000000000000".to_string();
+        let end_key = format!("raft:log:{:020}", log_id.index.saturating_add(1));
+        let pairs = engine.system_kv().scan_range(start_key.as_bytes(), end_key.as_bytes())
+            .map_err(|e| StorageError::IO {
+                source: openraft::StorageIOError::new(
+                    openraft::ErrorSubject::Store,
+                    openraft::ErrorVerb::Read,
+                    openraft::AnyError::new(&std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                )
+            })?;
 
         for (k, _) in pairs {
-            let key_str = String::from_utf8(k.to_vec()).unwrap();
-            let index_str = key_str.strip_prefix("raft:log:").unwrap();
-            if let Ok(index) = index_str.parse::<u64>() {
-                if index <= log_id.index {
-                    engine.system_kv().delete(&k).ok();
-                }
-            }
+            engine.system_kv().delete(&k).ok();
         }
         Ok(())
     }
@@ -530,24 +524,58 @@ impl RaftStorage<MemoroseTypeConfig> for MemoroseRaftStorage {
             )
         })?;
         
-        // 4. Atomically swap directories (simulate with rename since rename of non-empty dir depends on OS)
-        // Since root_path contains other things, and snapshot contains specific dirs (rocksdb, lancedb), 
-        // we should move them from temp_extract_path to root_path.
-        
+        // 4. Atomically swap each data directory:
+        //    Step 1: rename old -> old.bak  (preserves old data if step 2 fails)
+        //    Step 2: rename new  -> old     (fast on same filesystem)
+        //    Step 3: remove old.bak
+        // If step 2 fails the backup is restored, so we never end up with neither copy.
         for dir in &["rocksdb", "lancedb", "tantivy"] {
              let src = temp_extract_path.join(dir);
              let dest = root_path.join(dir);
              if src.exists() {
+                 let backup = root_path.join(format!("{}.bak", dir));
+
+                 // Step 1: move existing dir to backup
                  if dest.exists() {
-                     std::fs::remove_dir_all(&dest).ok(); // Danger zone but required for replace
+                     std::fs::rename(&dest, &backup).map_err(|e| StorageError::IO {
+                         source: openraft::StorageIOError::new(
+                             openraft::ErrorSubject::Snapshot(None),
+                             openraft::ErrorVerb::Write,
+                             openraft::AnyError::new(&std::io::Error::new(
+                                 std::io::ErrorKind::Other,
+                                 format!("Failed to backup {} before swap: {}", dir, e),
+                             ))
+                         )
+                     })?;
                  }
-                 std::fs::rename(src, dest).map_err(|e| StorageError::IO {
-                    source: openraft::StorageIOError::new(
-                        openraft::ErrorSubject::Snapshot(None),
-                        openraft::ErrorVerb::Write,
-                        openraft::AnyError::new(&std::io::Error::new(std::io::ErrorKind::Other, format!("Rename failed: {}", e)))
-                    )
-                 })?;
+
+                 // Step 2: move new dir into place
+                 if let Err(e) = std::fs::rename(&src, &dest) {
+                     // Restore backup so the node is not left with an empty data directory
+                     if backup.exists() {
+                         if let Err(re) = std::fs::rename(&backup, &dest) {
+                             tracing::error!(
+                                 "CRITICAL: failed to restore {} backup after swap failure: {}",
+                                 dir, re
+                             );
+                         }
+                     }
+                     return Err(StorageError::IO {
+                         source: openraft::StorageIOError::new(
+                             openraft::ErrorSubject::Snapshot(None),
+                             openraft::ErrorVerb::Write,
+                             openraft::AnyError::new(&std::io::Error::new(
+                                 std::io::ErrorKind::Other,
+                                 format!("Rename failed for {}: {}", dir, e),
+                             ))
+                         )
+                     });
+                 }
+
+                 // Step 3: remove backup (best-effort)
+                 if backup.exists() {
+                     let _ = std::fs::remove_dir_all(&backup);
+                 }
              }
         }
 

@@ -162,6 +162,18 @@ impl VectorStore {
         Ok(())
     }
 
+    /// Delete a single memory unit from the vector table by its ID.
+    pub async fn delete_by_id(&self, table_name: &str, id: &str) -> Result<()> {
+        let table = match self.conn.open_table(table_name).execute().await {
+            Ok(t) => t,
+            Err(e) if e.to_string().to_lowercase().contains("not found") => return Ok(()),
+            Err(e) => return Err(e.into()),
+        };
+        let escaped = id.replace('\'', "''");
+        table.delete(&format!("id = '{}'", escaped)).await?;
+        Ok(())
+    }
+
     pub async fn delete_table(&self, table_name: &str) -> Result<()> {
         match self.conn.drop_table(table_name).await {
             Ok(_) => Ok(()),

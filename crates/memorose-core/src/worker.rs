@@ -1,28 +1,29 @@
 use crate::MemoroseEngine;
 use crate::llm::LLMClient;
-use crate::llm::gemini::GeminiClient;
 use memorose_common::{MemoryUnit, config::AppConfig, Asset};
 use tokio::time::Duration;
 use tokio::sync::mpsc;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
-use uuid::Uuid;
 
 pub struct BackgroundWorker {
     engine: MemoroseEngine,
     llm_client: Option<Arc<dyn LLMClient>>,
     config: memorose_common::config::WorkerConfig,
-    last_decay: std::sync::Mutex<std::time::Instant>,
-    last_compaction: std::sync::Mutex<std::time::Instant>,
+    last_decay: tokio::sync::Mutex<std::time::Instant>,
+    last_compaction: tokio::sync::Mutex<std::time::Instant>,
+    last_consolidation: tokio::sync::Mutex<std::time::Instant>,
+    last_insight: tokio::sync::Mutex<std::time::Instant>,
+    last_community: tokio::sync::Mutex<std::time::Instant>,
     raft: Option<crate::raft::MemoroseRaft>,
 }
 
 impl BackgroundWorker {
     pub fn new(engine: MemoroseEngine) -> Self {
-        let config = AppConfig::load().unwrap_or_else(|_| {
-            tracing::warn!("Failed to load config, using defaults");
-            AppConfig::load().unwrap() // Should not fail with defaults
+        let config = AppConfig::load().unwrap_or_else(|e| {
+            tracing::warn!("Failed to load config ({}), using defaults", e);
+            AppConfig::default()
         });
         Self::with_config(engine, config)
     }
@@ -39,8 +40,11 @@ impl BackgroundWorker {
             engine,
             llm_client,
             config: config.worker,
-            last_decay: std::sync::Mutex::new(now),
-            last_compaction: std::sync::Mutex::new(now),
+            last_decay: tokio::sync::Mutex::new(now),
+            last_compaction: tokio::sync::Mutex::new(now),
+            last_consolidation: tokio::sync::Mutex::new(now),
+            last_insight: tokio::sync::Mutex::new(now),
+            last_community: tokio::sync::Mutex::new(now),
             raft: None,
         }
     }
@@ -62,7 +66,6 @@ impl BackgroundWorker {
         let tick_ms = self.config.tick_interval_ms.max(10);
         tracing::info!("Background Worker started (Loop interval: {}ms).", tick_ms);
         let mut interval = tokio::time::interval(Duration::from_millis(tick_ms));
-        let mut tick_count: u64 = 0;
 
         loop {
             interval.tick().await;
@@ -71,54 +74,30 @@ impl BackgroundWorker {
                 continue;
             }
 
-            tick_count += tick_ms;
+            // Each cycle tracks its own last-run timestamp independently,
+            // preventing the thundering-herd that occurred when a shared
+            // tick counter was reset to zero.
 
-            // 1. Forgetting (Decay) - scan active_user markers
-            let decay_interval_ms = self.config.decay_interval_secs.max(1) * 1000;
-            if tick_count % decay_interval_ms == 0 {
-                if let Err(e) = self.run_decay_cycle().await {
-                    tracing::error!("Decay cycle failed: {:?}", e);
-                }
+            if let Err(e) = self.run_decay_cycle().await {
+                tracing::error!("Decay cycle failed: {:?}", e);
             }
 
-            // 2. L0 -> L1 (Consolidation)
-            let consolidation_interval_ms = self.config.consolidation_interval_ms.max(tick_ms);
-            if tick_count % consolidation_interval_ms == 0 {
-                if let Err(e) = self.run_consolidation_cycle().await {
-                    tracing::error!("Consolidation cycle failed: {:?}", e);
-                }
+            if let Err(e) = self.run_consolidation_cycle().await {
+                tracing::error!("Consolidation cycle failed: {:?}", e);
             }
 
-            // 3. Compaction
-            let compaction_interval_ms = self.config.compaction_interval_secs.max(1) * 1000;
-            if tick_count % compaction_interval_ms == 0 {
-                if let Err(e) = self.run_compaction_cycle().await {
-                    tracing::error!("Compaction cycle failed: {:?}", e);
-                }
+            if let Err(e) = self.run_compaction_cycle().await {
+                tracing::error!("Compaction cycle failed: {:?}", e);
             }
 
-            // 4. Cognitive Cycles (Requires LLM) - marker-driven
             if self.llm_client.is_some() {
-                // Insight Cycle (Reflection) - driven by needs_reflect markers
-                let insight_interval_ms = self.config.insight_interval_ms.max(tick_ms);
-                if tick_count % insight_interval_ms == 0 {
-                    if let Err(e) = self.run_insight_cycle().await {
-                        tracing::error!("Insight cycle failed: {:?}", e);
-                    }
+                if let Err(e) = self.run_insight_cycle().await {
+                    tracing::error!("Insight cycle failed: {:?}", e);
                 }
 
-                // Community Cycle (L2) - driven by needs_community markers
-                let community_interval_ms = self.config.community_interval_ms.max(tick_ms);
-                if tick_count % community_interval_ms == 0 {
-                    if let Err(e) = self.run_community_cycle().await {
-                        tracing::error!("Community cycle failed: {:?}", e);
-                    }
+                if let Err(e) = self.run_community_cycle().await {
+                    tracing::error!("Community cycle failed: {:?}", e);
                 }
-            }
-
-            // Reset tick_count periodically to avoid overflow
-            if tick_count > 86400 * 1000 * 7 { // Reset every week
-                tick_count = 0;
             }
         }
     }
@@ -126,14 +105,14 @@ impl BackgroundWorker {
     async fn run_compaction_cycle(&self) -> Result<()> {
         let compaction_interval = Duration::from_secs(self.config.compaction_interval_secs.max(1));
         let should_compact = {
-            let last = self.last_compaction.lock().unwrap();
+            let last = self.last_compaction.lock().await;
             last.elapsed() > compaction_interval
         };
 
         if should_compact {
             tracing::info!("Running LanceDB compaction...");
             self.engine.compact_vector_store().await?;
-            let mut last = self.last_compaction.lock().unwrap();
+            let mut last = self.last_compaction.lock().await;
             *last = std::time::Instant::now();
         }
         Ok(())
@@ -142,7 +121,7 @@ impl BackgroundWorker {
     async fn run_decay_cycle(&self) -> Result<()> {
         let decay_interval = Duration::from_secs(self.config.decay_interval_secs.max(1));
         let should_decay = {
-            let last = self.last_decay.lock().unwrap();
+            let last = self.last_decay.lock().await;
             last.elapsed() > decay_interval
         };
 
@@ -167,7 +146,7 @@ impl BackgroundWorker {
                 }
             }
 
-            let mut last = self.last_decay.lock().unwrap();
+            let mut last = self.last_decay.lock().await;
             *last = std::time::Instant::now();
         }
         Ok(())
@@ -208,21 +187,21 @@ impl BackgroundWorker {
             memorose_common::EventContent::Text(t) => t.clone(),
             memorose_common::EventContent::Image(url) => {
                 if let Some(client) = llm {
-                    client.describe_image(url).await.map(|r| r.data).unwrap_or_else(|e| format!("Image at {}", url))
+                    client.describe_image(url).await.map(|r| r.data).unwrap_or_else(|_| format!("Image at {}", url))
                 } else {
                     format!("Image at {}", url)
                 }
             }
             memorose_common::EventContent::Audio(url) => {
                 if let Some(client) = llm {
-                    client.transcribe(url).await.map(|r| r.data).unwrap_or_else(|e| format!("Audio at {}", url))
+                    client.transcribe(url).await.map(|r| r.data).unwrap_or_else(|_| format!("Audio at {}", url))
                 } else {
                     format!("Audio at {}", url)
                 }
             }
             memorose_common::EventContent::Video(url) => {
                 if let Some(client) = llm {
-                    client.describe_video(url).await.map(|r| r.data).unwrap_or_else(|e| format!("Video at {}", url))
+                    client.describe_video(url).await.map(|r| r.data).unwrap_or_else(|_| format!("Video at {}", url))
                 } else {
                     format!("Video at {}", url)
                 }
@@ -256,6 +235,15 @@ impl BackgroundWorker {
     }
 
     async fn run_consolidation_cycle(&self) -> Result<bool> {
+        let consolidation_interval = Duration::from_millis(self.config.consolidation_interval_ms.max(self.config.tick_interval_ms));
+        let should_run = {
+            let last = self.last_consolidation.lock().await;
+            last.elapsed() > consolidation_interval
+        };
+        if !should_run {
+            return Ok(false);
+        }
+
         let batch_size = self.config.consolidation_batch_size.max(1);
         let events = self.engine.fetch_pending_events_limited(batch_size).await?;
         if events.is_empty() {
@@ -338,8 +326,8 @@ impl BackgroundWorker {
         let concurrency_limit = self.config.llm_concurrency;
         let engine_clone = self.engine.clone();
 
-        // Spawn Producer
-        tokio::spawn(async move {
+        // Spawn Producer — keep the handle so we can detect panics after the consumer drains.
+        let producer_handle = tokio::spawn(async move {
             let mut join_set = tokio::task::JoinSet::new();
             
             for mut events in packed_batches {
@@ -375,7 +363,11 @@ impl BackgroundWorker {
                 if join_set.len() >= concurrency_limit {
                     if let Some(res) = join_set.join_next().await {
                          match res {
-                             Ok(data) => { let _ = tx.send(data).await; }
+                             Ok(data) => {
+                                 if tx.send(data).await.is_err() {
+                                     tracing::error!("Compression pipeline: consumer channel closed; dropping batch");
+                                 }
+                             }
                              Err(e) => tracing::error!("Compression task panicked: {:?}", e),
                          }
                     }
@@ -387,10 +379,12 @@ impl BackgroundWorker {
                     let dedup_key = format!("dedup:{}:{}", user_id, fingerprint);
                     
                     let is_duplicate = if let Ok(Some(last_seen_bytes)) = engine.system_kv().get(dedup_key.as_bytes()) {
-                        if let Some(last_seen) = String::from_utf8(last_seen_bytes).ok().and_then(|s| s.parse::<u64>().ok()) {
-                            let now = chrono::Utc::now().timestamp() as u64;
-                            // Deduplicate if seen within the last 1 hour (3600 seconds)
-                            now - last_seen < 3600
+                        if let Some(last_seen) = String::from_utf8(last_seen_bytes).ok().and_then(|s| s.parse::<i64>().ok()) {
+                            let now = chrono::Utc::now().timestamp();
+                            // Deduplicate if seen within the last 1 hour (3600 seconds).
+                            // Use saturating_sub so clock-skew or a future stored timestamp
+                            // never causes underflow (which would bypass deduplication).
+                            now.saturating_sub(last_seen) < 3600
                         } else {
                             false
                         }
@@ -429,7 +423,11 @@ impl BackgroundWorker {
             // Drain remaining
             while let Some(res) = join_set.join_next().await {
                 match res {
-                    Ok(data) => { let _ = tx.send(data).await; }
+                    Ok(data) => {
+                        if tx.send(data).await.is_err() {
+                            tracing::error!("Compression pipeline: consumer channel closed; dropping batch");
+                        }
+                    }
                     Err(e) => tracing::error!("Compression task panicked: {:?}", e),
                 }
             }
@@ -460,6 +458,13 @@ impl BackgroundWorker {
             }
         }
 
+        // Wait for the producer to finish.  The consumer loop above only exits once the
+        // sender side of the channel is dropped (i.e., the producer task completed), so
+        // this await should return immediately.  We still check the result to surface panics.
+        if let Err(e) = producer_handle.await {
+            tracing::error!("Consolidation producer task panicked: {:?}", e);
+        }
+
         // 4. Retry Logic: Check which IDs were NOT processed
         for id in all_fetched_ids {
             // If ID is not in processed_ids and not in failed_events (already handled), increment retry
@@ -473,6 +478,7 @@ impl BackgroundWorker {
             }
         }
 
+        *self.last_consolidation.lock().await = std::time::Instant::now();
         Ok(any_processed)
     }
 
@@ -645,6 +651,15 @@ impl BackgroundWorker {
     }
 
     async fn run_community_cycle(&self) -> Result<()> {
+        let community_interval = Duration::from_millis(self.config.community_interval_ms.max(self.config.tick_interval_ms));
+        let should_run = {
+            let last = self.last_community.lock().await;
+            last.elapsed() > community_interval
+        };
+        if !should_run {
+            return Ok(());
+        }
+
         let user_ids = self.engine.get_pending_communities()?;
         if user_ids.is_empty() {
             return Ok(());
@@ -680,12 +695,22 @@ impl BackgroundWorker {
 
             self.engine.clear_community_marker(&user_id)?;
         }
+        *self.last_community.lock().await = std::time::Instant::now();
         Ok(())
     }
 
     async fn run_insight_cycle(&self) -> Result<()> {
         if self.llm_client.is_none() {
             return Ok(())
+        }
+
+        let insight_interval = Duration::from_millis(self.config.insight_interval_ms.max(self.config.tick_interval_ms));
+        let should_run = {
+            let last = self.last_insight.lock().await;
+            last.elapsed() > insight_interval
+        };
+        if !should_run {
+            return Ok(());
         }
 
         let engine = self.engine.clone();
@@ -732,52 +757,62 @@ impl BackgroundWorker {
             engine.clear_reflection_marker(&user_id)?;
         }
 
+        *self.last_insight.lock().await = std::time::Instant::now();
         Ok(())
     }
 
     pub async fn update_parent_progress(&self, user_id: &str, parent_id: uuid::Uuid) -> Result<()> {
-        // Atomic locking per task to prevent race conditions during Read-Modify-Write
+        // Atomic locking per task to prevent race conditions during Read-Modify-Write.
         let lock = {
             self.engine.task_locks.entry(parent_id).or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))).value().clone()
         };
 
-        let _guard = lock.lock().await;
+        {
+            let _guard = lock.lock().await;
 
-        let incoming = self.engine.graph().get_incoming_edges(user_id, parent_id).await?;
+            let incoming = self.engine.graph().get_incoming_edges(user_id, parent_id).await?;
 
-        let mut total = 0;
-        let mut completed = 0;
+            let mut total = 0;
+            let mut completed = 0;
 
-        for edge in incoming {
-            if edge.relation == memorose_common::RelationType::IsSubTaskOf {
-                total += 1;
-                if let Some(child) = self.engine.get_memory_unit(user_id, edge.source_id).await? {
-                    if let Some(ref meta) = child.task_metadata {
-                        if meta.status == memorose_common::TaskStatus::Completed {
-                            completed += 1;
+            for edge in incoming {
+                if edge.relation == memorose_common::RelationType::IsSubTaskOf {
+                    total += 1;
+                    if let Some(child) = self.engine.get_memory_unit(user_id, edge.source_id).await? {
+                        if let Some(ref meta) = child.task_metadata {
+                            if meta.status == memorose_common::TaskStatus::Completed {
+                                completed += 1;
+                            }
                         }
                     }
                 }
             }
+
+            if total > 0 {
+                let progress = completed as f32 / total as f32;
+                if let Some(mut parent) = self.engine.get_memory_unit(user_id, parent_id).await? {
+                     let mut meta = parent.task_metadata.clone().unwrap_or(memorose_common::TaskMetadata {
+                         status: memorose_common::TaskStatus::Active,
+                         progress: 0.0,
+                     });
+
+                     if (meta.progress - progress).abs() > 0.001 {
+                         meta.progress = progress;
+                         if progress >= 1.0 {
+                             meta.status = memorose_common::TaskStatus::Completed;
+                         }
+                         parent.task_metadata = Some(meta);
+                         self.engine.store_memory_unit(parent).await?;
+                     }
+                }
+            }
+            // _guard dropped here
         }
 
-        if total > 0 {
-            let progress = completed as f32 / total as f32;
-            if let Some(mut parent) = self.engine.get_memory_unit(user_id, parent_id).await? {
-                 let mut meta = parent.task_metadata.clone().unwrap_or(memorose_common::TaskMetadata {
-                     status: memorose_common::TaskStatus::Active,
-                     progress: 0.0,
-                 });
-
-                 if (meta.progress - progress).abs() > 0.001 {
-                     meta.progress = progress;
-                     if progress >= 1.0 {
-                         meta.status = memorose_common::TaskStatus::Completed;
-                     }
-                     parent.task_metadata = Some(meta);
-                     self.engine.store_memory_unit(parent).await?;
-                 }
-            }
+        // Remove the DashMap entry when no other tasks are contending for it,
+        // preventing unbounded growth over long-running sessions.
+        if Arc::strong_count(&lock) == 1 {
+            self.engine.task_locks.remove(&parent_id);
         }
 
         Ok(())

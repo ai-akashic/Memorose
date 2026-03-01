@@ -1,8 +1,33 @@
 use memorose_common::{MemoryUnit, GraphEdge, RelationType};
 use memorose_common::config::AppConfig;
-use crate::llm::{LLMClient, GeminiClient};
+use crate::llm::LLMClient;
 use anyhow::Result;
 use std::sync::Arc;
+
+/// Approximate character budget for LLM prompts (~25k tokens at ~4 chars/token).
+/// Keeps batches within context window limits for all supported models.
+const MAX_CONTEXT_CHARS: usize = 100_000;
+
+/// Build a memory context string from an iterator of formatted entries,
+/// stopping before exceeding MAX_CONTEXT_CHARS.
+fn build_bounded_context<'a>(entries: impl Iterator<Item = String>, separator: &str) -> (String, usize, usize) {
+    let mut context = String::new();
+    let mut included = 0;
+    let mut total = 0;
+    for entry in entries {
+        total += 1;
+        let needed = if context.is_empty() { entry.len() } else { separator.len() + entry.len() };
+        if context.len() + needed > MAX_CONTEXT_CHARS {
+            break; // budget exhausted; subsequent entries won't fit either
+        }
+        if !context.is_empty() {
+            context.push_str(separator);
+        }
+        context.push_str(&entry);
+        included += 1;
+    }
+    (context, included, total)
+}
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct CommunityInsight {
@@ -71,9 +96,9 @@ impl Arbitrator {
     }
 
     pub fn new() -> Self {
-        let config = AppConfig::load().unwrap_or_else(|_| {
-             tracing::warn!("Failed to load config for Arbitrator, using defaults");
-             AppConfig::load().unwrap()
+        let config = AppConfig::load().unwrap_or_else(|e| {
+            tracing::warn!("Failed to load config for Arbitrator ({}), using defaults", e);
+            AppConfig::default()
         });
         
         let llm_client = crate::llm::create_llm_client(&config.llm);
@@ -106,10 +131,13 @@ impl Arbitrator {
         }
 
         // Prepare prompt with memories, IDs and timestamps
-        let memory_context = memories.iter()
-            .map(|m| format!("ID: {}\nTimestamp: {}\nContent: {}", m.id, m.transaction_time, m.content))
-            .collect::<Vec<_>>()
-            .join("\n---\n");
+        let (memory_context, included, total) = build_bounded_context(
+            memories.iter().map(|m| format!("ID: {}\nTimestamp: {}\nContent: {}", m.id, m.transaction_time, m.content)),
+            "\n---\n",
+        );
+        if included < total {
+            tracing::warn!("Arbitrator: truncated context to {}/{} memories to stay within token budget", included, total);
+        }
 
         let query_str = query.map(|q| format!("User Query: {}\n", q)).unwrap_or_else(|| "No specific query, just identify latest facts.".to_string());
 
@@ -169,10 +197,13 @@ impl Arbitrator {
             }
         };
 
-        let memory_context = memories.iter()
-            .map(|m| format!("Timestamp: {}\nContent: {}", m.transaction_time, m.content))
-            .collect::<Vec<_>>()
-            .join("\n---\n");
+        let (memory_context, included, total) = build_bounded_context(
+            memories.iter().map(|m| format!("Timestamp: {}\nContent: {}", m.transaction_time, m.content)),
+            "\n---\n",
+        );
+        if included < total {
+            tracing::warn!("Consolidate: truncated context to {}/{} memories to stay within token budget", included, total);
+        }
 
         let system_prompt = "You are a memory consolidation engine. \
             Analyze the following memories which may contain updates, corrections, or evolution of facts. \
@@ -205,10 +236,13 @@ impl Arbitrator {
             return Ok(Vec::new());
         }
 
-        let memories_str = memories.iter()
-            .map(|m| format!("ID: {}\nContent: {}", m.id, m.content))
-            .collect::<Vec<_>>()
-            .join("\n---\n");
+        let (memories_str, included, total) = build_bounded_context(
+            memories.iter().map(|m| format!("ID: {}\nContent: {}", m.id, m.content)),
+            "\n---\n",
+        );
+        if included < total {
+            tracing::warn!("extract_topics: truncated context to {}/{} memories to stay within token budget", included, total);
+        }
 
         let system_prompt = "You are a Memory Management System (Prospective Reflection). \
             Analyze the following dialogue segments/memories from a recent session. \
@@ -292,10 +326,13 @@ impl Arbitrator {
             return Ok(Vec::new());
         }
 
-        let context_str = context_memories.iter()
-            .map(|m| format!("ID: {}\nContent: {}", m.id, m.content))
-            .collect::<Vec<_>>()
-            .join("\n---\n");
+        let (context_str, included, total) = build_bounded_context(
+            context_memories.iter().map(|m| format!("ID: {}\nContent: {}", m.id, m.content)),
+            "\n---\n",
+        );
+        if included < total {
+            tracing::warn!("analyze_relations: truncated context to {}/{} memories to stay within token budget", included, total);
+        }
 
         let system_prompt = "You are a Knowledge Graph builder. \
             Analyze the 'New Memory' against the 'Context Memories'. \
@@ -366,7 +403,10 @@ impl Arbitrator {
             });
         }
 
-        let memory_block = memories.join("\n---\n");
+        let (memory_block, included, total) = build_bounded_context(memories.into_iter(), "\n---\n");
+        if included < total {
+            tracing::warn!("summarize_community: truncated context to {}/{} memories to stay within token budget", included, total);
+        }
         let system_prompt = "You are a Community Insight Generator. \
             Analyze the following group of related memories (a 'Community'). \
             Identify the common theme that binds them together. \

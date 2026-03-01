@@ -21,9 +21,8 @@ impl GeminiClient {
     pub fn with_base_url(api_key: String, model: String, embedding_model: String, base_url: String) -> Self {
         let api_key = api_key.trim().to_string();
         tracing::debug!(
-            "GeminiClient initialized: api_key_len={}, api_key_prefix={}, model={}, embedding_model={}, base_url={}",
+            "GeminiClient initialized: api_key_len={}, model={}, embedding_model={}, base_url={}",
             api_key.len(),
-            if api_key.len() >= 10 { &api_key[..10] } else { &api_key },
             model,
             embedding_model,
             base_url

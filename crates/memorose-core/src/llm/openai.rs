@@ -136,6 +136,43 @@ impl OpenAIClient {
 
         Ok(super::LLMResponse { data: content, usage })
     }
+
+    /// Send a single embedding batch (caller guarantees len <= 2048).
+    async fn embed_batch_chunk(&self, texts: Vec<String>) -> Result<super::LLMResponse<Vec<Vec<f32>>>> {
+        let url = format!("{}/embeddings", self.base_url.trim_end_matches('/'));
+
+        let req = EmbedRequest {
+            model: self.embedding_model.clone(),
+            input: texts,
+        };
+
+        let res = self.client.post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&req)
+            .send()
+            .await?;
+
+        let status = res.status();
+        let body = res.text().await?;
+
+        if !status.is_success() {
+            return Err(anyhow!("OpenAI Embedding API error ({}): {}", status, body));
+        }
+
+        let parsed: EmbedResponse = serde_json::from_str(&body)
+            .map_err(|e| anyhow!("Failed to parse OpenAI embedding response: {} - body: {}", e, body))?;
+
+        let embeddings = parsed.data.into_iter().map(|d| d.embedding).collect();
+
+        let usage = parsed.usage.map(|u| memorose_common::TokenUsage {
+            prompt_tokens: u.prompt_tokens,
+            completion_tokens: u.completion_tokens.unwrap_or(0),
+            total_tokens: u.total_tokens,
+        }).unwrap_or_default();
+
+        Ok(super::LLMResponse { data: embeddings, usage })
+    }
 }
 
 #[async_trait]
@@ -196,39 +233,25 @@ impl LLMClient for OpenAIClient {
     }
 
     async fn embed_batch(&self, texts: Vec<String>) -> Result<super::LLMResponse<Vec<Vec<f32>>>> {
-        let url = format!("{}/embeddings", self.base_url.trim_end_matches('/'));
-        
-        let req = EmbedRequest {
-            model: self.embedding_model.clone(),
-            input: texts,
-        };
+        // OpenAI limits embedding requests to 2048 inputs per call.
+        const MAX_BATCH: usize = 2048;
 
-        let res = self.client.post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .json(&req)
-            .send()
-            .await?;
-
-        let status = res.status();
-        let body = res.text().await?;
-
-        if !status.is_success() {
-            return Err(anyhow!("OpenAI Embedding API error ({}): {}", status, body));
+        if texts.len() <= MAX_BATCH {
+            return self.embed_batch_chunk(texts).await;
         }
 
-        let parsed: EmbedResponse = serde_json::from_str(&body)
-            .map_err(|e| anyhow!("Failed to parse OpenAI embedding response: {} - body: {}", e, body))?;
+        let mut all_embeddings = Vec::with_capacity(texts.len());
+        let mut total_usage = memorose_common::TokenUsage::default();
 
-        let embeddings = parsed.data.into_iter().map(|d| d.embedding).collect();
-        
-        let usage = parsed.usage.map(|u| memorose_common::TokenUsage {
-            prompt_tokens: u.prompt_tokens,
-            completion_tokens: u.completion_tokens.unwrap_or(0),
-            total_tokens: u.total_tokens,
-        }).unwrap_or_default();
+        for chunk in texts.chunks(MAX_BATCH) {
+            let result = self.embed_batch_chunk(chunk.to_vec()).await?;
+            all_embeddings.extend(result.data);
+            total_usage.prompt_tokens += result.usage.prompt_tokens;
+            total_usage.completion_tokens += result.usage.completion_tokens;
+            total_usage.total_tokens += result.usage.total_tokens;
+        }
 
-        Ok(super::LLMResponse { data: embeddings, usage })
+        Ok(super::LLMResponse { data: all_embeddings, usage: total_usage })
     }
 
     async fn describe_image(&self, image_url_or_base64: &str) -> Result<super::LLMResponse<String>> {
@@ -319,6 +342,7 @@ struct ImageUrlDetail {
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 enum MessageContent {
+    #[allow(dead_code)]
     String(String),
     Parts(Vec<ContentPart>),
 }

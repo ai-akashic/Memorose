@@ -30,10 +30,8 @@ impl LocalFileSystemStore {
 #[async_trait]
 impl ObjectStore for LocalFileSystemStore {
     async fn put(&self, data: &[u8], mime_type: &str) -> Result<String> {
-        // Ensure directory exists
-        if !self.base_path.exists() {
-            fs::create_dir_all(&self.base_path).await?;
-        }
+        // create_dir_all is idempotent; no need for a racy exists() check
+        fs::create_dir_all(&self.base_path).await?;
 
         let id = Uuid::new_v4();
         // Simple extension mapping (can be expanded)

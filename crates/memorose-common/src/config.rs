@@ -305,7 +305,24 @@ impl AppConfig {
             
             .build()?;
 
-        s.try_deserialize()
+        s.try_deserialize().and_then(|config: AppConfig| {
+            // Validate Raft timing invariants to prevent permanent leader-election loops.
+            if config.raft.heartbeat_interval_ms >= config.raft.election_timeout_min_ms {
+                return Err(ConfigError::Message(format!(
+                    "raft.heartbeat_interval_ms ({}) must be strictly less than \
+                     raft.election_timeout_min_ms ({})",
+                    config.raft.heartbeat_interval_ms, config.raft.election_timeout_min_ms
+                )));
+            }
+            if config.raft.election_timeout_min_ms >= config.raft.election_timeout_max_ms {
+                return Err(ConfigError::Message(format!(
+                    "raft.election_timeout_min_ms ({}) must be strictly less than \
+                     raft.election_timeout_max_ms ({})",
+                    config.raft.election_timeout_min_ms, config.raft.election_timeout_max_ms
+                )));
+            }
+            Ok(config)
+        })
     }
 
     pub fn get_active_key(&self) -> Option<String> {

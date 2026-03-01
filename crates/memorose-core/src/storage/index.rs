@@ -10,7 +10,18 @@ pub struct TextIndex {
     index: Index,
     writer: Arc<Mutex<IndexWriter>>,
     reader: IndexReader,
+    _shutdown: Arc<tokio::sync::Notify>,
     _commit_task: Arc<tokio::task::JoinHandle<()>>,
+}
+
+impl Drop for TextIndex {
+    fn drop(&mut self) {
+        // Signal the background commit task to exit when the last TextIndex clone is dropped.
+        // strong_count == 2 means only this struct + the task hold the Notify.
+        if Arc::strong_count(&self._shutdown) == 2 {
+            self._shutdown.notify_one();
+        }
+    }
 }
 
 impl TextIndex {
@@ -51,22 +62,41 @@ impl TextIndex {
         let writer_arc = Arc::new(Mutex::new(writer));
         let reader_clone = reader.clone();
         let writer_clone = writer_arc.clone();
+        let shutdown = Arc::new(tokio::sync::Notify::new());
+        let shutdown_clone = shutdown.clone();
 
         let commit_task = tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(interval_ms));
             interval.tick().await;
 
             loop {
-                interval.tick().await;
-                if let Ok(mut w) = writer_clone.try_lock() {
-                    if let Err(e) = w.commit() {
-                        tracing::error!("Background commit failed: {:?}", e);
+                tokio::select! {
+                    _ = interval.tick() => {
+                        match writer_clone.try_lock() {
+                            Ok(mut w) => {
+                                if let Err(e) = w.commit() {
+                                    tracing::error!("Background commit failed: {:?}", e);
+                                }
+                            }
+                            Err(std::sync::TryLockError::WouldBlock) => {
+                                tracing::debug!("Skipping background commit (lock busy)");
+                            }
+                            Err(std::sync::TryLockError::Poisoned(e)) => {
+                                tracing::warn!("TextIndex writer mutex was poisoned; recovering");
+                                let mut w = e.into_inner();
+                                if let Err(e) = w.commit() {
+                                    tracing::error!("Background commit (post-recovery) failed: {:?}", e);
+                                }
+                            }
+                        }
+                        if let Err(e) = reader_clone.reload() {
+                            tracing::error!("Background reload failed: {:?}", e);
+                        }
                     }
-                } else {
-                    tracing::debug!("Skipping background commit (lock busy)");
-                }
-                if let Err(e) = reader_clone.reload() {
-                    tracing::error!("Background reload failed: {:?}", e);
+                    _ = shutdown_clone.notified() => {
+                        tracing::debug!("TextIndex background commit task stopping");
+                        break;
+                    }
                 }
             }
         });
@@ -75,6 +105,7 @@ impl TextIndex {
             index,
             writer: writer_arc,
             reader,
+            _shutdown: shutdown,
             _commit_task: Arc::new(commit_task),
         })
     }
@@ -102,13 +133,33 @@ impl TextIndex {
             doc.add_i64(valid_time_field, vt.timestamp_micros());
         }
 
-        let writer = self.writer.lock().map_err(|_| anyhow::anyhow!("Lock poison"))?;
+        let writer = self.writer.lock().unwrap_or_else(|e| {
+            tracing::warn!("TextIndex writer mutex was poisoned; recovering");
+            e.into_inner()
+        });
         writer.add_document(doc)?;
         Ok(())
     }
 
+    /// Remove a memory unit from the full-text index by its ID.
+    /// The deletion takes effect after the next background commit.
+    pub fn delete_unit(&self, id: &str) -> Result<()> {
+        let schema = self.index.schema();
+        let id_field = schema.get_field("id").unwrap();
+        let term = tantivy::Term::from_field_text(id_field, id);
+        let writer = self.writer.lock().unwrap_or_else(|e| {
+            tracing::warn!("TextIndex writer mutex was poisoned; recovering");
+            e.into_inner()
+        });
+        writer.delete_term(term);
+        Ok(())
+    }
+
     pub fn commit(&self) -> Result<()> {
-        let mut writer = self.writer.lock().map_err(|_| anyhow::anyhow!("Lock poison"))?;
+        let mut writer = self.writer.lock().unwrap_or_else(|e| {
+            tracing::warn!("TextIndex writer mutex was poisoned; recovering");
+            e.into_inner()
+        });
         writer.commit()?;
         Ok(())
     }
