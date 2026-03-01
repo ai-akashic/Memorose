@@ -186,6 +186,23 @@ impl BackgroundWorker {
             })
     }
 
+    /// Generates a semantic fingerprint by stripping numbers, punctuation, and converting to lowercase.
+    /// This allows us to catch highly similar structural logs (e.g. "Tool failed at 12:01" vs "Tool failed at 12:02").
+    fn generate_semantic_fingerprint(text: &str) -> u64 {
+        let normalized: String = text.chars()
+            .filter(|c| c.is_alphabetic() || c.is_whitespace())
+            .map(|c| c.to_ascii_lowercase())
+            .collect();
+            
+        // Reduce multiple whitespaces to single space for stable hashing
+        let collapsed: String = normalized.split_whitespace().collect::<Vec<_>>().join(" ");
+
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        collapsed.hash(&mut hasher);
+        hasher.finish()
+    }
+
     async fn extract_text_from_event(event: &memorose_common::Event, llm: Option<&dyn crate::llm::LLMClient>) -> String {
         match &event.content {
             memorose_common::EventContent::Text(t) => t.clone(),
@@ -319,6 +336,7 @@ impl BackgroundWorker {
         let (tx, mut rx) = mpsc::channel(self.config.llm_concurrency * 2);
         let llm_client_clone = self.llm_client.clone();
         let concurrency_limit = self.config.llm_concurrency;
+        let engine_clone = self.engine.clone();
 
         // Spawn Producer
         tokio::spawn(async move {
@@ -327,6 +345,7 @@ impl BackgroundWorker {
             for mut events in packed_batches {
                 if events.is_empty() { continue; }
                 let llm = llm_client_clone.clone();
+                let engine = engine_clone.clone();
                 
                 // For a packed batch, we will extract the common identifiers from the first event
                 let first_event = events.remove(0);
@@ -363,16 +382,44 @@ impl BackgroundWorker {
                 }
 
                 join_set.spawn(async move {
-                    // Compression
-                    let (summary, valid_at) = match llm.as_ref() {
-                        Some(client) => match client.compress(&combined_text, is_agent).await {
-                            Ok(out) => (out.data.content, out.data.valid_at),
-                            Err(e) => {
-                                tracing::warn!("Packed compression failed for {}: {:?}", event_ids[0], e);
-                                (combined_text, None)
-                            }
-                        },
-                        None => (combined_text, None),
+                    // Semantic Deduplication Check
+                    let fingerprint = Self::generate_semantic_fingerprint(&combined_text);
+                    let dedup_key = format!("dedup:{}:{}", user_id, fingerprint);
+                    
+                    let is_duplicate = if let Ok(Some(last_seen_bytes)) = engine.system_kv().get(dedup_key.as_bytes()) {
+                        if let Some(last_seen) = String::from_utf8(last_seen_bytes).ok().and_then(|s| s.parse::<u64>().ok()) {
+                            let now = chrono::Utc::now().timestamp() as u64;
+                            // Deduplicate if seen within the last 1 hour (3600 seconds)
+                            now - last_seen < 3600
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+
+                    let (summary, valid_at) = if is_duplicate {
+                        tracing::debug!("Semantic deduplication triggered for fingerprint {}. Skipping LLM compression.", fingerprint);
+                        // Update timestamp for LRU-like rolling window
+                        let _ = engine.system_kv().put(dedup_key.as_bytes(), chrono::Utc::now().timestamp().to_string().as_bytes());
+                        (combined_text, None)
+                    } else {
+                        // Compression
+                        let (compressed, valid) = match llm.as_ref() {
+                            Some(client) => match client.compress(&combined_text, is_agent).await {
+                                Ok(out) => (out.data.content, out.data.valid_at),
+                                Err(e) => {
+                                    tracing::warn!("Packed compression failed for {}: {:?}", event_ids[0], e);
+                                    (combined_text, None)
+                                }
+                            },
+                            None => (combined_text, None),
+                        };
+                        
+                        // Save fingerprint
+                        let _ = engine.system_kv().put(dedup_key.as_bytes(), chrono::Utc::now().timestamp().to_string().as_bytes());
+                        
+                        (compressed, valid)
                     };
 
                     (event_ids, user_id, app_id, stream_id, summary, valid_at, assets, metadata)
