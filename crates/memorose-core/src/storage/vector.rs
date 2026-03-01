@@ -7,17 +7,16 @@ use std::sync::Arc;
 use memorose_common::MemoryUnit;
 use futures::StreamExt;
 
-const VECTOR_DIM: i32 = 384; 
-
 #[derive(Clone)]
 pub struct VectorStore {
     conn: Connection,
+    dim: i32,
 }
 
 impl VectorStore {
-    pub async fn new(path: &str) -> Result<Self> {
+    pub async fn new(path: &str, dim: i32) -> Result<Self> {
         let conn = connect(path).execute().await?;
-        Ok(Self { conn })
+        Ok(Self { conn, dim })
     }
 
     pub async fn ensure_table(&self, table_name: &str) -> Result<()> {
@@ -48,7 +47,7 @@ impl VectorStore {
                 "vector",
                 DataType::FixedSizeList(
                     Arc::new(Field::new("item", DataType::Float32, true)),
-                    VECTOR_DIM,
+                    self.dim,
                 ),
                 false,
             ),
@@ -86,15 +85,15 @@ impl VectorStore {
             valid_ats.push(unit.valid_time.map(|t| t.timestamp_micros()));
             
             if let Some(emb) = &unit.embedding {
-                if emb.len() != VECTOR_DIM as usize {
+                if emb.len() != self.dim as usize {
                     let mut e = emb.clone();
-                    e.resize(VECTOR_DIM as usize, 0.0);
+                    e.resize(self.dim as usize, 0.0);
                     vectors_flat.extend(e);
                 } else {
                     vectors_flat.extend(emb);
                 }
             } else {
-                vectors_flat.extend(vec![0.0; VECTOR_DIM as usize]);
+                vectors_flat.extend(vec![0.0; self.dim as usize]);
             }
         }
 
@@ -111,7 +110,7 @@ impl VectorStore {
         let values = Arc::new(Float32Array::from(vectors_flat));
         let vector_array = Arc::new(FixedSizeListArray::new(
             field,
-            VECTOR_DIM,
+            self.dim,
             values,
             None,
         ));
@@ -165,7 +164,7 @@ impl VectorStore {
          let table = self.conn.open_table(table_name).execute().await?;
          
          let mut q = query_vector.to_vec();
-         q.resize(VECTOR_DIM as usize, 0.0);
+         q.resize(self.dim as usize, 0.0);
 
          let mut query = table
             .query()
@@ -217,7 +216,7 @@ mod tests {
         let temp_dir = tempdir()?;
         let db_path = temp_dir.path().to_str().unwrap();
         
-        let store = VectorStore::new(db_path).await?;
+        let store = VectorStore::new(db_path, 384).await?;
         store.ensure_table("memories").await?;
 
         let stream_id = Uuid::new_v4();
@@ -226,7 +225,7 @@ mod tests {
         let mut embedding = vec![0.0; 384];
         embedding[0] = 1.0; // Mark first dim
         
-        let unit = MemoryUnit::new("u1".into(), "a1".into(), stream_id, "Vector Test".to_string(), Some(embedding.clone()));
+        let unit = MemoryUnit::new("u1".into(), None, "a1".into(), stream_id, memorose_common::MemoryType::Factual, "Vector Test".to_string(), Some(embedding.clone()));
         store.add("memories", vec![unit.clone()]).await?;
 
         // Search with exact same vector
@@ -244,19 +243,19 @@ mod tests {
         let temp_dir = tempdir()?;
         let db_path = temp_dir.path().to_str().unwrap();
         
-        let store = VectorStore::new(db_path).await?;
+        let store = VectorStore::new(db_path, 384).await?;
         store.ensure_table("memories").await?;
 
         let stream_id = Uuid::new_v4();
         let embedding = vec![0.0; 384];
 
         // 1. Store OLD memory (valid last year)
-        let mut u1 = MemoryUnit::new("u1".into(), "a1".into(), stream_id, "Old info".into(), Some(embedding.clone()));
+        let mut u1 = MemoryUnit::new("u1".into(), None, "a1".into(), stream_id, memorose_common::MemoryType::Factual, "Old info".into(), Some(embedding.clone()));
         u1.valid_time = Some(Utc::now() - chrono::Duration::days(365));
         store.add("memories", vec![u1.clone()]).await?;
 
         // 2. Store NEW memory (valid now)
-        let mut u2 = MemoryUnit::new("u1".into(), "a1".into(), stream_id, "New info".into(), Some(embedding.clone()));
+        let mut u2 = MemoryUnit::new("u1".into(), None, "a1".into(), stream_id, memorose_common::MemoryType::Factual, "New info".into(), Some(embedding.clone()));
         u2.valid_time = Some(Utc::now());
         store.add("memories", vec![u2.clone()]).await?;
 

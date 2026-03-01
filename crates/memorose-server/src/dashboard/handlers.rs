@@ -826,7 +826,7 @@ pub async fn search(
             match state.llm_client.embed(&payload.query).await {
                 Ok(embedding) => {
                     let filter = shard.engine.build_user_filter(user_id, app_id, None);
-                    match shard.engine.search_similar(user_id, app_id, &embedding, limit, filter).await {
+                    match shard.engine.search_similar(user_id, app_id, &embedding.data, limit, filter).await {
                         Ok(results) => results,
                         Err(e) => {
                             return (
@@ -852,7 +852,7 @@ pub async fn search(
                         user_id,
                         app_id,
                         &payload.query,
-                        &embedding,
+                        &embedding.data,
                         limit,
                         payload.enable_arbitration,
                         None,
@@ -984,7 +984,7 @@ pub async fn chat(
                     &user_id,
                     Some(&app_id),
                     &message,
-                    &embedding,
+                    &embedding.data,
                     context_limit,
                     false,
                     None,
@@ -1027,7 +1027,7 @@ pub async fn chat(
         match state.llm_client.generate(&full_prompt).await {
             Ok(response) => {
                 // Stream the response word by word for better UX
-                let words: Vec<&str> = response.split_whitespace().collect();
+                let words: Vec<&str> = response.data.split_whitespace().collect();
                 for (i, word) in words.iter().enumerate() {
                     let text = if i == words.len() - 1 {
                         word.to_string()

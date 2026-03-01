@@ -44,7 +44,7 @@ async fn main() -> Result<()> {
     let start_size: usize = conversation.iter().map(|s| s.len()).sum();
     
     for line in conversation {
-        let event = Event::new(user_id.clone(), app_id.clone(), stream_id, EventContent::Text(line.to_string()));
+        let event = Event::new(user_id.clone(), None, app_id.clone(), stream_id, EventContent::Text(line.to_string()));
         engine.ingest_event(event).await?;
     }
 

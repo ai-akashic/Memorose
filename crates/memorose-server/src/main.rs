@@ -443,7 +443,7 @@ async fn ingest_event(
         "json" => EventContent::Json(serde_json::from_str(&payload.content).unwrap_or(serde_json::json!({"error": "invalid json"}))),
         _ => EventContent::Text(payload.content),
     };
-    let mut event = Event::new(user_id, app_id, stream_id, content);
+    let mut event = Event::new(user_id, None, app_id, stream_id, content);
     if let Some(l) = payload.level {
         event.metadata["target_level"] = serde_json::json!(l);
     }
@@ -512,11 +512,13 @@ async fn retrieve_memory(
         Ok(cached)
     } else {
         tracing::debug!("Embedding Cache Miss. Calling LLM...");
-        let res = state.llm_client.embed(&payload.query).await;
-        if let Ok(ref vec) = res {
-            state.embedding_cache.insert(query_key, vec.clone()).await;
+        match state.llm_client.embed(&payload.query).await {
+            Ok(res) => {
+                state.embedding_cache.insert(query_key, res.data.clone()).await;
+                Ok(res.data)
+            },
+            Err(e) => Err(e)
         }
-        res
     };
 
     match embedding_f32 {

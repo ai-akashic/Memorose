@@ -7,6 +7,13 @@ pub mod config;
 pub mod sharding;
 pub mod video;
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TokenUsage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
+}
+
 fn default_legacy_id() -> String { "_legacy".to_string() }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,9 +46,8 @@ pub enum EventContent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
     pub id: Uuid,
-    #[serde(default = "default_legacy_id")]
     pub user_id: String,
-    #[serde(default = "default_legacy_id")]
+    pub agent_id: Option<String>,
     pub app_id: String,
     pub stream_id: Uuid,
     pub content: EventContent,
@@ -51,10 +57,11 @@ pub struct Event {
 }
 
 impl Event {
-    pub fn new(user_id: String, app_id: String, stream_id: Uuid, content: EventContent) -> Self {
+    pub fn new(user_id: String, agent_id: Option<String>, app_id: String, stream_id: Uuid, content: EventContent) -> Self {
         Self {
             id: Uuid::new_v4(),
             user_id,
+            agent_id,
             app_id,
             stream_id,
             content,
@@ -169,14 +176,27 @@ pub struct Asset {
 }
 
 /// Represents a consolidated memory unit (L1/L2).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryType {
+    Factual,    // User facts and preferences
+    Procedural, // Agent experiences, reflections, and tool usage paths
+}
+
+impl Default for MemoryType {
+    fn default() -> Self {
+        Self::Factual
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryUnit {
     pub id: Uuid,
-    #[serde(default = "default_legacy_id")]
     pub user_id: String,
-    #[serde(default = "default_legacy_id")]
+    pub agent_id: Option<String>,
     pub app_id: String,
     pub stream_id: Uuid,
+    pub memory_type: MemoryType,
     
     /// Semantic content (compressed/summarized text)
     pub content: String,
@@ -212,13 +232,23 @@ pub struct MemoryUnit {
 }
 
 impl MemoryUnit {
-    pub fn new(user_id: String, app_id: String, stream_id: Uuid, content: String, embedding: Option<Vec<f32>>) -> Self {
+    pub fn new(
+        user_id: String, 
+        agent_id: Option<String>,
+        app_id: String, 
+        stream_id: Uuid, 
+        memory_type: MemoryType,
+        content: String, 
+        embedding: Option<Vec<f32>>
+    ) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
             user_id,
+            agent_id,
             app_id,
             stream_id,
+            memory_type,
             content,
             embedding,
             keywords: Vec::new(),
@@ -243,7 +273,7 @@ mod tests {
     fn test_event_serialization() {
         let stream_id = Uuid::new_v4();
         let content = EventContent::Text("Hello World".to_string());
-        let event = Event::new("user1".into(), "app1".into(), stream_id, content);
+        let event = Event::new("user1".into(), None, "app1".into(), stream_id, content);
 
         let json = serde_json::to_string(&event).expect("Failed to serialize");
         let deserialized: Event = serde_json::from_str(&json).expect("Failed to deserialize");
@@ -255,25 +285,16 @@ mod tests {
     }
 
     #[test]
-    fn test_event_backward_compat() {
-        // Old format without user_id/app_id should deserialize with defaults
-        let json = r#"{"id":"00000000-0000-0000-0000-000000000001","stream_id":"00000000-0000-0000-0000-000000000002","content":{"type":"Text","data":"test"},"transaction_time":"2026-01-01T00:00:00Z","valid_time":null,"metadata":{}}"#;
-        let event: Event = serde_json::from_str(json).expect("Failed to deserialize legacy event");
-        assert_eq!(event.user_id, "_legacy");
-        assert_eq!(event.app_id, "_legacy");
-    }
-
-    #[test]
     fn test_bitemporal_fields() {
         let now = Utc::now();
         let valid_time = now - chrono::Duration::days(7);
         
-        let mut unit = MemoryUnit::new("u1".into(), "a1".into(), Uuid::new_v4(), "text".into(), None);
+        let mut unit = MemoryUnit::new("u1".into(), None, "a1".into(), Uuid::new_v4(), MemoryType::Factual, "text".into(), None);
         unit.valid_time = Some(valid_time);
         
         assert_eq!(unit.valid_time, Some(valid_time));
 
-        let mut event = Event::new("u1".into(), "a1".into(), Uuid::new_v4(), EventContent::Text("test".into()));
+        let mut event = Event::new("u1".into(), None, "a1".into(), Uuid::new_v4(), EventContent::Text("test".into()));
         event.valid_time = Some(valid_time);
         assert_eq!(event.valid_time, Some(valid_time));
     }

@@ -55,6 +55,7 @@ impl ShardManager {
                 config.worker.enable_auto_planner,
                 config.worker.enable_task_reflection,
                 config.worker.auto_link_similarity_threshold,
+                config.llm.embedding_dim,
             ).await?;
 
             // Override raft config for this shard
@@ -100,6 +101,7 @@ impl ShardManager {
             config.worker.enable_auto_planner,
             config.worker.enable_task_reflection,
             config.worker.auto_link_similarity_threshold,
+            config.llm.embedding_dim,
         ).await?;
 
         let raft = start_raft_node(node_id, engine.clone(), config.clone()).await

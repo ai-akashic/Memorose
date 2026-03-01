@@ -71,6 +71,16 @@ struct InlineData {
 struct GenerateResponse {
     candidates: Option<Vec<Candidate>>,
     error: Option<ApiError>,
+    #[serde(rename = "usageMetadata")]
+    usage_metadata: Option<GeminiUsageMetadata>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GeminiUsageMetadata {
+    prompt_token_count: Option<u32>,
+    candidates_token_count: Option<u32>,
+    total_token_count: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -124,11 +134,11 @@ const GEMINI_BATCH_EMBED_MAX_SIZE: usize = 100;
 
 #[async_trait]
 impl LLMClient for GeminiClient {
-    async fn generate(&self, prompt: &str) -> Result<String> {
+    async fn generate(&self, prompt: &str) -> Result<super::LLMResponse<String>> {
         self.call_generate(None, prompt).await
     }
 
-    async fn embed(&self, text: &str) -> Result<Vec<f32>> {
+    async fn embed(&self, text: &str) -> Result<super::LLMResponse<Vec<f32>>> {
         let clean_model = self.embedding_model.trim_start_matches("models/");
         let model_name = format!("models/{}", clean_model);
         let url = format!(
@@ -161,15 +171,17 @@ impl LLMClient for GeminiClient {
             return Err(anyhow!("Gemini Embedding API error: {}", err.message));
         }
 
-        parsed
+        let data = parsed
             .embedding
             .map(|e| e.values)
-            .ok_or_else(|| anyhow!("No embedding in Gemini response"))
+            .ok_or_else(|| anyhow!("No embedding in Gemini response"))?;
+
+        Ok(super::LLMResponse { data, usage: Default::default() })
     }
 
-    async fn embed_batch(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+    async fn embed_batch(&self, texts: Vec<String>) -> Result<super::LLMResponse<Vec<Vec<f32>>>> {
         if texts.is_empty() {
-            return Ok(vec![]);
+            return Ok(super::LLMResponse { data: vec![], usage: Default::default() });
         }
 
         let clean_model = self.embedding_model.trim_start_matches("models/");
@@ -244,45 +256,61 @@ impl LLMClient for GeminiClient {
             all_embeddings.extend(embeddings.into_iter().map(|e| e.values));
         }
 
-        Ok(all_embeddings)
+        Ok(super::LLMResponse { data: all_embeddings, usage: Default::default() })
     }
 
-    async fn compress(&self, text: &str) -> Result<super::CompressionOutput> {
-        let system_prompt = "You are an expert at summarizing memories for an AI system. \
+    async fn compress(&self, text: &str, is_agent: bool) -> Result<super::LLMResponse<super::CompressionOutput>> {
+        let system_prompt = if is_agent {
+            // PROCEDURAL (Agent) PROMPT
+            "You are an expert at extracting and summarizing Agent execution trajectories and experiences. \
+            Your task is to produce a comprehensive summary of the agent's actions, logic, and outcomes. \
+            \
+            CRITICAL RULES: \
+            - RECONSTRUCT THE STATE MACHINE: Clearly identify the Goal, the Plan, the Action taken, the Observation (Result), and the Reflection (what was learned). \
+            - PRESERVE ERRORS: If an API call failed, record exactly what failed and the stated reason. \
+            - BE VERBOSE ON LOGIC: Do not just give the final answer. The step-by-step logic and tool usage is the core of this memory. \
+            - OMIT USER CHITCHAT: Focus purely on the agent's internal workings. \
+            \
+            Output ONLY valid JSON: \
+            {\"content\": \"detailed agent trajectory and reflection\", \"valid_at\": null}"
+        } else {
+            // FACTUAL (User) PROMPT
+            "You are an expert at extracting core facts, preferences, and profiles about a HUMAN user from text. \
             Compress the following event into a concise, high-density factual statement. \
             \
             CRITICAL RULES: \
-            - PRESERVE ALL specific numbers, quantities, amounts, durations, dates, prices, counts, and measurements exactly as stated. \
-            - PRESERVE ALL proper nouns (names of people, places, brands, products). \
-            - PRESERVE ALL key relationships (who did what, with whom, for whom). \
-            - Keep the first-person perspective (use 'I' if the original uses it). \
-            - Do NOT omit factual details to save space. Density over brevity. \
+            - PRESERVE ALL specific numbers, quantities, dates, and proper nouns exactly. \
+            - EXTRACT PREFERENCES: e.g., 'User likes X', 'User is allergic to Y'. \
+            - OMIT AGENT/SYSTEM TEXT: Disregard anything the AI assistant said. Focus 100% on the human. \
+            - Keep the first-person perspective (use 'I' if the original uses it) when referring to the user. \
             \
-            If the text contains specific time references (e.g., 'last week', 'in 2020', 'two days ago'), \
-            extract the estimated UTC timestamp. \
+            If the text contains specific time references (e.g., 'last week'), extract the estimated UTC timestamp. \
             \
             Output ONLY valid JSON: \
-            {\"content\": \"compressed summary with ALL facts preserved\", \"valid_at\": \"ISO8601 timestamp or null\"}";
+            {\"content\": \"compressed factual summary\", \"valid_at\": \"ISO8601 timestamp or null\"}"
+        };
         
-        let result = self.call_generate(Some(system_prompt), text).await?;
+        let response = self.call_generate(Some(system_prompt), text).await?;
         
-        let clean_json = result.trim()
+        let clean_json = response.data.trim()
             .trim_start_matches("```json")
             .trim_start_matches("```")
             .trim_end_matches("```")
             .trim();
 
-        serde_json::from_str(clean_json)
-            .map_err(|e| anyhow!("Failed to parse compression JSON: {} - body: {}", e, clean_json))
+        let parsed: super::CompressionOutput = serde_json::from_str(clean_json)
+            .map_err(|e| anyhow!("Failed to parse compression JSON: {} - body: {}", e, clean_json))?;
+
+        Ok(super::LLMResponse { data: parsed, usage: response.usage })
     }
 
-    async fn summarize_group(&self, texts: Vec<String>) -> Result<String> {
+    async fn summarize_group(&self, texts: Vec<String>) -> Result<super::LLMResponse<String>> {
         let combined = texts.join("\n---\n");
         let prompt = format!("Synthesize the following related memories into a single, high-level abstract insight that captures the underlying pattern or knowledge:\n\n{}", combined);
         self.generate(&prompt).await
     }
 
-    async fn describe_image(&self, image_url_or_base64: &str) -> Result<String> {
+    async fn describe_image(&self, image_url_or_base64: &str) -> Result<super::LLMResponse<String>> {
         let (mime_type, data) = if image_url_or_base64.starts_with("http") {
              let resp = self.client.get(image_url_or_base64).send().await?;
              let headers = resp.headers();
@@ -305,7 +333,7 @@ impl LLMClient for GeminiClient {
         ]).await
     }
 
-    async fn transcribe(&self, audio_url_or_base64: &str) -> Result<String> {
+    async fn transcribe(&self, audio_url_or_base64: &str) -> Result<super::LLMResponse<String>> {
         let (mime_type, data) = if audio_url_or_base64.starts_with("http") {
              let resp = self.client.get(audio_url_or_base64).send().await?;
              let headers = resp.headers();
@@ -327,7 +355,7 @@ impl LLMClient for GeminiClient {
         ]).await
     }
 
-    async fn describe_video(&self, video_url: &str) -> Result<String> {
+    async fn describe_video(&self, video_url: &str) -> Result<super::LLMResponse<String>> {
         let (mime_type, data) = if video_url.starts_with("http") {
              let resp = self.client.get(video_url).send().await?;
              let headers = resp.headers();
@@ -351,11 +379,11 @@ impl LLMClient for GeminiClient {
 }
 
 impl GeminiClient {
-    async fn call_generate(&self, system_prompt: Option<&str>, user_prompt: &str) -> Result<String> {
+    async fn call_generate(&self, system_prompt: Option<&str>, user_prompt: &str) -> Result<super::LLMResponse<String>> {
         self.call_generate_parts(system_prompt, vec![Part::Text { text: user_prompt.to_string() }]).await
     }
 
-    async fn call_generate_parts(&self, system_prompt: Option<&str>, parts: Vec<Part>) -> Result<String> {
+    async fn call_generate_parts(&self, system_prompt: Option<&str>, parts: Vec<Part>) -> Result<super::LLMResponse<String>> {
         let clean_model = self.model.trim_start_matches("models/");
         let url = format!(
             "{}/v1beta/models/{}:generateContent?key={}",
@@ -408,7 +436,13 @@ impl GeminiClient {
             })
             .ok_or_else(|| anyhow!("No content in Gemini response"))?;
 
-        Ok(text)
+        let usage = parsed.usage_metadata.map(|m| memorose_common::TokenUsage {
+            prompt_tokens: m.prompt_token_count.unwrap_or(0),
+            completion_tokens: m.candidates_token_count.unwrap_or(0),
+            total_tokens: m.total_token_count.unwrap_or(0),
+        }).unwrap_or_default();
+
+        Ok(super::LLMResponse { data: text, usage })
     }
 }
 

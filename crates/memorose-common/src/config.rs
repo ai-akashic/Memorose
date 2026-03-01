@@ -39,10 +39,29 @@ pub struct LLMConfig {
     pub provider: LLMProvider,
     pub openai_api_key: Option<String>,
     pub google_api_key: Option<String>,
+    pub base_url: Option<String>,
     pub model: String,
     pub embedding_model: String,
+    #[serde(default = "default_embedding_dim")]
+    pub embedding_dim: i32,
     pub stt_provider: Option<LLMProvider>,
     pub stt_model: Option<String>,
+}
+
+fn default_embedding_dim() -> i32 {
+    768 // default for gemini-embedding-001
+}
+
+impl LLMConfig {
+    pub fn get_base_url(&self) -> Option<String> {
+        if self.base_url.is_some() {
+            return self.base_url.clone();
+        }
+        match self.provider {
+            LLMProvider::OpenAI => Some("https://api.openai.com/v1".to_string()),
+            LLMProvider::Gemini => Some("https://generativelanguage.googleapis.com".to_string()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,8 +157,10 @@ impl Default for LLMConfig {
             provider: LLMProvider::Gemini,
             openai_api_key: None,
             google_api_key: None,
+            base_url: None,
             model: String::new(),
             embedding_model: String::new(),
+            embedding_dim: 768,
             stt_provider: None,
             stt_model: None,
         }

@@ -32,7 +32,7 @@ async fn main() -> Result<()> {
     println!("\n🚀 Starting L0 Burst Write ({} events)...", n_events);
     let start = Instant::now();
     for i in 0..n_events {
-        let event = Event::new(user_id.clone(), app_id.clone(), stream_id, EventContent::Text(format!("Log entry #{}", i)));
+        let event = Event::new(user_id.clone(), None, app_id.clone(), stream_id, EventContent::Text(format!("Log entry #{}", i)));
         engine.ingest_event(event).await?;
     }
     let duration = start.elapsed();

@@ -32,7 +32,7 @@ async fn main() -> Result<()> {
     for (content, vec_data) in nodes {
         let mut embedding = vec![0.0; 384];
         for (i, val) in vec_data.iter().enumerate() { embedding[i] = *val; }        
-        let unit = MemoryUnit::new(user_id.clone(), app_id.clone(), stream_id, content.to_string(), Some(embedding));
+        let unit = MemoryUnit::new(user_id.clone(), None, app_id.clone(), stream_id, memorose_common::MemoryType::Factual, content.to_string(), Some(embedding));
         units.push(unit.clone());
         engine.store_memory_unit(unit).await?;
     }

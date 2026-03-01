@@ -555,12 +555,14 @@ impl RaftStorage<MemoroseTypeConfig> for MemoroseRaftStorage {
         let _ = std::fs::remove_dir_all(&temp_extract_path);
 
         // 5. Reload Engine
+        let dim = memorose_common::config::AppConfig::load().ok().map(|c| c.llm.embedding_dim).unwrap_or(768);
         let new_engine = MemoroseEngine::new(
             &root_path,
             self.commit_interval_ms,
             self.auto_planner,
             self.task_reflection,
             self.auto_link_similarity_threshold,
+            dim,
         ).await.map_err(|e| StorageError::IO {
              source: openraft::StorageIOError::new(
                 openraft::ErrorSubject::Snapshot(None),
@@ -659,7 +661,7 @@ mod tests {
         let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let mut store = MemoroseRaftStorage::new(engine.clone());
 
-        let event = Event::new("test_user".into(), "test_app".into(), Uuid::new_v4(), memorose_common::EventContent::Text("test".into()));
+        let event = Event::new("test_user".into(), None, "test_app".into(), Uuid::new_v4(), memorose_common::EventContent::Text("test".into()));
         let entry = Entry {
             log_id: LogId::new(LeaderId::new(1, 1), 1),
             payload: openraft::EntryPayload::Normal(ClientRequest::IngestEvent(event.clone())),
@@ -685,7 +687,7 @@ mod tests {
         let mut store_src = MemoroseRaftStorage::new(engine_src.clone());
 
         // Add dummy data
-        let event = Event::new("test_user".into(), "test_app".into(), Uuid::new_v4(), memorose_common::EventContent::Text("snapshot data".into()));
+        let event = Event::new("test_user".into(), None, "test_app".into(), Uuid::new_v4(), memorose_common::EventContent::Text("snapshot data".into()));
         let entry = Entry {
             log_id: LogId::new(LeaderId::new(1, 1), 1),
             payload: openraft::EntryPayload::Normal(ClientRequest::IngestEvent(event.clone())),

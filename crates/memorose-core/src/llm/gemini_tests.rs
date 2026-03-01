@@ -37,7 +37,7 @@ mod tests {
 
         let result = client.generate("Hello").await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "Hello form Mock Gemini!");
+        assert_eq!(result.unwrap().data, "Hello form Mock Gemini!");
     }
 
     #[tokio::test]
@@ -97,7 +97,7 @@ mod tests {
 
         let result = client.embed("test text").await;
         assert!(result.is_ok());
-        let vec = result.unwrap();
+        let vec = result.unwrap().data;
         assert_eq!(vec.len(), 3);
         assert_eq!(vec[0], 0.1);
     }
@@ -132,7 +132,7 @@ mod tests {
             .await;
         assert!(result.is_ok());
 
-        let embeddings = result.unwrap();
+        let embeddings = result.unwrap().data;
         assert_eq!(embeddings.len(), 2);
         assert_eq!(embeddings[0], vec![0.1, 0.2, 0.3]);
         assert_eq!(embeddings[1], vec![0.4, 0.5, 0.6]);

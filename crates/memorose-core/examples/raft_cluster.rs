@@ -69,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
         
         // 5. Test Consensus: Write through Leader
         println!("📝 Writing event to Leader...");
-        let event = Event::new("example_user".into(), "example_app".into(), Uuid::new_v4(), EventContent::Text("Distributed Consensus Test".into()));
+        let event = Event::new("example_user".into(), None, "example_app".into(), Uuid::new_v4(), EventContent::Text("Distributed Consensus Test".into()));
         let event_id = event.id;
         
         // Must find the leader's raft handle

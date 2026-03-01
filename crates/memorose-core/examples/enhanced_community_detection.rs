@@ -103,8 +103,10 @@ async fn build_test_communities(
             let embedding = vec![(comm * 50 + i) as f32 / 150.0; 384];
             let unit = MemoryUnit::new(
                 user_id.to_string(),
+                None,
                 app_id.to_string(),
                 stream_id,
+                memorose_common::MemoryType::Factual,
                 content,
                 Some(embedding),
             );

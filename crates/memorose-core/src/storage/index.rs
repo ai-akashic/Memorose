@@ -207,7 +207,7 @@ mod tests {
             let index = TextIndex::new(temp_dir.path(), 1000)?;
 
             let stream_id = Uuid::new_v4();
-            let unit = MemoryUnit::new("u1".into(), "a1".into(), stream_id, "The quick brown fox jumps".to_string(), None);
+            let unit = MemoryUnit::new("u1".into(), None, "a1".into(), stream_id, memorose_common::MemoryType::Factual, "The quick brown fox jumps".to_string(), None);
 
             index.index_unit(&unit)?;
 

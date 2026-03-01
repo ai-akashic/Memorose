@@ -44,7 +44,7 @@ impl SmartIngestor {
             return Ok(false);
         }
 
-        let event = Event::new(self.user_id.clone(), self.app_id.clone(), Uuid::new_v4(), EventContent::Text(content));
+        let event = Event::new(self.user_id.clone(), None, self.app_id.clone(), Uuid::new_v4(), EventContent::Text(content));
         self.engine.ingest_event(event).await?;
         println!("   -> ✅ ACCEPTED");
         Ok(true)

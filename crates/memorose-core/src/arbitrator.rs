@@ -40,7 +40,7 @@ impl Arbitrator {
         let combined_prompt = format!("{}\n\nGoal: {}", system_prompt, goal);
         let result = client.generate(&combined_prompt).await?;
 
-        let clean_json = result.trim()
+        let clean_json = result.data.trim()
             .trim_start_matches("```json")
             .trim_start_matches("```")
             .trim_end_matches("```")
@@ -50,7 +50,15 @@ impl Arbitrator {
 
         let mut units = Vec::new();
         for m in milestones {
-            let mut unit = MemoryUnit::new(user_id.to_string(), app_id.to_string(), stream_id, m.summary, None);
+            let mut unit = MemoryUnit::new(
+                user_id.to_string(), 
+                None, // agent_id (topics are factual derivations)
+                app_id.to_string(), 
+                stream_id, 
+                memorose_common::MemoryType::Factual,
+                m.summary, 
+                None
+            );
             unit.level = 2;
             unit.task_metadata = Some(memorose_common::TaskMetadata {
                 status: memorose_common::TaskStatus::Pending,
@@ -68,17 +76,12 @@ impl Arbitrator {
              AppConfig::load().unwrap()
         });
         
-        if let Some(api_key) = config.get_active_key() {
-            let client = GeminiClient::new(
-                api_key,
-                config.get_model_name(),
-                config.get_embedding_model_name(),
-            );
-            Self { llm_client: Some(Arc::new(client)) }
-        } else {
-            tracing::warn!("Arbitrator initialized without API Key. Conflict resolution will be disabled (Pass-through mode).");
-            Self { llm_client: None }
+        let llm_client = crate::llm::create_llm_client(&config.llm);
+        
+        if llm_client.is_none() {
+            tracing::warn!("Arbitrator initialized without API Key or provider. Conflict resolution will be disabled (Pass-through mode).");
         }
+        Self { llm_client }
     }
 
     pub fn with_client(client: Arc<dyn LLMClient>) -> Self {
@@ -127,7 +130,7 @@ impl Arbitrator {
 
         let combined_prompt = format!("{}\n\n{}", system_prompt, user_prompt);
         let result = match client.generate(&combined_prompt).await {
-            Ok(r) => r,
+            Ok(r) => r.data,
             Err(e) => {
                 tracing::warn!("Arbitrator LLM call failed: {:?}. Falling back to pass-through.", e);
                 return Ok(memories);
@@ -182,7 +185,7 @@ impl Arbitrator {
 
         let combined_prompt = format!("{}\n\n{}", system_prompt, user_prompt);
         match client.generate(&combined_prompt).await {
-            Ok(res) => Ok(res),
+            Ok(res) => Ok(res.data),
             Err(e) => {
                 tracing::warn!("Consolidation failed: {:?}. Returning concatenation.", e);
                 Ok(memories.iter().map(|m| m.content.clone()).collect::<Vec<_>>().join("\n"))
@@ -222,7 +225,7 @@ impl Arbitrator {
 
         let combined_prompt = format!("{}\n\n{}", system_prompt, memories_str);
         let result = match client.generate(&combined_prompt).await {
-            Ok(res) => res,
+            Ok(res) => res.data,
             Err(e) => {
                 tracing::error!("LLM generate failed for extract_topics: {:?}", e);
                 return Ok(Vec::new());
@@ -251,7 +254,15 @@ impl Arbitrator {
         
         let mut topic_units = Vec::new();
         for dto in dtos {
-            let mut unit = MemoryUnit::new(user_id.to_string(), app_id.to_string(), stream_id, dto.summary, None);
+            let mut unit = MemoryUnit::new(
+                user_id.to_string(), 
+                None, // agent_id
+                app_id.to_string(), 
+                stream_id, 
+                memorose_common::MemoryType::Factual,
+                dto.summary, 
+                None
+            );
             unit.level = 2; // Level 2: Topic/Insight
 
             // Map source IDs to references
@@ -299,7 +310,7 @@ impl Arbitrator {
 
         let combined_prompt = format!("{}\n\n{}", system_prompt, user_prompt);
         let result = match client.generate(&combined_prompt).await {
-            Ok(res) => res,
+            Ok(res) => res.data,
             Err(_) => return Ok(Vec::new()),
         };
 
@@ -368,7 +379,7 @@ impl Arbitrator {
         let combined_prompt = format!("{}\n\n{}", system_prompt, user_prompt);
         let result = client.generate(&combined_prompt).await?;
 
-        let clean_json = result.trim()
+        let clean_json = result.data.trim()
             .trim_start_matches("```json")
             .trim_start_matches("```")
             .trim_end_matches("```")
@@ -377,7 +388,7 @@ impl Arbitrator {
         let insight: CommunityInsight = serde_json::from_str(clean_json)
             .unwrap_or_else(|_| CommunityInsight {
                 name: "Parsing Error".to_string(),
-                summary: result,
+                summary: result.data,
                 keywords: Vec::new(),
             });
 
@@ -397,26 +408,26 @@ mod tests {
 
     #[async_trait]
     impl LLMClient for MockLLM {
-        async fn generate(&self, _prompt: &str) -> Result<String> {
-            Ok(self.response.clone())
+        async fn generate(&self, _prompt: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse { data: self.response.clone(), usage: Default::default() })
         }
-        async fn embed(&self, _text: &str) -> Result<Vec<f32>> {
-            Ok(vec![0.0; 384])
+        async fn embed(&self, _text: &str) -> Result<crate::llm::LLMResponse<Vec<f32>>> {
+            Ok(crate::llm::LLMResponse { data: vec![0.0; 384], usage: Default::default() })
         }
-        async fn compress(&self, text: &str) -> Result<CompressionOutput> {
-            Ok(CompressionOutput { content: text.to_string(), valid_at: None })
+        async fn compress(&self, text: &str, _is_agent: bool) -> Result<crate::llm::LLMResponse<CompressionOutput>> {
+            Ok(crate::llm::LLMResponse { data: CompressionOutput { content: text.to_string(), valid_at: None }, usage: Default::default() })
         }
-        async fn summarize_group(&self, _texts: Vec<String>) -> Result<String> {
-            Ok(self.response.clone())
+        async fn summarize_group(&self, _texts: Vec<String>) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse { data: self.response.clone(), usage: Default::default() })
         }
-        async fn describe_image(&self, _image_url_or_base64: &str) -> Result<String> {
-            Ok("Description of image".to_string())
+        async fn describe_image(&self, _image_url_or_base64: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse { data: "Description of image".to_string(), usage: Default::default() })
         }
-        async fn describe_video(&self, _video_url: &str) -> Result<String> {
-            Ok("Description of video".to_string())
+        async fn describe_video(&self, _video_url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse { data: "Description of video".to_string(), usage: Default::default() })
         }
-        async fn transcribe(&self, _audio_url_or_base64: &str) -> Result<String> {
-            Ok("Transcription of audio".to_string())
+        async fn transcribe(&self, _audio_url_or_base64: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse { data: "Transcription of audio".to_string(), usage: Default::default() })
         }
     }
 

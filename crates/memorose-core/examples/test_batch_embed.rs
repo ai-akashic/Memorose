@@ -30,7 +30,8 @@ async fn main() {
     let batch_time = start.elapsed();
 
     match batch_result {
-        Ok(embeddings) => {
+        Ok(response) => {
+            let embeddings = response.data;
             println!("✅ Batch embedding succeeded!");
             println!("   - Time: {:?}", batch_time);
             println!("   - Count: {} embeddings", embeddings.len());
@@ -49,7 +50,7 @@ async fn main() {
     let mut individual_results = Vec::new();
     for text in &texts {
         match client.embed(text).await {
-            Ok(emb) => individual_results.push(emb),
+            Ok(emb) => individual_results.push(emb.data),
             Err(e) => {
                 println!("❌ Individual embedding failed: {}", e);
                 return;

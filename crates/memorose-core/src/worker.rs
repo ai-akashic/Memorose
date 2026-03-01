@@ -28,21 +28,11 @@ impl BackgroundWorker {
     }
 
     pub fn with_config(engine: MemoroseEngine, config: AppConfig) -> Self {
-        let llm_client: Option<Arc<dyn LLMClient>> = if let Some(api_key) = config.get_active_key() {
-            let masked_key = if api_key.len() > 5 { format!("{}***", &api_key[..5]) } else { "INVALID".to_string() };
-            tracing::info!("Worker Initializing. Config Key: {}, Model: {}, Embed: {}",
-                masked_key, config.get_model_name(), config.get_embedding_model_name());
-
-            let client = GeminiClient::new(
-                api_key.clone(),
-                config.get_model_name(),
-                config.get_embedding_model_name(),
-            );
-            Some(Arc::new(client))
-        } else {
+        let llm_client = crate::llm::create_llm_client(&config.llm);
+        
+        if llm_client.is_none() {
             tracing::warn!("BackgroundWorker starting without API Key. Summary and Insight features will be disabled/degraded.");
-            None
-        };
+        }
 
         let now = std::time::Instant::now();
         Self {
@@ -272,13 +262,16 @@ impl BackgroundWorker {
                     }
                 }
 
+                let is_agent = metadata.get("role").and_then(|v| v.as_str()) == Some("assistant") 
+                    || metadata.get("agent_id").is_some();
+                    
                 join_set.spawn(async move {
                     // Process Content & Extract Assets
                     let (text_to_process, assets) = match content {
                         memorose_common::EventContent::Text(t) => (t, vec![]),
                         memorose_common::EventContent::Image(url) => {
                             let description = if let Some(client) = llm.as_ref() {
-                                client.describe_image(&url).await.unwrap_or_else(|e| {
+                                client.describe_image(&url).await.map(|r| r.data).unwrap_or_else(|e| {
                                     tracing::warn!("Vision processing failed for {}: {}", event_id, e);
                                     format!("Image asset at {}", url)
                                 })
@@ -295,7 +288,7 @@ impl BackgroundWorker {
                         },
                         memorose_common::EventContent::Audio(url) => {
                             let transcript = if let Some(client) = llm.as_ref() {
-                                client.transcribe(&url).await.unwrap_or_else(|e| {
+                                client.transcribe(&url).await.map(|r| r.data).unwrap_or_else(|e| {
                                     tracing::warn!("STT processing failed for {}: {}", event_id, e);
                                     format!("Audio asset at {}", url)
                                 })
@@ -313,7 +306,7 @@ impl BackgroundWorker {
                         memorose_common::EventContent::Json(val) => (val.to_string(), vec![]),
                         memorose_common::EventContent::Video(url) => {
                             let description = if let Some(client) = llm.as_ref() {
-                                client.describe_video(&url).await.unwrap_or_else(|e| {
+                                client.describe_video(&url).await.map(|r| r.data).unwrap_or_else(|e| {
                                     tracing::warn!("Video processing failed for {}: {}", event_id, e);
                                     format!("Video asset at {}", url)
                                 })
@@ -332,8 +325,8 @@ impl BackgroundWorker {
 
                     // Compression
                     let (summary, valid_at) = match llm.as_ref() {
-                        Some(client) => match client.compress(&text_to_process).await {
-                            Ok(out) => (out.content, out.valid_at),
+                        Some(client) => match client.compress(&text_to_process, is_agent).await {
+                            Ok(out) => (out.data.content, out.data.valid_at),
                             Err(e) => {
                                 tracing::warn!("Compression failed for {}: {:?}", event_id, e);
                                 (text_to_process, None)
@@ -424,12 +417,12 @@ impl BackgroundWorker {
             if let Some(client) = self.llm_client.as_ref() {
                 // ... same embedding logic ...
                 match client.embed_batch(texts_to_embed.clone()).await {
-                    Ok(embs) if embs.len() == needs_embedding.len() => embs,
+                    Ok(embs) if embs.data.len() == needs_embedding.len() => embs.data,
                     _ => {
                         // Fallback
                         let mut embs = Vec::with_capacity(texts_to_embed.len());
                         for text in texts_to_embed {
-                            embs.push(client.embed(&text).await.unwrap_or_default());
+                            embs.push(client.embed(&text).await.map(|r| r.data).unwrap_or_default());
                         }
                         embs
                     }
@@ -458,7 +451,26 @@ impl BackgroundWorker {
                 Some(None) | None => embeddings_by_idx.remove(&idx),
             };
 
-            let mut unit = MemoryUnit::new(user_id, app_id, stream_id, summary, embedding);
+            let is_agent = metadata.get("role").and_then(|v| v.as_str()) == Some("assistant") 
+                || metadata.get("agent_id").is_some();
+            
+            let agent_id = metadata.get("agent_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+            
+            let memory_type = if is_agent {
+                memorose_common::MemoryType::Procedural
+            } else {
+                memorose_common::MemoryType::Factual
+            };
+
+            let mut unit = MemoryUnit::new(
+                user_id, 
+                agent_id,
+                app_id, 
+                stream_id, 
+                memory_type,
+                summary, 
+                embedding
+            );
             unit.valid_time = valid_at.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc)));
             unit.assets = assets;
 
@@ -696,18 +708,18 @@ mod tests {
 
     #[async_trait]
     impl crate::llm::LLMClient for MockLLM {
-        async fn generate(&self, _prompt: &str) -> Result<String> { Ok("mock".into()) }
-        async fn embed(&self, _text: &str) -> Result<Vec<f32>> { Ok(vec![0.0; 384]) }
-        async fn compress(&self, text: &str) -> Result<CompressionOutput> {
+        async fn generate(&self, _prompt: &str) -> Result<crate::llm::LLMResponse<String>> { Ok(crate::llm::LLMResponse::default()) }
+        async fn embed(&self, _text: &str) -> Result<crate::llm::LLMResponse<Vec<f32>>> { Ok(crate::llm::LLMResponse { data: vec![0.0; 384], usage: Default::default() }) }
+        async fn compress(&self, text: &str, _is_agent: bool) -> Result<crate::llm::LLMResponse<CompressionOutput>> {
             if self.fail_compress {
                 return Err(anyhow::anyhow!("LLM Error"));
             }
-            Ok(CompressionOutput { content: text.to_string(), valid_at: None })
+            Ok(crate::llm::LLMResponse { data: CompressionOutput { content: text.to_string(), valid_at: None }, usage: Default::default() })
         }
-        async fn summarize_group(&self, _texts: Vec<String>) -> Result<String> { Ok("summary".into()) }
-        async fn describe_image(&self, _url: &str) -> Result<String> { Ok("image".into()) }
-        async fn describe_video(&self, _url: &str) -> Result<String> { Ok("video".into()) }
-        async fn transcribe(&self, _url: &str) -> Result<String> { Ok("audio".into()) }
+        async fn summarize_group(&self, _texts: Vec<String>) -> Result<crate::llm::LLMResponse<String>> { Ok(crate::llm::LLMResponse { data: "summary".into(), usage: Default::default() }) }
+        async fn describe_image(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> { Ok(crate::llm::LLMResponse { data: "image".into(), usage: Default::default() }) }
+        async fn describe_video(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> { Ok(crate::llm::LLMResponse { data: "video".into(), usage: Default::default() }) }
+        async fn transcribe(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> { Ok(crate::llm::LLMResponse { data: "audio".into(), usage: Default::default() }) }
     }
 
     #[tokio::test]
@@ -718,7 +730,7 @@ mod tests {
         let mut worker = BackgroundWorker::new(engine.clone());
         worker.llm_client = Some(Arc::new(MockLLM { fail_compress: true }));
 
-        let event = Event::new(TEST_USER.into(), TEST_APP.into(), Uuid::new_v4(), EventContent::Text("Hello".into()));
+        let event = Event::new(TEST_USER.into(), None, TEST_APP.into(), Uuid::new_v4(), EventContent::Text("Hello".into()));
         engine.ingest_event_directly(event.clone()).await?;
 
         let processed = worker.run_consolidation_cycle().await?;
@@ -738,7 +750,7 @@ mod tests {
         let mut worker = BackgroundWorker::new(engine.clone());
         worker.llm_client = Some(Arc::new(MockLLM { fail_compress: false }));
 
-        let event = Event::new(TEST_USER.into(), TEST_APP.into(), Uuid::new_v4(), EventContent::Text("Success".into()));
+        let event = Event::new(TEST_USER.into(), None, TEST_APP.into(), Uuid::new_v4(), EventContent::Text("Success".into()));
         engine.ingest_event_directly(event.clone()).await?;
 
         worker.run_consolidation_cycle().await?;
