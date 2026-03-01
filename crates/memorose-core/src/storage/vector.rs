@@ -22,12 +22,12 @@ impl VectorStore {
     pub async fn ensure_table(&self, table_name: &str) -> Result<()> {
         let tables = self.conn.table_names().execute().await?;
         if tables.contains(&table_name.to_string()) {
-            // Check if existing table has user_id column; if not, drop and recreate
+            // Check if existing table has memory_type column; if not, drop and recreate
             let table = self.conn.open_table(table_name).execute().await?;
             let schema = table.schema().await?;
-            let has_user_id = schema.fields().iter().any(|f| f.name() == "user_id");
-            if !has_user_id {
-                tracing::warn!("LanceDB table '{}' missing user_id column, recreating...", table_name);
+            let has_memory_type = schema.fields().iter().any(|f| f.name() == "memory_type");
+            if !has_memory_type {
+                tracing::warn!("LanceDB table '{}' missing memory_type column, recreating...", table_name);
                 self.conn.drop_table(table_name).await?;
             } else {
                 return Ok(());
@@ -37,8 +37,10 @@ impl VectorStore {
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
             Field::new("user_id", DataType::Utf8, false),
+            Field::new("agent_id", DataType::Utf8, true),
             Field::new("app_id", DataType::Utf8, false),
             Field::new("stream_id", DataType::Utf8, false),
+            Field::new("memory_type", DataType::Utf8, false),
             Field::new("content", DataType::Utf8, false),
             Field::new("level", DataType::UInt8, false),
             Field::new("transaction_time", DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())), false),
@@ -66,8 +68,10 @@ impl VectorStore {
 
         let mut ids = Vec::new();
         let mut user_ids = Vec::new();
+        let mut agent_ids: Vec<Option<String>> = Vec::new();
         let mut app_ids = Vec::new();
         let mut stream_ids = Vec::new();
+        let mut memory_types = Vec::new();
         let mut contents = Vec::new();
         let mut levels = Vec::new();
         let mut transaction_times = Vec::new();
@@ -77,8 +81,16 @@ impl VectorStore {
         for unit in &units {
             ids.push(unit.id.to_string());
             user_ids.push(unit.user_id.clone());
+            agent_ids.push(unit.agent_id.clone());
             app_ids.push(unit.app_id.clone());
             stream_ids.push(unit.stream_id.to_string());
+            
+            let m_type = match unit.memory_type {
+                memorose_common::MemoryType::Factual => "factual",
+                memorose_common::MemoryType::Procedural => "procedural",
+            };
+            memory_types.push(m_type.to_string());
+            
             contents.push(unit.content.clone());
             levels.push(unit.level);
             transaction_times.push(unit.transaction_time.timestamp_micros());
@@ -99,8 +111,10 @@ impl VectorStore {
 
         let id_array = Arc::new(StringArray::from(ids));
         let user_id_array = Arc::new(StringArray::from(user_ids));
+        let agent_id_array = Arc::new(StringArray::from(agent_ids));
         let app_id_array = Arc::new(StringArray::from(app_ids));
         let stream_id_array = Arc::new(StringArray::from(stream_ids));
+        let memory_type_array = Arc::new(StringArray::from(memory_types));
         let content_array = Arc::new(StringArray::from(contents));
         let level_array = Arc::new(arrow_array::UInt8Array::from(levels));
         let transaction_time_array = Arc::new(TimestampMicrosecondArray::from(transaction_times).with_timezone("UTC"));
@@ -121,8 +135,10 @@ impl VectorStore {
             vec![
                 id_array as Arc<dyn Array>,
                 user_id_array as Arc<dyn Array>,
+                agent_id_array as Arc<dyn Array>,
                 app_id_array as Arc<dyn Array>,
                 stream_id_array as Arc<dyn Array>,
+                memory_type_array as Arc<dyn Array>,
                 content_array as Arc<dyn Array>,
                 level_array as Arc<dyn Array>,
                 transaction_time_array as Arc<dyn Array>,

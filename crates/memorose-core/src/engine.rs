@@ -129,7 +129,15 @@ impl MemoroseEngine {
         }).await??;
 
         let arbitrator = Arbitrator::new();
-        let reranker = std::sync::Arc::new(WeightedReranker::new());
+        let reranker: Arc<dyn crate::reranker::Reranker> = if let Ok(config) = memorose_common::config::AppConfig::load() {
+            if config.reranker.r#type == memorose_common::config::RerankerType::Http && config.reranker.endpoint.is_some() {
+                Arc::new(crate::reranker::HttpReranker::new(config.reranker.endpoint.unwrap()))
+            } else {
+                Arc::new(crate::reranker::WeightedReranker::new())
+            }
+        } else {
+            Arc::new(crate::reranker::WeightedReranker::new())
+        };
 
         // 初始化查询优化组件
         let query_cache = Arc::new(crate::graph::QueryCache::new(crate::graph::CacheConfig {
@@ -891,6 +899,54 @@ impl MemoroseEngine {
     }
 
     /// Perform hybrid search combining vector similarity and full-text search using Reciprocal Rank Fusion (RRF).
+    pub async fn search_procedural(&self, user_id: &str, app_id: Option<&str>, agent_id: Option<&str>, query_text: &str, vector: &[f32], limit: usize) -> Result<Vec<(MemoryUnit, f32)>> {
+        let mut extra_filter = "memory_type = 'procedural'".to_string();
+        if let Some(aid) = agent_id {
+            extra_filter.push_str(&format!(" AND agent_id = '{}'", aid.replace('\'', "''")));
+        }
+        
+        let vec_filter = self.build_user_filter(user_id, app_id, Some(extra_filter));
+        let vector_future = self.vector.search("memories", vector, limit * 2, vec_filter);
+        
+        // Skip Tantivy full-text for procedural, vector is better for behavior trajectories, or we can use it
+        // Let's stick to vector-only for now, to ensure tight behavioral trajectory matches.
+        let vector_hits = match vector_future.await {
+            Ok(hits) => hits,
+            Err(e) => {
+                if e.to_string().contains("not found") {
+                    Vec::new()
+                } else {
+                    return Err(e);
+                }
+            }
+        };
+
+        if vector_hits.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let candidates_to_fetch: Vec<String> = vector_hits.iter().map(|(id, _)| id.clone()).collect();
+        let mut units: Vec<MemoryUnit> = self.fetch_units(user_id, candidates_to_fetch).await?;
+        
+        // Ensure strictly procedural
+        units.retain(|u| u.memory_type == memorose_common::MemoryType::Procedural);
+
+        let mut seeds = Vec::new();
+        for unit in units {
+            let score = vector_hits.iter()
+                .find(|(id, _)| *id == unit.id.to_string())
+                .map(|(_, s)| *s)
+                .unwrap_or(0.0);
+            seeds.push((unit, score));
+        }
+
+        // We can do chronological trajectory tracking here in the future
+        // For now, rerank and return
+        let final_results = self.reranker.rerank(query_text, &self._kv, seeds).await?;
+        
+        Ok(final_results.into_iter().take(limit).collect())
+    }
+
     pub async fn search_hybrid(&self, user_id: &str, app_id: Option<&str>, query_text: &str, vector: &[f32], limit: usize, enable_arbitration: bool, min_score: Option<f32>, graph_depth: usize, valid_time: Option<TimeRange>, transaction_time: Option<TimeRange>) -> Result<Vec<(MemoryUnit, f32)>> {
         let time_filter = self.build_time_filter(valid_time.clone());
         let vec_filter = self.build_user_filter(user_id, app_id, time_filter);
@@ -965,7 +1021,7 @@ impl MemoroseEngine {
         expanded_units.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // Time and Importance Reranking
-        let final_results = self.reranker.rerank(&self._kv, expanded_units).await?;
+        let final_results = self.reranker.rerank(query_text, &self._kv, expanded_units).await?;
 
         // Default threshold lowered: RRF scores are now normalized to [0,1], and the
         // reranker adds importance (0.2) + recency (0.1) components, so a reasonable
@@ -1854,7 +1910,7 @@ mod tests {
     struct MockReranker;
     #[async_trait::async_trait]
     impl crate::reranker::Reranker for MockReranker {
-        async fn rerank(&self, _store: &KvStore, _candidates: Vec<(MemoryUnit, f32)>) -> Result<Vec<(MemoryUnit, f32)>> {
+        async fn rerank(&self, _query: &str, _store: &KvStore, _candidates: Vec<(MemoryUnit, f32)>) -> Result<Vec<(MemoryUnit, f32)>> {
             Ok(vec![])
         }
         async fn apply_feedback(&self, _store: &KvStore, _c: Vec<String>, _r: Vec<String>) -> Result<()> { Ok(()) }

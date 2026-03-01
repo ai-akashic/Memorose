@@ -149,6 +149,29 @@ pub struct AppConfig {
     pub worker: WorkerConfig,
     #[serde(default)]
     pub sharding: Option<ShardingConfig>,
+    #[serde(default)]
+    pub reranker: RerankerConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RerankerType {
+    Weighted,
+    Http,
+}
+
+impl Default for RerankerType {
+    fn default() -> Self {
+        RerankerType::Weighted
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RerankerConfig {
+    #[serde(default)]
+    pub r#type: RerankerType,
+    #[serde(default)]
+    pub endpoint: Option<String>,
 }
 
 impl Default for LLMConfig {
@@ -223,6 +246,7 @@ impl Default for AppConfig {
             raft: RaftConfig::default(),
             worker: WorkerConfig::default(),
             sharding: None,
+            reranker: RerankerConfig::default(),
         }
     }
 }
