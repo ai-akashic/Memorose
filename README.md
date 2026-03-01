@@ -85,6 +85,12 @@ open http://localhost:3000/dashboard  # Login: admin/admin
 
 *Browse memories, visualize knowledge graphs, and monitor cluster status in real-time*
 
+## 🎬 Demo Video
+
+[![Watch the demo video](https://img.youtube.com/vi/Ndb5_mCMboQ/hqdefault.jpg)](https://www.youtube.com/watch?v=Ndb5_mCMboQ)
+
+[Watch on YouTube](https://www.youtube.com/watch?v=Ndb5_mCMboQ)
+
 ## ⚙️ Configuration
 
 Edit `config.toml` and `.env` for custom settings:
