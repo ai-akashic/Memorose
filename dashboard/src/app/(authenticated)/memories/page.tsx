@@ -389,6 +389,11 @@ function SearchPlayground({ globalUserId }: { globalUserId?: string }) {
           <div key={r.unit.id} className="p-3 rounded-lg bg-background border border-border">
             <div className="flex items-center gap-2 mb-1">
               <LevelBadge level={r.unit.level} />
+              {r.unit.memory_type === "procedural" ? (
+                <Badge variant="outline" className="text-[10px] h-5 px-1.5 text-accent border-accent/30 bg-accent/5">Procedural</Badge>
+              ) : (
+                <Badge variant="outline" className="text-[10px] h-5 px-1.5 text-primary border-primary/30 bg-primary/5">Factual</Badge>
+              )}
               <span className="text-xs font-mono text-muted-foreground">
                 score: {r.score.toFixed(4)}
               </span>
@@ -544,7 +549,16 @@ function MemoryListTab({ userId }: { userId?: string }) {
                     <TableCell>
                       <span className="text-xs font-mono truncate block max-w-[100px]">{m.user_id}</span>
                     </TableCell>
-                    <TableCell className="text-center"><LevelBadge level={m.level} /></TableCell>
+                    <TableCell className="text-center">
+                      <div className="flex flex-col items-center gap-1">
+                        <LevelBadge level={m.level} />
+                        {m.memory_type === "procedural" ? (
+                          <span className="text-[9px] uppercase tracking-wider text-accent">Procedural</span>
+                        ) : m.memory_type === "factual" ? (
+                          <span className="text-[9px] uppercase tracking-wider text-primary">Factual</span>
+                        ) : null}
+                      </div>
+                    </TableCell>
                     <TableCell><ImportanceBar value={m.importance} /></TableCell>
                     <TableCell className="text-center font-mono text-xs">{m.access_count}</TableCell>
                     <TableCell className="text-center font-mono text-xs">{m.reference_count}</TableCell>

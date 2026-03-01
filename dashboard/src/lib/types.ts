@@ -71,7 +71,9 @@ export interface Stats {
 export interface MemoryItem {
   id: string;
   user_id: string;
+  agent_id?: string | null;
   app_id: string;
+  memory_type?: "factual" | "procedural";
   content: string;
   level: number;
   importance: number;
@@ -94,8 +96,10 @@ export interface MemoryListResponse {
 export interface MemoryUnit {
   id: string;
   user_id: string;
+  agent_id: string | null;
   app_id: string;
   stream_id: string;
+  memory_type: "factual" | "procedural";
   content: string;
   keywords: string[];
   importance: number;
