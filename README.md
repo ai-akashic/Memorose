@@ -180,14 +180,12 @@ Full API docs: [docs/API.md](docs/API.md)
 
 ## 🔮 Roadmap
 
-**Completed:** Three-layer architecture • Distributed Raft cluster • Active forgetting • Auto graph construction • Web dashboard
+**Completed:** Three-layer architecture • Distributed Raft cluster • Active forgetting • Auto graph construction • Web dashboard • Multi-Model Provider Support • Dual-Track Memory Pipelines
 
 **In Progress:**
 - Comprehensive benchmarks (HaluMem, PersonaMem, LoCoMo, LongMemEval)
 - Test coverage • Docker/K8s deployment
-- **Multi-Model Provider Support**: Expanding the `LLMClient` trait beyond Gemini to officially support OpenAI (GPT-4o, text-embedding-3), DeepSeek, and local open-source models (vLLM/Ollama) for cost/performance routing.
 - **Token & Cost Optimization**: Advanced prompt packing, semantic deduplication, and caching strategies to minimize LLM token burn during continuous consolidation.
-- **Dual-Track Memory Pipelines**: Architectural separation of `User Memory` (factual profile extraction) and `Agent Memory` (procedural state & trajectory summaries) using isolated namespaces and specialized LLM extraction prompts.
 
 **Future:**
 - **Native Multi-modal Memory**: Seamlessly encode, compress, and retrieve images, audio, and visual screen-states alongside text semantics.

@@ -186,6 +186,58 @@ impl BackgroundWorker {
             })
     }
 
+    async fn extract_text_from_event(event: &memorose_common::Event, llm: Option<&dyn crate::llm::LLMClient>) -> String {
+        match &event.content {
+            memorose_common::EventContent::Text(t) => t.clone(),
+            memorose_common::EventContent::Image(url) => {
+                if let Some(client) = llm {
+                    client.describe_image(url).await.map(|r| r.data).unwrap_or_else(|e| format!("Image at {}", url))
+                } else {
+                    format!("Image at {}", url)
+                }
+            }
+            memorose_common::EventContent::Audio(url) => {
+                if let Some(client) = llm {
+                    client.transcribe(url).await.map(|r| r.data).unwrap_or_else(|e| format!("Audio at {}", url))
+                } else {
+                    format!("Audio at {}", url)
+                }
+            }
+            memorose_common::EventContent::Video(url) => {
+                if let Some(client) = llm {
+                    client.describe_video(url).await.map(|r| r.data).unwrap_or_else(|e| format!("Video at {}", url))
+                } else {
+                    format!("Video at {}", url)
+                }
+            }
+            memorose_common::EventContent::Json(val) => val.to_string(),
+        }
+    }
+
+    fn extract_assets_from_event(event: &memorose_common::Event) -> Vec<memorose_common::Asset> {
+        match &event.content {
+            memorose_common::EventContent::Text(_) | memorose_common::EventContent::Json(_) => vec![],
+            memorose_common::EventContent::Image(url) => vec![memorose_common::Asset {
+                storage_key: url.clone(),
+                original_name: "image".to_string(),
+                asset_type: "image".to_string(),
+                metadata: std::collections::HashMap::new(),
+            }],
+            memorose_common::EventContent::Audio(url) => vec![memorose_common::Asset {
+                storage_key: url.clone(),
+                original_name: "audio".to_string(),
+                asset_type: "audio".to_string(),
+                metadata: std::collections::HashMap::new(),
+            }],
+            memorose_common::EventContent::Video(url) => vec![memorose_common::Asset {
+                storage_key: url.clone(),
+                original_name: "video".to_string(),
+                asset_type: "video".to_string(),
+                metadata: std::collections::HashMap::new(),
+            }],
+        }
+    }
+
     async fn run_consolidation_cycle(&self) -> Result<bool> {
         let batch_size = self.config.consolidation_batch_size.max(1);
         let events = self.engine.fetch_pending_events_limited(batch_size).await?;
@@ -228,9 +280,38 @@ impl BackgroundWorker {
             return Ok(false);
         }
 
+        // 1.5 Batching / Prompt Packing (Group contiguous events)
+        let mut packed_batches: Vec<Vec<memorose_common::Event>> = Vec::new();
+        let mut current_batch: Vec<memorose_common::Event> = Vec::new();
+        let mut current_key: Option<(String, Option<String>)> = None;
+
+        for event in valid_events {
+            let is_agent = event.metadata.get("role").and_then(|v| v.as_str()) == Some("assistant") 
+                || event.metadata.get("agent_id").is_some();
+            let agent_id = if is_agent {
+                event.metadata.get("agent_id").and_then(|v| v.as_str()).map(|s| s.to_string())
+                    .or(Some("default_agent".to_string())) // Fallback to group all raw assistant messages together
+            } else {
+                None
+            };
+            
+            let key = (event.user_id.clone(), agent_id);
+            
+            if Some(&key) != current_key.as_ref() || current_batch.len() >= 10 { // Max 10 events per packed prompt
+                if !current_batch.is_empty() {
+                    packed_batches.push(std::mem::take(&mut current_batch));
+                }
+                current_key = Some(key);
+            }
+            current_batch.push(event);
+        }
+        if !current_batch.is_empty() {
+            packed_batches.push(current_batch);
+        }
+
         tracing::info!(
-            "Consolidating {} events via pipeline (concurrency={})...",
-            valid_events.len(),
+            "Consolidating {} packed event groups via pipeline (concurrency={})...",
+            packed_batches.len(),
             self.config.llm_concurrency
         );
 
@@ -243,14 +324,33 @@ impl BackgroundWorker {
         tokio::spawn(async move {
             let mut join_set = tokio::task::JoinSet::new();
             
-            for event in valid_events {
+            for mut events in packed_batches {
+                if events.is_empty() { continue; }
                 let llm = llm_client_clone.clone();
-                let event_id = event.id;
-                let user_id = event.user_id.clone();
-                let app_id = event.app_id.clone();
-                let stream_id = event.stream_id;
-                let content = event.content.clone();
-                let metadata = event.metadata.clone();
+                
+                // For a packed batch, we will extract the common identifiers from the first event
+                let first_event = events.remove(0);
+                let mut combined_text = format!("Message 1: {}", Self::extract_text_from_event(&first_event, llm.as_deref()).await);
+                
+                // Metadata logic (merge simple fields or keep first)
+                let metadata = first_event.metadata.clone();
+                let user_id = first_event.user_id.clone();
+                let app_id = first_event.app_id.clone();
+                let stream_id = first_event.stream_id;
+                let is_agent = metadata.get("role").and_then(|v| v.as_str()) == Some("assistant") 
+                    || metadata.get("agent_id").is_some();
+                    
+                // We keep all event IDs to mark them as processed later
+                let mut event_ids = vec![first_event.id];
+                
+                let mut assets = Self::extract_assets_from_event(&first_event);
+
+                // Append the rest
+                for (i, evt) in events.into_iter().enumerate() {
+                    combined_text.push_str(&format!("\nMessage {}: {}", i + 2, Self::extract_text_from_event(&evt, llm.as_deref()).await));
+                    event_ids.push(evt.id);
+                    assets.extend(Self::extract_assets_from_event(&evt));
+                }
 
                 // Limit concurrency
                 if join_set.len() >= concurrency_limit {
@@ -262,80 +362,20 @@ impl BackgroundWorker {
                     }
                 }
 
-                let is_agent = metadata.get("role").and_then(|v| v.as_str()) == Some("assistant") 
-                    || metadata.get("agent_id").is_some();
-                    
                 join_set.spawn(async move {
-                    // Process Content & Extract Assets
-                    let (text_to_process, assets) = match content {
-                        memorose_common::EventContent::Text(t) => (t, vec![]),
-                        memorose_common::EventContent::Image(url) => {
-                            let description = if let Some(client) = llm.as_ref() {
-                                client.describe_image(&url).await.map(|r| r.data).unwrap_or_else(|e| {
-                                    tracing::warn!("Vision processing failed for {}: {}", event_id, e);
-                                    format!("Image asset at {}", url)
-                                })
-                            } else {
-                                format!("Image asset at {}", url)
-                            };
-                            let asset = Asset {
-                                storage_key: url.clone(),
-                                original_name: "image".to_string(),
-                                asset_type: "image".to_string(),
-                                metadata: HashMap::new(),
-                            };
-                            (description, vec![asset])
-                        },
-                        memorose_common::EventContent::Audio(url) => {
-                            let transcript = if let Some(client) = llm.as_ref() {
-                                client.transcribe(&url).await.map(|r| r.data).unwrap_or_else(|e| {
-                                    tracing::warn!("STT processing failed for {}: {}", event_id, e);
-                                    format!("Audio asset at {}", url)
-                                })
-                            } else {
-                                format!("Audio asset at {}", url)
-                            };
-                            let asset = Asset {
-                                storage_key: url.clone(),
-                                original_name: "audio".to_string(),
-                                asset_type: "audio".to_string(),
-                                metadata: HashMap::new(),
-                            };
-                            (transcript, vec![asset])
-                        },
-                        memorose_common::EventContent::Json(val) => (val.to_string(), vec![]),
-                        memorose_common::EventContent::Video(url) => {
-                            let description = if let Some(client) = llm.as_ref() {
-                                client.describe_video(&url).await.map(|r| r.data).unwrap_or_else(|e| {
-                                    tracing::warn!("Video processing failed for {}: {}", event_id, e);
-                                    format!("Video asset at {}", url)
-                                })
-                            } else {
-                                format!("Video asset at {}", url)
-                            };
-                            let asset = Asset {
-                                storage_key: url.clone(),
-                                original_name: "video".to_string(),
-                                asset_type: "video".to_string(),
-                                metadata: HashMap::new(),
-                            };
-                            (description, vec![asset])
-                        }
-                    };
-
                     // Compression
                     let (summary, valid_at) = match llm.as_ref() {
-                        Some(client) => match client.compress(&text_to_process, is_agent).await {
+                        Some(client) => match client.compress(&combined_text, is_agent).await {
                             Ok(out) => (out.data.content, out.data.valid_at),
                             Err(e) => {
-                                tracing::warn!("Compression failed for {}: {:?}", event_id, e);
-                                (text_to_process, None)
+                                tracing::warn!("Packed compression failed for {}: {:?}", event_ids[0], e);
+                                (combined_text, None)
                             }
                         },
-                        None => (text_to_process, None),
+                        None => (combined_text, None),
                     };
 
-                    (event_id, user_id, app_id, stream_id, summary, valid_at, assets, metadata)
+                    (event_ids, user_id, app_id, stream_id, summary, valid_at, assets, metadata)
                 });
             }
 
@@ -392,7 +432,7 @@ impl BackgroundWorker {
     /// Helper for pipeline batch processing
     async fn process_pipeline_batch(
         &self, 
-        batch: Vec<(uuid::Uuid, String, String, uuid::Uuid, String, Option<String>, Vec<Asset>, serde_json::Value)>
+        batch: Vec<(Vec<uuid::Uuid>, String, String, uuid::Uuid, String, Option<String>, Vec<Asset>, serde_json::Value)>
     ) -> Result<Vec<String>> {
         if batch.is_empty() { return Ok(Vec::new()); }
 
@@ -400,13 +440,13 @@ impl BackgroundWorker {
         let mut texts_to_embed = Vec::new();
         let mut needs_embedding = Vec::new();
 
-        for (idx, (event_id, _, _, _, summary, _, _, metadata)) in batch.iter().enumerate() {
+        for (idx, (event_ids, _, _, _, summary, _, _, metadata)) in batch.iter().enumerate() {
             match Self::parse_metadata_embedding(metadata) {
                 Some(Some(_)) => continue,
                 Some(None) | None => {}
             }
             if summary.trim().is_empty() {
-                tracing::warn!("Skipping empty summary for event {}", event_id);
+                tracing::warn!("Skipping empty summary for packed events {:?}", event_ids);
                 continue;
             }
             texts_to_embed.push(summary.clone());
@@ -445,7 +485,7 @@ impl BackgroundWorker {
         let mut units_to_store = Vec::new();
         let mut processed_ids = Vec::new();
 
-        for (idx, (event_id, user_id, app_id, stream_id, summary, valid_at, assets, metadata)) in batch.into_iter().enumerate() {
+        for (idx, (event_ids, user_id, app_id, stream_id, summary, valid_at, assets, metadata)) in batch.into_iter().enumerate() {
             let embedding = match Self::parse_metadata_embedding(&metadata) {
                 Some(Some(vec)) => Some(vec),
                 Some(None) | None => embeddings_by_idx.remove(&idx),
@@ -474,6 +514,11 @@ impl BackgroundWorker {
             unit.valid_time = valid_at.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc)));
             unit.assets = assets;
 
+            // Link to all source events
+            for evt_id in &event_ids {
+                unit.references.push(*evt_id);
+            }
+
             // Task Metadata Logic
             if let Some(level) = metadata.get("target_level").and_then(|v| v.as_u64()) {
                 unit.level = level as u8;
@@ -495,7 +540,9 @@ impl BackgroundWorker {
             }
 
             units_to_store.push(unit);
-            processed_ids.push(event_id.to_string());
+            for evt_id in event_ids {
+                processed_ids.push(evt_id.to_string());
+            }
         }
 
         if !units_to_store.is_empty() {
@@ -757,7 +804,7 @@ mod tests {
 
         let l1s = engine.fetch_recent_l1_units(TEST_USER, 10).await?;
         assert_eq!(l1s.len(), 1);
-        assert_eq!(l1s[0].content, "Success");
+        assert_eq!(l1s[0].content, "Message 1: Success");
 
         Ok(())
     }
