@@ -31,8 +31,10 @@ impl TextIndex {
 
         let mut schema_builder = Schema::builder();
         schema_builder.add_text_field("id", STRING | STORED);
+        schema_builder.add_text_field("org_id", STRING | STORED);
         schema_builder.add_text_field("user_id", STRING | STORED);
         schema_builder.add_text_field("app_id", STRING | STORED);
+        schema_builder.add_text_field("agent_id", STRING | STORED);
         schema_builder.add_text_field("content", TEXT | STORED);
         schema_builder.add_text_field("stream_id", STRING);
         schema_builder.add_u64_field("level", INDEXED | STORED);
@@ -113,8 +115,10 @@ impl TextIndex {
     pub fn index_unit(&self, unit: &MemoryUnit) -> Result<()> {
         let schema = self.index.schema();
         let id_field = schema.get_field("id").unwrap();
+        let org_id_field = schema.get_field("org_id").unwrap();
         let user_id_field = schema.get_field("user_id").unwrap();
         let app_id_field = schema.get_field("app_id").unwrap();
+        let agent_id_field = schema.get_field("agent_id").unwrap();
         let content_field = schema.get_field("content").unwrap();
         let stream_field = schema.get_field("stream_id").unwrap();
         let level_field = schema.get_field("level").unwrap();
@@ -123,8 +127,10 @@ impl TextIndex {
 
         let mut doc = tantivy::TantivyDocument::default();
         doc.add_text(id_field, &unit.id.to_string());
+        doc.add_text(org_id_field, unit.org_id.as_deref().unwrap_or(""));
         doc.add_text(user_id_field, &unit.user_id);
         doc.add_text(app_id_field, &unit.app_id);
+        doc.add_text(agent_id_field, unit.agent_id.as_deref().unwrap_or(""));
         doc.add_text(content_field, &unit.content);
         doc.add_text(stream_field, &unit.stream_id.to_string());
         doc.add_u64(level_field, unit.level as u64);
@@ -169,8 +175,8 @@ impl TextIndex {
         Ok(())
     }
 
-    pub fn search(&self, query_str: &str, limit: usize, time_range: Option<memorose_common::TimeRange>, user_id: Option<&str>, app_id: Option<&str>) -> Result<Vec<String>> {
-        self.search_bitemporal(query_str, limit, time_range, None, user_id, app_id)
+    pub fn search(&self, query_str: &str, limit: usize, time_range: Option<memorose_common::TimeRange>, org_id: Option<&str>, user_id: Option<&str>, app_id: Option<&str>) -> Result<Vec<String>> {
+        self.search_bitemporal(query_str, limit, time_range, None, org_id, user_id, app_id, None)
     }
 
     pub fn search_bitemporal(
@@ -179,8 +185,10 @@ impl TextIndex {
         limit: usize,
         valid_time: Option<memorose_common::TimeRange>,
         transaction_time: Option<memorose_common::TimeRange>,
+        org_id: Option<&str>,
         user_id: Option<&str>,
         app_id: Option<&str>,
+        agent_id: Option<&str>,
     ) -> Result<Vec<String>> {
         let searcher = self.reader.searcher();
         let schema = self.index.schema();
@@ -188,13 +196,19 @@ impl TextIndex {
         let id_field = schema.get_field("id").unwrap();
 
         let query_parser = tantivy::query::QueryParser::for_index(&self.index, vec![content_field]);
-        let user_query = query_parser.parse_query(query_str)?;
+        let base_query = query_parser.parse_query(query_str)?;
 
         let mut sub_queries: Vec<(tantivy::query::Occur, Box<dyn tantivy::query::Query>)> = vec![
-            (tantivy::query::Occur::Must, user_query),
+            (tantivy::query::Occur::Must, base_query),
         ];
 
-        // User ID filter
+        if let Some(oid) = org_id {
+            let org_id_field = schema.get_field("org_id").unwrap();
+            let term = tantivy::Term::from_field_text(org_id_field, oid);
+            let term_query = tantivy::query::TermQuery::new(term, tantivy::schema::IndexRecordOption::Basic);
+            sub_queries.push((tantivy::query::Occur::Must, Box::new(term_query)));
+        }
+
         if let Some(uid) = user_id {
             let user_id_field = schema.get_field("user_id").unwrap();
             let term = tantivy::Term::from_field_text(user_id_field, uid);
@@ -202,10 +216,16 @@ impl TextIndex {
             sub_queries.push((tantivy::query::Occur::Must, Box::new(term_query)));
         }
 
-        // App ID filter
         if let Some(aid) = app_id {
             let app_id_field = schema.get_field("app_id").unwrap();
             let term = tantivy::Term::from_field_text(app_id_field, aid);
+            let term_query = tantivy::query::TermQuery::new(term, tantivy::schema::IndexRecordOption::Basic);
+            sub_queries.push((tantivy::query::Occur::Must, Box::new(term_query)));
+        }
+
+        if let Some(agid) = agent_id {
+            let agent_id_field = schema.get_field("agent_id").unwrap();
+            let term = tantivy::Term::from_field_text(agent_id_field, agid);
             let term_query = tantivy::query::TermQuery::new(term, tantivy::schema::IndexRecordOption::Basic);
             sub_queries.push((tantivy::query::Occur::Must, Box::new(term_query)));
         }
@@ -258,14 +278,14 @@ mod tests {
             let index = TextIndex::new(temp_dir.path(), 1000)?;
 
             let stream_id = Uuid::new_v4();
-            let unit = MemoryUnit::new("u1".into(), None, "a1".into(), stream_id, memorose_common::MemoryType::Factual, "The quick brown fox jumps".to_string(), None);
+            let unit = MemoryUnit::new(None, "u1".into(), None, "a1".into(), stream_id, memorose_common::MemoryType::Factual, "The quick brown fox jumps".to_string(), None);
 
             index.index_unit(&unit)?;
 
             index.commit()?;
             index.reload()?;
 
-            let results = index.search("fox", 10, None, None, None)?;
+            let results = index.search("fox", 10, None, None, None, None)?;
 
             assert!(!results.is_empty());
             assert_eq!(results[0], unit.id.to_string());

@@ -2,11 +2,12 @@
 
 import { useState, useCallback, useEffect, useMemo } from "react";
 import dynamic from "next/dynamic";
-import { useMemories, useGraph } from "@/lib/hooks";
+import { useMemories, useGraph, useAgents, useTaskTree } from "@/lib/hooks";
 import { useUserFilter } from "../layout";
 import { api } from "@/lib/api";
 import { truncate, formatNumber } from "@/lib/utils";
 import type { MemoryUnit, SearchResult, GraphData } from "@/lib/types";
+import { TaskTreeViewer } from "@/components/TaskTreeViewer";
 import {
   Search,
   ChevronLeft,
@@ -15,6 +16,7 @@ import {
   Network,
   Brain,
   List,
+  CheckSquare,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -337,17 +339,20 @@ function SearchPlayground({ globalUserId }: { globalUserId?: string }) {
 
   return (
     <div>
-      <form onSubmit={handleSearch} className="space-y-2 mb-4">
+      <form onSubmit={handleSearch} className="space-y-2.5 mb-5">
         <div className="flex gap-2">
-          <Input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="flex-1"
-            placeholder="Search memories..."
-          />
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/50 pointer-events-none" />
+            <Input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="pl-9 bg-white/5 border-white/10 focus:border-primary/40"
+              placeholder="Search memories…"
+            />
+          </div>
           <Select value={mode} onValueChange={setMode}>
-            <SelectTrigger className="w-[120px]">
+            <SelectTrigger className="w-[120px] bg-white/5 border-white/10">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -356,7 +361,7 @@ function SearchPlayground({ globalUserId }: { globalUserId?: string }) {
               <SelectItem value="vector">Vector</SelectItem>
             </SelectContent>
           </Select>
-          <Button type="submit" disabled={loading} size="icon">
+          <Button type="submit" disabled={loading} size="icon" className="shrink-0">
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
           </Button>
         </div>
@@ -365,40 +370,40 @@ function SearchPlayground({ globalUserId }: { globalUserId?: string }) {
             type="text"
             value={searchUserId}
             onChange={(e) => setSearchUserId(e.target.value)}
-            placeholder="user_id"
-            className="flex-1 h-7 text-xs"
+            placeholder="user_id (optional)"
+            className="flex-1 h-8 text-xs font-mono bg-white/5 border-white/10 focus:border-primary/40 placeholder:text-muted-foreground/30"
           />
           <Input
             type="text"
             value={appId}
             onChange={(e) => setAppId(e.target.value)}
-            placeholder="app_id"
-            className="flex-1 h-7 text-xs"
+            placeholder="app_id (optional)"
+            className="flex-1 h-8 text-xs font-mono bg-white/5 border-white/10 focus:border-primary/40 placeholder:text-muted-foreground/30"
           />
         </div>
       </form>
 
       {queryTime !== null && (
-        <p className="text-xs text-muted-foreground mb-3">
-          {results.length} results in {queryTime}ms
+        <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 font-semibold mb-3">
+          {results.length} results &middot; {queryTime.toFixed(1)}ms
         </p>
       )}
 
-      <div className="space-y-2 max-h-[350px] overflow-y-auto">
+      <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
         {results.map((r) => (
-          <div key={r.unit.id} className="p-3 rounded-lg bg-background border border-border">
-            <div className="flex items-center gap-2 mb-1">
+          <div key={r.unit.id} className="p-3 rounded-xl glass-card border border-white/[0.06] hover:border-primary/20 transition-all duration-200">
+            <div className="flex items-center gap-2 mb-1.5">
               <LevelBadge level={r.unit.level} />
               {r.unit.memory_type === "procedural" ? (
                 <Badge variant="outline" className="text-[10px] h-5 px-1.5 text-accent border-accent/30 bg-accent/5">Procedural</Badge>
               ) : (
                 <Badge variant="outline" className="text-[10px] h-5 px-1.5 text-primary border-primary/30 bg-primary/5">Factual</Badge>
               )}
-              <span className="text-xs font-mono text-muted-foreground">
-                score: {r.score.toFixed(4)}
+              <span className="ml-auto text-[10px] font-mono text-muted-foreground/50">
+                {(r.score * 100).toFixed(1)}%
               </span>
             </div>
-            <p className="text-sm">{truncate(r.unit.content, 200)}</p>
+            <p className="text-sm leading-relaxed">{truncate(r.unit.content, 200)}</p>
           </div>
         ))}
       </div>
@@ -448,11 +453,14 @@ function MemoryContent({ content }: { content: string }) {
 
 function MemoryListTab({ userId }: { userId?: string }) {
   const [levelFilter, setLevelFilter] = useState<string>("all");
+  const [agentId, setAgentId] = useState<string>("all");
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState("importance");
   const [selectedMemory, setSelectedMemory] = useState<MemoryUnit | null>(null);
 
+  const { data: agentsData } = useAgents();
   const parsedLevel = levelFilter === "all" ? undefined : Number(levelFilter);
+  const parsedAgentId = agentId === "all" ? undefined : agentId;
 
   const { data: memories, isLoading } = useMemories({
     level: parsedLevel,
@@ -460,6 +468,7 @@ function MemoryListTab({ userId }: { userId?: string }) {
     limit: 20,
     sort,
     user_id: userId,
+    agent_id: parsedAgentId,
   });
 
   const handleViewDetail = useCallback(async (id: string) => {
@@ -486,6 +495,18 @@ function MemoryListTab({ userId }: { userId?: string }) {
           <ToggleGroupItem value="2" aria-label="Level 2">L2</ToggleGroupItem>
         </ToggleGroup>
 
+        <Select value={agentId} onValueChange={(v) => { setAgentId(v); setPage(1); }}>
+          <SelectTrigger className="w-[180px]">
+            <SelectValue placeholder="All Agents" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Agents</SelectItem>
+            {agentsData?.agents.map((a) => (
+              <SelectItem key={a.agent_id} value={a.agent_id}>{a.agent_id}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
         <Select value={sort} onValueChange={setSort}>
           <SelectTrigger className="w-[180px]">
             <SelectValue />
@@ -504,6 +525,7 @@ function MemoryListTab({ userId }: { userId?: string }) {
           <TableHeader>
             <TableRow className="bg-muted/20 hover:bg-muted/20">
               <TableHead className="text-xs w-24">User</TableHead>
+              <TableHead className="text-xs w-24">Agent</TableHead>
               <TableHead className="text-xs text-center w-14">Level</TableHead>
               <TableHead className="text-xs w-28">Importance</TableHead>
               <TableHead className="text-xs text-center w-16">Access</TableHead>
@@ -515,14 +537,14 @@ function MemoryListTab({ userId }: { userId?: string }) {
             {isLoading ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
-                  <TableCell colSpan={6}>
+                  <TableCell colSpan={7}>
                     <Skeleton className="h-4 w-full" />
                   </TableCell>
                 </TableRow>
               ))
             ) : memories?.items.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                   No memories found
                 </TableCell>
               </TableRow>
@@ -548,6 +570,13 @@ function MemoryListTab({ userId }: { userId?: string }) {
                   >
                     <TableCell>
                       <span className="text-xs font-mono truncate block max-w-[100px]">{m.user_id}</span>
+                    </TableCell>
+                    <TableCell>
+                      {m.agent_id ? (
+                        <Badge variant="outline" className="text-[10px] h-5 px-1.5 font-mono">{m.agent_id}</Badge>
+                      ) : (
+                        <span className="text-xs text-muted-foreground/50">—</span>
+                      )}
                     </TableCell>
                     <TableCell className="text-center">
                       <div className="flex flex-col items-center gap-1">
@@ -617,25 +646,53 @@ function MemoryListTab({ userId }: { userId?: string }) {
   );
 }
 
+function TasksTab({ userId }: { userId?: string }) {
+  const { data: trees, isLoading, error } = useTaskTree(userId);
+  
+  if (!userId || userId === "all") {
+    return (
+      <div className="flex flex-col items-center justify-center p-8 text-center text-muted-foreground border rounded-lg bg-muted/5 border-dashed mt-4">
+        <p>Please select a specific user from the top navigation to view their task trees.</p>
+      </div>
+    );
+  }
+
+  if (isLoading) return <div className="p-4 text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading tasks...</div>;
+  if (error) return <div className="p-4 text-sm text-red-500 border border-red-200 bg-red-50/50 rounded-lg">Error loading tasks: {error.message}</div>;
+
+  return (
+    <div className="flex-1 overflow-auto pr-2 mt-4">
+      <TaskTreeViewer trees={trees || []} />
+    </div>
+  );
+}
+
 export default function MemoriesPage() {
   const { userId } = useUserFilter();
 
   return (
-    <div className="space-y-6 h-full flex flex-col">
+    <div className="space-y-6 h-full flex flex-col relative">
+      <div className="absolute top-0 right-0 w-[500px] h-[250px] blob-bg opacity-20 pointer-events-none -z-10 mix-blend-screen" />
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Memory Explorer</h1>
+        <h1 className="text-3xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-b from-white to-white/60">
+          Memory Explorer
+        </h1>
+        <p className="text-muted-foreground mt-1 text-sm">Browse, search and visualise the memory graph</p>
       </div>
 
       <Tabs defaultValue="list" className="flex-1 flex flex-col min-h-0">
-        <TabsList className="bg-muted/30 self-start">
-          <TabsTrigger value="list" className="gap-1.5">
+        <TabsList className="bg-white/[0.04] border border-white/[0.06] self-start">
+          <TabsTrigger value="list" className="gap-1.5 text-xs">
             <List className="w-3.5 h-3.5" /> List
           </TabsTrigger>
-          <TabsTrigger value="graph" className="gap-1.5">
+          <TabsTrigger value="graph" className="gap-1.5 text-xs">
             <Network className="w-3.5 h-3.5" /> Graph
           </TabsTrigger>
-          <TabsTrigger value="search" className="gap-1.5">
+          <TabsTrigger value="search" className="gap-1.5 text-xs">
             <Search className="w-3.5 h-3.5" /> Search
+          </TabsTrigger>
+          <TabsTrigger value="tasks" className="gap-1.5 text-xs">
+            <CheckSquare className="w-3.5 h-3.5" /> Tasks
           </TabsTrigger>
         </TabsList>
 
@@ -647,6 +704,9 @@ export default function MemoriesPage() {
         </TabsContent>
         <TabsContent value="search" className="flex-1 mt-4">
           <SearchPlayground globalUserId={userId || undefined} />
+        </TabsContent>
+        <TabsContent value="tasks" className="flex-1 mt-0">
+          <TasksTab userId={userId || undefined} />
         </TabsContent>
       </Tabs>
     </div>

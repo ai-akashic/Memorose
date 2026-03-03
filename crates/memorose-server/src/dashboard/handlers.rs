@@ -234,6 +234,8 @@ pub async fn cluster_status(
 #[derive(Deserialize)]
 pub struct StatsQuery {
     #[serde(default)]
+    org_id: Option<String>,
+    #[serde(default)]
     user_id: Option<String>,
 }
 
@@ -291,6 +293,9 @@ pub async fn stats(
             }
         };
 
+        let uid_filter = user_id_filter.clone();
+        let org_filter = params.org_id.clone();
+
         let scan_result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             let kv = engine.kv();
 
@@ -298,7 +303,13 @@ pub async fn stats(
 
             let (event_count, units, l1_count, l2_count) = if let Some(ref uid) = uid_filter {
                 let event_prefix = format!("u:{}:event:", uid);
-                let event_count = kv.scan(event_prefix.as_bytes())?.len();
+                let event_count = kv.scan(event_prefix.as_bytes())?.into_iter().filter(|(_, val)| {
+                    if let Ok(event) = serde_json::from_slice::<MemoryEvent>(val) {
+                        org_filter.is_none() || event.org_id == org_filter
+                    } else {
+                        false
+                    }
+                }).count();
 
                 let unit_prefix = format!("u:{}:unit:", uid);
                 let unit_pairs = kv.scan(unit_prefix.as_bytes())?;
@@ -307,11 +318,13 @@ pub async fn stats(
                 let mut l2_count = 0usize;
                 for (_, val) in &unit_pairs {
                     if let Ok(unit) = serde_json::from_slice::<MemoryUnit>(val) {
-                        total_units += 1;
-                        match unit.level {
-                            1 => l1_count += 1,
-                            2 => l2_count += 1,
-                            _ => {}
+                        if org_filter.is_none() || unit.org_id == org_filter {
+                            total_units += 1;
+                            match unit.level {
+                                1 => l1_count += 1,
+                                2 => l2_count += 1,
+                                _ => {}
+                            }
                         }
                     }
                 }
@@ -325,14 +338,20 @@ pub async fn stats(
                 let mut l2_count = 0usize;
                 for (k, val) in &all_pairs {
                     if k.windows(7).any(|w| w == b":event:") {
-                        event_count += 1;
+                        if let Ok(event) = serde_json::from_slice::<MemoryEvent>(val) {
+                            if org_filter.is_none() || event.org_id == org_filter {
+                                event_count += 1;
+                            }
+                        }
                     } else if k.windows(6).any(|w| w == b":unit:") {
                         if let Ok(unit) = serde_json::from_slice::<MemoryUnit>(val) {
-                            total_units += 1;
-                            match unit.level {
-                                1 => l1_count += 1,
-                                2 => l2_count += 1,
-                                _ => {}
+                            if org_filter.is_none() || unit.org_id == org_filter {
+                                total_units += 1;
+                                match unit.level {
+                                    1 => l1_count += 1,
+                                    2 => l2_count += 1,
+                                    _ => {}
+                                }
                             }
                         }
                     }
@@ -386,7 +405,11 @@ pub struct ListMemoriesQuery {
     #[serde(default = "default_sort")]
     sort: String,
     #[serde(default)]
+    org_id: Option<String>,
+    #[serde(default)]
     user_id: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
 }
 
 fn default_page() -> usize { 1 }
@@ -396,8 +419,10 @@ fn default_sort() -> String { "importance".to_string() }
 #[derive(Clone)]
 struct DashboardMemoryRow {
     id: String,
+    org_id: Option<String>,
     user_id: String,
     app_id: String,
+    agent_id: Option<String>,
     content: String,
     level: u8,
     importance: f32,
@@ -426,7 +451,9 @@ pub async fn list_memories(
 ) -> axum::response::Response {
     let level_filter = params.level;
     let sort = params.sort.clone();
+    let org_id_filter = params.org_id.clone();
     let user_id_filter = params.user_id.clone();
+    let agent_id_filter = params.agent_id.clone();
     let include_events = level_filter.map_or(true, |l| l == 0);
     let include_units = level_filter.map_or(true, |l| l > 0);
 
@@ -449,6 +476,8 @@ pub async fn list_memories(
 
         if include_units {
             let uid_filter = user_id_filter.clone();
+            let agent_filter = agent_id_filter.clone();
+            let org_filter = org_id_filter.clone();
             let level_filter_for_units = level_filter;
             let units_result = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<DashboardMemoryRow>> {
                 let kv = engine.kv();
@@ -470,10 +499,26 @@ pub async fn list_memories(
                     })
                     .filter_map(|(_, val)| serde_json::from_slice::<MemoryUnit>(&val).ok())
                     .filter(|u| level_filter_for_units.map_or(true, |l| u.level == l))
+                    .filter(|u| {
+                        if let Some(ref aid) = agent_filter {
+                            u.agent_id.as_deref() == Some(aid.as_str())
+                        } else {
+                            true
+                        }
+                    })
+                    .filter(|u| {
+                        if let Some(ref oid) = org_filter {
+                            u.org_id.as_deref() == Some(oid.as_str())
+                        } else {
+                            true
+                        }
+                    })
                     .map(|u| DashboardMemoryRow {
                         id: u.id.to_string(),
+                        org_id: u.org_id,
                         user_id: u.user_id,
                         app_id: u.app_id,
+                        agent_id: u.agent_id,
                         content: u.content,
                         level: u.level,
                         importance: u.importance,
@@ -499,6 +544,7 @@ pub async fn list_memories(
         if include_events {
             let engine = shard.engine.clone();
             let uid_filter = user_id_filter.clone();
+            let org_filter = org_id_filter.clone();
             let events_result = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<DashboardMemoryRow>> {
                 let kv = engine.kv();
                 let prefix = if let Some(ref uid) = uid_filter {
@@ -518,12 +564,21 @@ pub async fn list_memories(
                         }
                     })
                     .filter_map(|(_, val)| serde_json::from_slice::<MemoryEvent>(&val).ok())
+                    .filter(|e| {
+                        if let Some(ref oid) = org_filter {
+                            e.org_id.as_deref() == Some(oid.as_str())
+                        } else {
+                            true
+                        }
+                    })
                     .map(|event| {
                         let (content, has_assets) = event_content_preview(&event.content);
                         DashboardMemoryRow {
                             id: event.id.to_string(),
+                            org_id: event.org_id,
                             user_id: event.user_id,
                             app_id: event.app_id,
+                            agent_id: event.agent_id,
                             content,
                             level: 0,
                             importance: 0.0,
@@ -567,8 +622,10 @@ pub async fn list_memories(
         .take(limit)
         .map(|row| serde_json::json!({
             "id": row.id,
+            "org_id": row.org_id,
             "user_id": row.user_id,
             "app_id": row.app_id,
+            "agent_id": row.agent_id,
             "content": row.content,
             "level": row.level,
             "importance": row.importance,
@@ -786,6 +843,8 @@ pub struct SearchRequest {
     user_id: Option<String>,
     #[serde(default)]
     app_id: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
 }
 
 fn default_search_mode() -> String { "hybrid".to_string() }
@@ -799,6 +858,7 @@ pub async fn search(
     let start = std::time::Instant::now();
     let user_id = payload.user_id.as_deref().unwrap_or("_legacy");
     let app_id = payload.app_id.as_deref();
+    let agent_id = payload.agent_id.as_deref();
 
     // Route to the correct shard for this user
     let shard = state.shard_manager.shard_for_user(user_id);
@@ -851,6 +911,7 @@ pub async fn search(
                     match shard.engine.search_hybrid(
                         user_id,
                         app_id,
+                        agent_id,
                         &payload.query,
                         &embedding.data,
                         limit,
@@ -983,6 +1044,7 @@ pub async fn chat(
                 match shard.engine.search_hybrid(
                     &user_id,
                     Some(&app_id),
+                    None,
                     &message,
                     &embedding.data,
                     context_limit,
@@ -1414,6 +1476,269 @@ pub async fn get_app_stats(
             "l1_generation_rate": l1_generation_rate,
             "l2_generation_rate": l2_generation_rate,
         },
+    });
+
+    state.dashboard_cache.insert(cache_key, result.clone()).await;
+
+    Json(result).into_response()
+}
+
+// ── Agents ────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+pub struct AgentSummary {
+    agent_id: String,
+    total_memories: usize,
+    l1_count: usize,
+    l2_count: usize,
+    total_events: usize,
+    last_activity: Option<i64>,
+}
+
+pub async fn list_agents(
+    State(state): State<Arc<crate::AppState>>,
+) -> axum::response::Response {
+    let cache_key = "agents:list".to_string();
+    if let Some(cached) = state.dashboard_cache.get(&cache_key).await {
+        return Json(cached).into_response();
+    }
+
+    let mut agent_data: HashMap<String, AgentSummary> = HashMap::new();
+
+    for (_, shard) in state.shard_manager.all_shards() {
+        let engine = shard.engine.clone();
+
+        let scan_result = tokio::task::spawn_blocking(move || -> anyhow::Result<HashMap<String, AgentSummary>> {
+            let kv = engine.kv();
+            let mut local_agents: HashMap<String, AgentSummary> = HashMap::new();
+
+            let all_pairs = kv.scan(b"u:")?;
+
+            // Scan memory units grouped by agent_id
+            for (k, val) in &all_pairs {
+                if k.windows(6).any(|w| w == b":unit:") {
+                    if let Ok(unit) = serde_json::from_slice::<MemoryUnit>(val) {
+                        if let Some(ref aid) = unit.agent_id {
+                            if aid.is_empty() { continue; }
+                            let entry = local_agents.entry(aid.clone()).or_insert_with(|| AgentSummary {
+                                agent_id: aid.clone(),
+                                total_memories: 0,
+                                l1_count: 0,
+                                l2_count: 0,
+                                total_events: 0,
+                                last_activity: None,
+                            });
+                            entry.total_memories += 1;
+                            match unit.level {
+                                1 => entry.l1_count += 1,
+                                2 => entry.l2_count += 1,
+                                _ => {}
+                            }
+                            let ts = unit.transaction_time.timestamp();
+                            if entry.last_activity.is_none() || entry.last_activity < Some(ts) {
+                                entry.last_activity = Some(ts);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Count events per agent_id
+            for (k, val) in &all_pairs {
+                if k.windows(7).any(|w| w == b":event:") {
+                    if let Ok(event) = serde_json::from_slice::<memorose_common::Event>(val) {
+                        if let Some(ref aid) = event.agent_id {
+                            if aid.is_empty() { continue; }
+                            if let Some(entry) = local_agents.get_mut(aid) {
+                                entry.total_events += 1;
+                            } else {
+                                local_agents.insert(aid.clone(), AgentSummary {
+                                    agent_id: aid.clone(),
+                                    total_memories: 0,
+                                    l1_count: 0,
+                                    l2_count: 0,
+                                    total_events: 1,
+                                    last_activity: Some(event.transaction_time.timestamp()),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            Ok(local_agents)
+        }).await;
+
+        if let Ok(Ok(shard_agents)) = scan_result {
+            for (aid, summary) in shard_agents {
+                let entry = agent_data.entry(aid).or_insert_with(|| AgentSummary {
+                    agent_id: summary.agent_id,
+                    total_memories: 0,
+                    l1_count: 0,
+                    l2_count: 0,
+                    total_events: 0,
+                    last_activity: None,
+                });
+                entry.total_memories += summary.total_memories;
+                entry.l1_count += summary.l1_count;
+                entry.l2_count += summary.l2_count;
+                entry.total_events += summary.total_events;
+                if entry.last_activity.is_none() || (summary.last_activity.is_some() && entry.last_activity < summary.last_activity) {
+                    entry.last_activity = summary.last_activity;
+                }
+            }
+        }
+    }
+
+    let mut agents: Vec<AgentSummary> = agent_data.into_values().collect();
+    agents.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
+
+    let total_count = agents.len();
+    let result = serde_json::json!({
+        "agents": agents,
+        "total_count": total_count,
+    });
+
+    state.dashboard_cache.insert(cache_key, result.clone()).await;
+
+    Json(result).into_response()
+}
+
+pub async fn get_agent_stats(
+    State(state): State<Arc<crate::AppState>>,
+    Path(agent_id): Path<String>,
+) -> axum::response::Response {
+    let cache_key = format!("agents:stats:{}", agent_id);
+    if let Some(cached) = state.dashboard_cache.get(&cache_key).await {
+        return Json(cached).into_response();
+    }
+
+    let mut total_events = 0usize;
+    let mut total_memories = 0usize;
+    let mut l1_count = 0usize;
+    let mut l2_count = 0usize;
+    let mut user_activities: HashMap<String, UserActivity> = HashMap::new();
+    let mut recent_activities: Vec<ActivityLog> = Vec::new();
+    let mut total_storage_bytes = 0usize;
+
+    for (_, shard) in state.shard_manager.all_shards() {
+        let engine = shard.engine.clone();
+        let agent_id_clone = agent_id.clone();
+
+        let scan_result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+            let kv = engine.kv();
+            let mut local_events = 0usize;
+            let mut local_memories = 0usize;
+            let mut local_l1 = 0usize;
+            let mut local_l2 = 0usize;
+            let mut local_users: HashMap<String, UserActivity> = HashMap::new();
+            let mut local_activities: Vec<ActivityLog> = Vec::new();
+            let mut local_storage = 0usize;
+
+            let all_pairs = kv.scan(b"u:")?;
+
+            for (k, val) in &all_pairs {
+                if k.windows(7).any(|w| w == b":event:") {
+                    if let Ok(event) = serde_json::from_slice::<memorose_common::Event>(val) {
+                        if event.agent_id.as_deref() == Some(agent_id_clone.as_str()) {
+                            local_events += 1;
+                            local_storage += val.len();
+                            let user_entry = local_users.entry(event.user_id.clone()).or_insert_with(|| UserActivity {
+                                user_id: event.user_id.clone(),
+                                event_count: 0,
+                                memory_count: 0,
+                                last_activity: None,
+                            });
+                            user_entry.event_count += 1;
+                            let event_ts = event.transaction_time.timestamp();
+                            if user_entry.last_activity.is_none() || user_entry.last_activity < Some(event_ts) {
+                                user_entry.last_activity = Some(event_ts);
+                            }
+                            if local_activities.len() < 100 {
+                                local_activities.push(ActivityLog {
+                                    timestamp: event.transaction_time.timestamp(),
+                                    user_id: event.user_id.clone(),
+                                    event_type: match &event.content {
+                                        EventContent::Text(_) => "text".to_string(),
+                                        EventContent::Image(_) => "image".to_string(),
+                                        EventContent::Audio(_) => "audio".to_string(),
+                                        EventContent::Video(_) => "video".to_string(),
+                                        EventContent::Json(_) => "json".to_string(),
+                                    },
+                                    stream_id: event.stream_id.to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            for (k, val) in &all_pairs {
+                if k.windows(6).any(|w| w == b":unit:") {
+                    if let Ok(unit) = serde_json::from_slice::<MemoryUnit>(val) {
+                        if unit.agent_id.as_deref() == Some(agent_id_clone.as_str()) {
+                            local_memories += 1;
+                            local_storage += val.len();
+                            match unit.level {
+                                1 => local_l1 += 1,
+                                2 => local_l2 += 1,
+                                _ => {}
+                            }
+                            if let Some(user_entry) = local_users.get_mut(&unit.user_id) {
+                                user_entry.memory_count += 1;
+                            } else {
+                                local_users.insert(unit.user_id.clone(), UserActivity {
+                                    user_id: unit.user_id.clone(),
+                                    event_count: 0,
+                                    memory_count: 1,
+                                    last_activity: Some(unit.transaction_time.timestamp()),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            Ok((local_events, local_memories, local_l1, local_l2, local_users, local_activities, local_storage))
+        }).await;
+
+        if let Ok(Ok((events, memories, l1, l2, users, activities, storage))) = scan_result {
+            total_events += events;
+            total_memories += memories;
+            l1_count += l1;
+            l2_count += l2;
+            total_storage_bytes += storage;
+            for (uid, activity) in users {
+                let entry = user_activities.entry(uid).or_insert_with(|| activity.clone());
+                entry.event_count += activity.event_count;
+                entry.memory_count += activity.memory_count;
+                if entry.last_activity.is_none() || (activity.last_activity.is_some() && entry.last_activity < activity.last_activity) {
+                    entry.last_activity = activity.last_activity;
+                }
+            }
+            recent_activities.extend(activities);
+        }
+    }
+
+    recent_activities.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    recent_activities.truncate(50);
+
+    let total_users = user_activities.len();
+    let mut users_vec: Vec<UserActivity> = user_activities.into_values().collect();
+    users_vec.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
+
+    let result = serde_json::json!({
+        "agent_id": agent_id,
+        "overview": {
+            "total_events": total_events,
+            "total_users": total_users,
+            "total_memories": total_memories,
+            "l1_count": l1_count,
+            "l2_count": l2_count,
+            "total_storage_bytes": total_storage_bytes,
+        },
+        "users": users_vec,
+        "recent_activity": recent_activities,
     });
 
     state.dashboard_cache.insert(cache_key, result.clone()).await;

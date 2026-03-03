@@ -12,6 +12,9 @@ import {
   ChevronLeft,
   MessageSquare,
   Package,
+  Bot,
+  CheckSquare,
+  UserRound,
 } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
@@ -24,6 +27,7 @@ import {
 } from "@/components/ui/tooltip";
 import { CommandPalette } from "@/components/CommandPalette";
 import { MemoroseLogo } from "@/components/haku-logo";
+import { Input } from "@/components/ui/input";
 import { motion } from "framer-motion";
 
 const UserFilterContext = createContext<{
@@ -40,6 +44,8 @@ const navItems = [
   { href: "/memories/", label: "Memories", icon: Database },
   { href: "/playground/", label: "Playground", icon: MessageSquare },
   { href: "/apps/", label: "Apps", icon: Package },
+  { href: "/agents/", label: "Agents", icon: Bot },
+  { href: "/tasks/", label: "Tasks", icon: CheckSquare },
   { href: "/metrics/", label: "Metrics", icon: BarChart3 },
   { href: "/settings/", label: "Settings", icon: Settings },
 ];
@@ -144,6 +150,34 @@ export default function AuthenticatedLayout({
                 return link;
               })}
             </nav>
+
+            <div className="border-t border-white/5 px-3 py-2.5">
+              {collapsed ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="flex justify-center py-1 cursor-default">
+                      <UserRound className={cn("w-4 h-4 shrink-0", userId ? "text-primary opacity-90" : "text-muted-foreground/50")} />
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="right" className="text-xs border-white/10 glass-card bg-black/80">
+                    {userId || "No user filter"}
+                  </TooltipContent>
+                </Tooltip>
+              ) : (
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-1.5 px-1">
+                    <UserRound className="w-3 h-3 text-muted-foreground/50" />
+                    <span className="text-[10px] uppercase tracking-widest text-muted-foreground/50 font-semibold">User Filter</span>
+                  </div>
+                  <Input
+                    value={userId}
+                    onChange={(e) => setUserId(e.target.value)}
+                    placeholder="user_id…"
+                    className="h-7 text-xs font-mono bg-white/5 border-white/10 focus:border-primary/40 placeholder:text-muted-foreground/30"
+                  />
+                </div>
+              )}
+            </div>
 
             <div className="border-t border-white/5 p-3 space-y-1 bg-black/20">
               <Button

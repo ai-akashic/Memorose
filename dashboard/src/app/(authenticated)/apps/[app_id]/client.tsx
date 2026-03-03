@@ -1,6 +1,5 @@
 "use client";
 
-import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -16,39 +15,9 @@ import {
   Zap,
 } from "lucide-react";
 import { formatNumber } from "@/lib/utils";
-import { getToken } from "@/lib/auth";
 import Link from "next/link";
-
-interface AppStats {
-  app_id: string;
-  overview: {
-    total_events: number;
-    total_users: number;
-    total_memories: number;
-    l1_count: number;
-    l2_count: number;
-    memory_pipeline_status: string;
-    avg_memories_per_user: number;
-  };
-  users: Array<{
-    user_id: string;
-    event_count: number;
-    memory_count: number;
-    last_activity: number | null;
-  }>;
-  recent_activity: Array<{
-    timestamp: number;
-    user_id: string;
-    event_type: string;
-    stream_id: string;
-  }>;
-  performance: {
-    total_storage_bytes: number;
-    avg_event_size_bytes: number;
-    l1_generation_rate: number;
-    l2_generation_rate: number;
-  };
-}
+import { useAppStats } from "@/lib/hooks";
+import type { AppStats } from "@/lib/types";
 
 function StatCard({
   label,
@@ -196,7 +165,6 @@ function ActivityTab({ stats }: { stats: AppStats }) {
     );
   }
 
-  // Count event types
   const eventTypeCounts = stats.recent_activity.reduce((acc, activity) => {
     acc[activity.event_type] = (acc[activity.event_type] || 0) + 1;
     return acc;
@@ -331,36 +299,9 @@ function PerformanceTab({ stats }: { stats: AppStats }) {
 export default function AppDetailClient() {
   const params = useParams();
   const app_id = params.app_id as string;
-  const [stats, setStats] = useState<AppStats | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: stats, isLoading, error } = useAppStats(app_id);
 
-  useEffect(() => {
-    async function fetchStats() {
-      try {
-        const response = await fetch(`/v1/dashboard/apps/${app_id}/stats`, {
-          headers: {
-            Authorization: `Bearer ${getToken()}`,
-          },
-        });
-
-        if (!response.ok) {
-          throw new Error(`Failed to fetch app stats: ${response.status}`);
-        }
-
-        const data = await response.json();
-        setStats(data);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Unknown error");
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    fetchStats();
-  }, [app_id]);
-
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-8 w-64" />
@@ -375,7 +316,7 @@ export default function AppDetailClient() {
         <h1 className="text-2xl font-bold">Application Details</h1>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-destructive">Error: {error}</div>
+            <div className="text-destructive">Error: {error.message}</div>
           </CardContent>
         </Card>
       </div>

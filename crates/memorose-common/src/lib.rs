@@ -46,6 +46,7 @@ pub enum EventContent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
     pub id: Uuid,
+    pub org_id: Option<String>,
     pub user_id: String,
     pub agent_id: Option<String>,
     pub app_id: String,
@@ -57,9 +58,10 @@ pub struct Event {
 }
 
 impl Event {
-    pub fn new(user_id: String, agent_id: Option<String>, app_id: String, stream_id: Uuid, content: EventContent) -> Self {
+    pub fn new(org_id: Option<String>, user_id: String, agent_id: Option<String>, app_id: String, stream_id: Uuid, content: EventContent) -> Self {
         Self {
             id: Uuid::new_v4(),
+            org_id,
             user_id,
             agent_id,
             app_id,
@@ -124,10 +126,65 @@ impl RelationType {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TaskStatus {
     Pending,
-    Active,
+    InProgress,
+    Blocked(String), // Reason for being blocked
     Completed,
-    Failed,
-    Blocked,
+    Failed(String),  // Reason for failure
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct L3Task {
+    pub task_id: Uuid,
+    pub org_id: Option<String>,
+    pub user_id: String,
+    pub agent_id: Option<String>,
+    pub app_id: String,
+    pub parent_id: Option<Uuid>, // Hierarchy support
+    
+    pub title: String,
+    pub description: String,
+    pub status: TaskStatus,
+    pub progress: f32, // 0.0 - 1.0
+    
+    pub dependencies: Vec<Uuid>, // Pre-requisites
+    pub context_refs: Vec<Uuid>, // Links to L1/L2 MemoryUnit IDs
+    
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_summary: Option<String>,
+}
+
+impl L3Task {
+    pub fn new(
+        org_id: Option<String>,
+        user_id: String,
+        agent_id: Option<String>,
+        app_id: String,
+        title: String,
+        description: String,
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            task_id: Uuid::new_v4(),
+            org_id,
+            user_id,
+            agent_id,
+            app_id,
+            parent_id: None,
+            title,
+            description,
+            status: TaskStatus::Pending,
+            progress: 0.0,
+            dependencies: Vec::new(),
+            context_refs: Vec::new(),
+            created_at: now,
+            updated_at: now,
+            result_summary: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -192,6 +249,7 @@ impl Default for MemoryType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryUnit {
     pub id: Uuid,
+    pub org_id: Option<String>,
     pub user_id: String,
     pub agent_id: Option<String>,
     pub app_id: String,
@@ -233,6 +291,7 @@ pub struct MemoryUnit {
 
 impl MemoryUnit {
     pub fn new(
+        org_id: Option<String>,
         user_id: String, 
         agent_id: Option<String>,
         app_id: String, 
@@ -244,6 +303,7 @@ impl MemoryUnit {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
+            org_id,
             user_id,
             agent_id,
             app_id,
@@ -273,7 +333,7 @@ mod tests {
     fn test_event_serialization() {
         let stream_id = Uuid::new_v4();
         let content = EventContent::Text("Hello World".to_string());
-        let event = Event::new("user1".into(), None, "app1".into(), stream_id, content);
+        let event = Event::new(None, "user1".into(), None, "app1".into(), stream_id, content);
 
         let json = serde_json::to_string(&event).expect("Failed to serialize");
         let deserialized: Event = serde_json::from_str(&json).expect("Failed to deserialize");
@@ -289,12 +349,12 @@ mod tests {
         let now = Utc::now();
         let valid_time = now - chrono::Duration::days(7);
         
-        let mut unit = MemoryUnit::new("u1".into(), None, "a1".into(), Uuid::new_v4(), MemoryType::Factual, "text".into(), None);
+        let mut unit = MemoryUnit::new(None, "u1".into(), None, "a1".into(), Uuid::new_v4(), MemoryType::Factual, "text".into(), None);
         unit.valid_time = Some(valid_time);
         
         assert_eq!(unit.valid_time, Some(valid_time));
 
-        let mut event = Event::new("u1".into(), None, "a1".into(), Uuid::new_v4(), EventContent::Text("test".into()));
+        let mut event = Event::new(None, "u1".into(), None, "a1".into(), Uuid::new_v4(), EventContent::Text("test".into()));
         event.valid_time = Some(valid_time);
         assert_eq!(event.valid_time, Some(valid_time));
     }

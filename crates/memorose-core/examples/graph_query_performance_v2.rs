@@ -67,7 +67,7 @@ async fn build_test_graph(
     for i in 0..num_nodes {
         let content = format!("Node {}", i);
         let embedding = vec![i as f32 / num_nodes as f32; 384];
-        let unit = MemoryUnit::new(
+        let unit = MemoryUnit::new(None, 
             user_id.to_string(),
             None,
             app_id.to_string(),

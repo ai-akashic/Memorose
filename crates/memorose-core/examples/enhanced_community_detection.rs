@@ -101,7 +101,7 @@ async fn build_test_communities(
         for i in 0..50 {
             let content = format!("Community {} - Node {}", comm, i);
             let embedding = vec![(comm * 50 + i) as f32 / 150.0; 384];
-            let unit = MemoryUnit::new(
+            let unit = MemoryUnit::new(None, 
                 user_id.to_string(),
                 None,
                 app_id.to_string(),

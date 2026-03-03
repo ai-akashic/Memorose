@@ -36,6 +36,7 @@ impl VectorStore {
 
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
+            Field::new("org_id", DataType::Utf8, true),
             Field::new("user_id", DataType::Utf8, false),
             Field::new("agent_id", DataType::Utf8, true),
             Field::new("app_id", DataType::Utf8, false),
@@ -67,6 +68,7 @@ impl VectorStore {
         let table = self.conn.open_table(table_name).execute().await?;
 
         let mut ids = Vec::new();
+        let mut org_ids: Vec<Option<String>> = Vec::new();
         let mut user_ids = Vec::new();
         let mut agent_ids: Vec<Option<String>> = Vec::new();
         let mut app_ids = Vec::new();
@@ -80,6 +82,7 @@ impl VectorStore {
 
         for unit in &units {
             ids.push(unit.id.to_string());
+            org_ids.push(unit.org_id.clone());
             user_ids.push(unit.user_id.clone());
             agent_ids.push(unit.agent_id.clone());
             app_ids.push(unit.app_id.clone());
@@ -110,6 +113,7 @@ impl VectorStore {
         }
 
         let id_array = Arc::new(StringArray::from(ids));
+        let org_id_array = Arc::new(StringArray::from(org_ids));
         let user_id_array = Arc::new(StringArray::from(user_ids));
         let agent_id_array = Arc::new(StringArray::from(agent_ids));
         let app_id_array = Arc::new(StringArray::from(app_ids));
@@ -134,6 +138,7 @@ impl VectorStore {
             schema.clone(),
             vec![
                 id_array as Arc<dyn Array>,
+                org_id_array as Arc<dyn Array>,
                 user_id_array as Arc<dyn Array>,
                 agent_id_array as Arc<dyn Array>,
                 app_id_array as Arc<dyn Array>,
@@ -253,7 +258,7 @@ mod tests {
         let mut embedding = vec![0.0; 384];
         embedding[0] = 1.0; // Mark first dim
         
-        let unit = MemoryUnit::new("u1".into(), None, "a1".into(), stream_id, memorose_common::MemoryType::Factual, "Vector Test".to_string(), Some(embedding.clone()));
+        let unit = MemoryUnit::new(None, "u1".into(), None, "a1".into(), stream_id, memorose_common::MemoryType::Factual, "Vector Test".to_string(), Some(embedding.clone()));
         store.add("memories", vec![unit.clone()]).await?;
 
         // Search with exact same vector
@@ -278,12 +283,12 @@ mod tests {
         let embedding = vec![0.0; 384];
 
         // 1. Store OLD memory (valid last year)
-        let mut u1 = MemoryUnit::new("u1".into(), None, "a1".into(), stream_id, memorose_common::MemoryType::Factual, "Old info".into(), Some(embedding.clone()));
+        let mut u1 = MemoryUnit::new(None, "u1".into(), None, "a1".into(), stream_id, memorose_common::MemoryType::Factual, "Old info".into(), Some(embedding.clone()));
         u1.valid_time = Some(Utc::now() - chrono::Duration::days(365));
         store.add("memories", vec![u1.clone()]).await?;
 
         // 2. Store NEW memory (valid now)
-        let mut u2 = MemoryUnit::new("u1".into(), None, "a1".into(), stream_id, memorose_common::MemoryType::Factual, "New info".into(), Some(embedding.clone()));
+        let mut u2 = MemoryUnit::new(None, "u1".into(), None, "a1".into(), stream_id, memorose_common::MemoryType::Factual, "New info".into(), Some(embedding.clone()));
         u2.valid_time = Some(Utc::now());
         store.add("memories", vec![u2.clone()]).await?;
 

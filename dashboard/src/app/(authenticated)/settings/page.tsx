@@ -11,6 +11,11 @@ import {
   Loader2,
   Check,
   Key,
+  AlertTriangle,
+  Cpu,
+  HardDrive,
+  Brain,
+  Server,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,18 +31,32 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { motion } from "framer-motion";
+
+const sectionIcon: Record<string, React.ElementType> = {
+  Raft: Server,
+  Worker: Cpu,
+  LLM: Brain,
+  Storage: HardDrive,
+};
 
 function ConfigSection({ title, data }: { title: string; data: Record<string, unknown> }) {
+  const Icon = sectionIcon[title] ?? SettingsIcon;
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-xs">{title}</CardTitle>
+    <Card className="glass-card border-white/[0.06]">
+      <CardHeader className="pb-3 border-b border-white/5">
+        <CardTitle className="text-xs flex items-center gap-2">
+          <div className="p-1.5 rounded-md bg-primary/10 border border-primary/10">
+            <Icon className="w-3 h-3 text-primary" />
+          </div>
+          <span className="uppercase tracking-widest text-muted-foreground/70 font-bold">{title}</span>
+        </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-1.5">
+      <CardContent className="pt-3 space-y-1.5">
         {Object.entries(data).map(([key, value]) => (
-          <div key={key} className="flex justify-between text-xs">
-            <span className="text-muted-foreground">{key}</span>
-            <span className="font-mono text-right max-w-[60%] truncate">
+          <div key={key} className="flex justify-between items-center text-xs py-1 border-b border-white/[0.03] last:border-0">
+            <span className="text-muted-foreground font-medium">{key}</span>
+            <span className="font-mono text-right max-w-[55%] truncate text-foreground/70 bg-white/5 px-2 py-0.5 rounded border border-white/5">
               {typeof value === "object" ? JSON.stringify(value) : String(value)}
             </span>
           </div>
@@ -57,7 +76,6 @@ function PasswordForm({ onSuccess }: { onSuccess?: () => void }) {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setMessage(null);
-
     if (newPw !== confirm) {
       setMessage({ type: "error", text: "Passwords do not match" });
       return;
@@ -66,20 +84,13 @@ function PasswordForm({ onSuccess }: { onSuccess?: () => void }) {
       setMessage({ type: "error", text: "Password must be at least 8 characters" });
       return;
     }
-
     setLoading(true);
     try {
       await api.changePassword(current, newPw);
       setMustChangePassword(false);
       setMessage({ type: "success", text: "Password updated successfully" });
-      setCurrent("");
-      setNewPw("");
-      setConfirm("");
-
-      // Call onSuccess callback after a short delay to show success message
-      setTimeout(() => {
-        onSuccess?.();
-      }, 1500);
+      setCurrent(""); setNewPw(""); setConfirm("");
+      setTimeout(() => onSuccess?.(), 1500);
     } catch (err: unknown) {
       setMessage({ type: "error", text: err instanceof Error ? err.message : "Failed" });
     } finally {
@@ -89,49 +100,32 @@ function PasswordForm({ onSuccess }: { onSuccess?: () => void }) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
-      <div className="space-y-1">
-        <Label htmlFor="current-pw" className="text-xs text-muted-foreground">Current Password</Label>
-        <Input
-          id="current-pw"
-          type="password"
-          value={current}
-          onChange={(e) => setCurrent(e.target.value)}
-          required
-        />
-      </div>
-      <div className="space-y-1">
-        <Label htmlFor="new-pw" className="text-xs text-muted-foreground">New Password</Label>
-        <Input
-          id="new-pw"
-          type="password"
-          value={newPw}
-          onChange={(e) => setNewPw(e.target.value)}
-          required
-        />
-      </div>
-      <div className="space-y-1">
-        <Label htmlFor="confirm-pw" className="text-xs text-muted-foreground">Confirm New Password</Label>
-        <Input
-          id="confirm-pw"
-          type="password"
-          value={confirm}
-          onChange={(e) => setConfirm(e.target.value)}
-          required
-        />
-      </div>
-
+      {[
+        { id: "current-pw", label: "Current Password", value: current, onChange: setCurrent },
+        { id: "new-pw", label: "New Password", value: newPw, onChange: setNewPw },
+        { id: "confirm-pw", label: "Confirm New Password", value: confirm, onChange: setConfirm },
+      ].map(({ id, label, value, onChange }) => (
+        <div key={id} className="space-y-1">
+          <Label htmlFor={id} className="text-xs text-muted-foreground">{label}</Label>
+          <Input
+            id={id}
+            type="password"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            required
+            className="bg-white/5 border-white/10 focus:border-primary/40"
+          />
+        </div>
+      ))}
       {message && (
-        <div
-          className={`text-sm rounded-lg px-3 py-2 ${
-            message.type === "success"
-              ? "bg-success/10 text-success"
-              : "bg-destructive/10 text-destructive"
-          }`}
-        >
+        <div className={`text-sm rounded-lg px-3 py-2 border ${
+          message.type === "success"
+            ? "bg-success/10 text-success border-success/20"
+            : "bg-destructive/10 text-destructive border-destructive/20"
+        }`}>
           {message.text}
         </div>
       )}
-
       <Button type="submit" disabled={loading} size="sm" className="w-full">
         {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
         Update Password
@@ -152,58 +146,75 @@ export default function SettingsPage() {
   }, []);
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-lg font-semibold tracking-tight">Settings</h1>
+    <div className="space-y-6 relative max-w-3xl">
+      <div className="absolute top-0 right-0 w-[400px] h-[200px] blob-bg opacity-15 pointer-events-none -z-10 mix-blend-screen" />
+
+      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+        <h1 className="text-3xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-b from-white to-white/60">
+          Settings
+        </h1>
+        <p className="text-muted-foreground mt-1 text-sm">System configuration and security</p>
+      </motion.div>
 
       <Tabs defaultValue={mustChange ? "security" : "config"}>
-        <TabsList>
-          <TabsTrigger value="config" className="gap-2">
-            <SettingsIcon className="w-4 h-4" />
+        <TabsList className="bg-white/[0.04] border border-white/[0.06]">
+          <TabsTrigger value="config" className="gap-2 text-xs">
+            <SettingsIcon className="w-3.5 h-3.5" />
             Configuration
           </TabsTrigger>
-          <TabsTrigger value="security" className="gap-2">
-            <Shield className="w-4 h-4" />
+          <TabsTrigger value="security" className="gap-2 text-xs">
+            <Shield className="w-3.5 h-3.5" />
             Security
           </TabsTrigger>
-          <TabsTrigger value="about" className="gap-2">
-            <Info className="w-4 h-4" />
+          <TabsTrigger value="about" className="gap-2 text-xs">
+            <Info className="w-3.5 h-3.5" />
             About
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="config" className="space-y-4">
-          {config && (
+        <TabsContent value="config" className="space-y-3 mt-4">
+          {config ? (
             <>
               <ConfigSection title="Raft" data={config.raft as Record<string, unknown>} />
               <ConfigSection title="Worker" data={config.worker as Record<string, unknown>} />
               <ConfigSection title="LLM" data={config.llm as Record<string, unknown>} />
               <ConfigSection title="Storage" data={config.storage as Record<string, unknown>} />
             </>
+          ) : (
+            <div className="space-y-3">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="glass-card rounded-xl h-24 opacity-20" />
+              ))}
+            </div>
           )}
         </TabsContent>
 
-        <TabsContent value="security" className="space-y-4">
+        <TabsContent value="security" className="space-y-4 mt-4">
           {mustChange && (
-            <div className="rounded-xl bg-warning/10 border border-warning/30 p-4 text-sm text-warning">
-              You are using the default password. Please change it before continuing.
+            <div className="glass-card rounded-xl border border-warning/30 p-4 flex items-start gap-3">
+              <AlertTriangle className="w-4 h-4 text-warning shrink-0 mt-0.5" />
+              <p className="text-sm text-warning">
+                You are using the default password. Please change it before continuing.
+              </p>
             </div>
           )}
 
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-xs flex items-center gap-1.5">
-                <Shield className="w-3.5 h-3.5 text-primary" />
-                Password Management
+          <Card className="glass-card border-white/[0.06]">
+            <CardHeader className="pb-3 border-b border-white/5">
+              <CardTitle className="text-xs flex items-center gap-2">
+                <div className="p-1.5 rounded-md bg-primary/10 border border-primary/10">
+                  <Shield className="w-3 h-3 text-primary" />
+                </div>
+                <span className="uppercase tracking-widest text-muted-foreground/70 font-bold">Password Management</span>
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-4">
               <p className="text-sm text-muted-foreground mb-4">
                 Update your account password to keep your account secure.
               </p>
-
               <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
                 <DialogTrigger asChild>
-                  <Button variant="outline" size="sm">
+                  <Button variant="outline" size="sm" className="border-white/10 hover:bg-white/5">
                     <Key className="w-4 h-4 mr-2" />
                     Change Password
                   </Button>
@@ -212,7 +223,7 @@ export default function SettingsPage() {
                   <DialogHeader>
                     <DialogTitle>Change Password</DialogTitle>
                     <DialogDescription>
-                      Enter your current password and choose a new one. Your password must be at least 8 characters long.
+                      Enter your current password and choose a new one. Minimum 8 characters.
                     </DialogDescription>
                   </DialogHeader>
                   <PasswordForm onSuccess={() => setDialogOpen(false)} />
@@ -222,26 +233,32 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="about">
+        <TabsContent value="about" className="mt-4">
           {version && (
-            <Card className="max-w-md">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-xs">Memorose</CardTitle>
+            <Card className="glass-card border-white/[0.06]">
+              <CardHeader className="pb-3 border-b border-white/5">
+                <CardTitle className="text-xs flex items-center gap-2">
+                  <div className="p-1.5 rounded-md bg-primary/10 border border-primary/10">
+                    <Info className="w-3 h-3 text-primary" />
+                  </div>
+                  <span className="uppercase tracking-widest text-muted-foreground/70 font-bold">Memorose</span>
+                </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Version</span>
-                  <span className="font-mono">{version.version}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Build Time</span>
-                  <span className="font-mono">{version.build_time}</span>
-                </div>
+              <CardContent className="pt-4 space-y-3">
+                {[
+                  { label: "Version", value: version.version },
+                  { label: "Build Time", value: version.build_time },
+                ].map(({ label, value }) => (
+                  <div key={label} className="flex justify-between items-center text-sm border-b border-white/[0.03] pb-2 last:border-0 last:pb-0">
+                    <span className="text-muted-foreground">{label}</span>
+                    <span className="font-mono text-foreground/70 bg-white/5 px-2 py-0.5 rounded border border-white/5 text-xs">{value}</span>
+                  </div>
+                ))}
                 <div>
-                  <span className="text-muted-foreground">Features</span>
-                  <div className="flex flex-wrap gap-1 mt-1">
+                  <span className="text-sm text-muted-foreground">Features</span>
+                  <div className="flex flex-wrap gap-1.5 mt-2">
                     {version.features.map((f) => (
-                      <Badge key={f} variant="secondary">{f}</Badge>
+                      <Badge key={f} variant="outline" className="text-xs bg-primary/5 border-primary/20 text-primary/80">{f}</Badge>
                     ))}
                   </div>
                 </div>

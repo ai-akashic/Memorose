@@ -40,9 +40,9 @@ async fn main() -> Result<()> {
     let user_id = "example_user".to_string();
     let app_id = "example_app".to_string();
 
-    let unit_a = MemoryUnit::new(user_id.clone(), None, app_id.clone(), stream_id, memorose_common::MemoryType::Factual, "I like coding in Rust".into(), Some(vec_a.clone()));
-    let unit_b = MemoryUnit::new(user_id.clone(), None, app_id.clone(), stream_id, memorose_common::MemoryType::Factual, "Rust is a safe systems language".into(), Some(vec_b.clone()));
-    let unit_c = MemoryUnit::new(user_id.clone(), None, app_id.clone(), stream_id, memorose_common::MemoryType::Factual, "The weather is sunny today".into(), Some(vec_c.clone()));
+    let unit_a = MemoryUnit::new(None, user_id.clone(), None, app_id.clone(), stream_id, memorose_common::MemoryType::Factual, "I like coding in Rust".into(), Some(vec_a.clone()));
+    let unit_b = MemoryUnit::new(None, user_id.clone(), None, app_id.clone(), stream_id, memorose_common::MemoryType::Factual, "Rust is a safe systems language".into(), Some(vec_b.clone()));
+    let unit_c = MemoryUnit::new(None, user_id.clone(), None, app_id.clone(), stream_id, memorose_common::MemoryType::Factual, "The weather is sunny today".into(), Some(vec_c.clone()));
 
     println!("\n📥 Storing 3 memory units...");
     engine.store_memory_unit(unit_a.clone()).await?;

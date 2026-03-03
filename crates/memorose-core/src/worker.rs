@@ -82,6 +82,10 @@ impl BackgroundWorker {
                 tracing::error!("Decay cycle failed: {:?}", e);
             }
 
+            if let Err(e) = self.run_l3_task_cycle().await {
+                tracing::error!("L3 Task cycle failed: {:?}", e);
+            }
+
             if let Err(e) = self.run_consolidation_cycle().await {
                 tracing::error!("Consolidation cycle failed: {:?}", e);
             }
@@ -114,6 +118,64 @@ impl BackgroundWorker {
             self.engine.compact_vector_store().await?;
             let mut last = self.last_compaction.lock().await;
             *last = std::time::Instant::now();
+        }
+        Ok(())
+    }
+
+    async fn run_l3_task_cycle(&self) -> Result<()> {
+        // Find all users
+        let kv = self.engine.kv();
+        let results = kv.scan(b"u:")?;
+        let mut users = std::collections::HashSet::new();
+        for (k, _) in results {
+            let key_str = String::from_utf8_lossy(&k);
+            let parts: Vec<&str> = key_str.split(':').collect();
+            if parts.len() >= 2 {
+                users.insert(parts[1].to_string());
+            }
+        }
+
+        for user_id in users {
+            let ready_tasks = match self.engine.get_ready_l3_tasks(&user_id).await {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::warn!("Failed to fetch ready tasks for user {}: {}", user_id, e);
+                    continue;
+                }
+            };
+
+            for mut task in ready_tasks {
+                tracing::info!("Auto-processing L3 task: {}", task.title);
+                task.status = memorose_common::TaskStatus::InProgress;
+                let _ = self.engine.store_l3_task(&task).await;
+
+                let mut summary = String::from("Task automatically completed by backend worker without LLM interaction.");
+
+                // If we have an LLM client, generate an insight for the milestone
+                if let Some(client) = &self.llm_client {
+                    let prompt = format!("You are an autonomous agent executing a planned milestone.\nTask: {}\nDescription: {}\nPlease provide a brief, professional summary of the simulated execution of this task.", task.title, task.description);
+                    if let Ok(res) = client.generate(&prompt).await {
+                        summary = res.data.clone();
+                    }
+                }
+
+                task.status = memorose_common::TaskStatus::Completed;
+                task.progress = 1.0;
+                task.result_summary = Some(summary.clone());
+                task.updated_at = chrono::Utc::now();
+                let _ = self.engine.store_l3_task(&task).await;
+
+                // Sediment the completed milestone as an event in L0
+                let event = memorose_common::Event::new(
+                    task.org_id.clone(),
+                    user_id.clone(),
+                    task.agent_id.clone().or_else(|| Some("system_worker".to_string())),
+                    task.app_id.clone(),
+                    uuid::Uuid::new_v4(),
+                    memorose_common::EventContent::Text(format!("Completed Milestone '{}': {}", task.title, summary)),
+                );
+                let _ = self.engine.ingest_event(event).await;
+            }
         }
         Ok(())
     }
@@ -555,7 +617,7 @@ impl BackgroundWorker {
                 memorose_common::MemoryType::Factual
             };
 
-            let mut unit = MemoryUnit::new(
+            let mut unit = MemoryUnit::new(None, 
                 user_id, 
                 agent_id,
                 app_id, 
@@ -581,8 +643,8 @@ impl BackgroundWorker {
                 if level >= 1 {
                     let status = match metadata.get("task_status").and_then(|v| v.as_str()) {
                         Some("Completed") => memorose_common::TaskStatus::Completed,
-                        Some("Active") => memorose_common::TaskStatus::Active,
-                        Some("Failed") => memorose_common::TaskStatus::Failed,
+                        Some("Active") => memorose_common::TaskStatus::InProgress,
+                        Some("Failed") => memorose_common::TaskStatus::Failed("Metadata indicated failure".to_string()),
                         _ => memorose_common::TaskStatus::Pending,
                     };
                     unit.task_metadata = Some(memorose_common::TaskMetadata {
@@ -792,7 +854,7 @@ impl BackgroundWorker {
                 let progress = completed as f32 / total as f32;
                 if let Some(mut parent) = self.engine.get_memory_unit(user_id, parent_id).await? {
                      let mut meta = parent.task_metadata.clone().unwrap_or(memorose_common::TaskMetadata {
-                         status: memorose_common::TaskStatus::Active,
+                         status: memorose_common::TaskStatus::InProgress,
                          progress: 0.0,
                      });
 
@@ -859,7 +921,7 @@ mod tests {
         let mut worker = BackgroundWorker::new(engine.clone());
         worker.llm_client = Some(Arc::new(MockLLM { fail_compress: true }));
 
-        let event = Event::new(TEST_USER.into(), None, TEST_APP.into(), Uuid::new_v4(), EventContent::Text("Hello".into()));
+        let event = Event::new(None, TEST_USER.into(), None, TEST_APP.into(), Uuid::new_v4(), EventContent::Text("Hello".into()));
         engine.ingest_event_directly(event.clone()).await?;
 
         let processed = worker.run_consolidation_cycle().await?;
@@ -879,7 +941,7 @@ mod tests {
         let mut worker = BackgroundWorker::new(engine.clone());
         worker.llm_client = Some(Arc::new(MockLLM { fail_compress: false }));
 
-        let event = Event::new(TEST_USER.into(), None, TEST_APP.into(), Uuid::new_v4(), EventContent::Text("Success".into()));
+        let event = Event::new(None, TEST_USER.into(), None, TEST_APP.into(), Uuid::new_v4(), EventContent::Text("Success".into()));
         engine.ingest_event_directly(event.clone()).await?;
 
         worker.run_consolidation_cycle().await?;

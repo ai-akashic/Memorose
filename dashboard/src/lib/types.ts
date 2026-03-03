@@ -163,3 +163,122 @@ export interface VersionInfo {
   build_time: string;
   features: string[];
 }
+
+export interface AgentSummary {
+  agent_id: string;
+  total_memories: number;
+  l1_count: number;
+  l2_count: number;
+  total_events: number;
+  last_activity: number | null;
+}
+
+export interface AgentListResponse {
+  agents: AgentSummary[];
+  total_count: number;
+}
+
+export interface L3Task {
+  task_id: string;
+  org_id?: string | null;
+  user_id: string;
+  agent_id?: string | null;
+  app_id: string;
+  parent_id?: string | null;
+  title: string;
+  description: string;
+  status: 'Pending' | 'InProgress' | { Blocked: string } | 'Completed' | { Failed: string } | 'Cancelled';
+  progress: number;
+  dependencies: string[];
+  context_refs: string[];
+  created_at: string;
+  updated_at: string;
+  result_summary?: string | null;
+}
+
+export interface L3TaskTree {
+  task: L3Task;
+  children: L3TaskTree[];
+}
+
+export interface GoalTree {
+  goal: MemoryUnit;
+  tasks: L3TaskTree[];
+}
+
+export interface AppStats {
+  app_id: string;
+  overview: {
+    total_events: number;
+    total_users: number;
+    total_memories: number;
+    l1_count: number;
+    l2_count: number;
+    memory_pipeline_status: string;
+    avg_memories_per_user: number;
+  };
+  users: Array<{
+    user_id: string;
+    event_count: number;
+    memory_count: number;
+    last_activity: number | null;
+  }>;
+  recent_activity: Array<{
+    timestamp: number;
+    user_id: string;
+    event_type: string;
+    stream_id: string;
+  }>;
+  performance: {
+    total_storage_bytes: number;
+    avg_event_size_bytes: number;
+    l1_generation_rate: number;
+    l2_generation_rate: number;
+  };
+}
+
+export interface AppSummary {
+  app_id: string;
+  total_events: number;
+  total_users: number;
+  total_memories: number;
+}
+
+export interface RetrieveRequest {
+  query: string;
+  limit?: number;
+  min_score?: number;
+  graph_depth?: number;
+  valid_time_start?: string;
+  valid_time_end?: string;
+  as_of?: string;
+}
+
+export type RetrieveResponse = SearchResponse;
+
+export interface AddEdgeRequest {
+  source_id: string;
+  target_id: string;
+  relation: string;
+  weight?: number;
+}
+
+export interface PendingCountResponse {
+  pending: number;
+}
+
+export interface ClusterInitResponse {
+  status: string;
+  node_id?: number;
+}
+
+export interface ClusterJoinRequest {
+  node_id: number;
+  address: string;
+}
+
+export interface ClusterJoinResponse {
+  status: string;
+}
+
+export type ReadyTask = L3Task;

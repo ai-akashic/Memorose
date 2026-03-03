@@ -189,6 +189,7 @@ Full API docs: [docs/API.md](docs/API.md)
 **Completed:** Three-layer architecture • Distributed Raft cluster • Active forgetting • Auto graph construction • Web dashboard • Multi-Model Provider Support • Dual-Track Memory Pipelines • Token & Cost Optimization • Deep Graph Reasoning (GraphRAG) • Native Multi-modal Memory (Vision)
 
 **In Progress:**
+- SDKs (Python, Node.js)
 - Comprehensive benchmarks (HaluMem, PersonaMem, LoCoMo, LongMemEval)
 - Test coverage • Docker/K8s deployment
 

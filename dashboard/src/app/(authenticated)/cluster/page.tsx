@@ -1,10 +1,11 @@
 "use client";
 
-import { useClusterStatus, useStats } from "@/lib/hooks";
+import { useClusterStatus, useStats, usePendingCount } from "@/lib/hooks";
 import { useUserFilter } from "../layout";
 import { isShardedCluster } from "@/lib/types";
 import type { ClusterStatusSingle, ClusterStatusSharded, ShardStatus } from "@/lib/types";
 import { formatNumber, formatDuration } from "@/lib/utils";
+import { api } from "@/lib/api";
 import {
   Activity,
   Database,
@@ -14,10 +15,13 @@ import {
   Star,
   Server,
   Layers,
+  UserMinus,
+  Hourglass,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 
 function StatCard({
   label,
@@ -127,7 +131,7 @@ function RaftStatusCard({ cluster }: { cluster: ClusterStatusSingle }) {
   );
 }
 
-function HeartbeatCard({ cluster }: { cluster: ClusterStatusSingle }) {
+function HeartbeatCard({ cluster, onRemoveNode }: { cluster: ClusterStatusSingle; onRemoveNode: (id: number) => Promise<void> }) {
   const config = cluster.config || {
     heartbeat_interval_ms: 500,
     election_timeout_min_ms: 1500,
@@ -143,7 +147,6 @@ function HeartbeatCard({ cluster }: { cluster: ClusterStatusSingle }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* Heartbeat Configuration */}
         <div className="space-y-2">
           <div className="flex justify-between text-xs">
             <span className="text-muted-foreground">Heartbeat Interval</span>
@@ -179,16 +182,22 @@ function HeartbeatCard({ cluster }: { cluster: ClusterStatusSingle }) {
                       </Badge>
                     )}
                     <span className="text-xs text-success">Online</span>
+                    {!isSelf && !isLeader && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-5 px-1.5 text-[10px] text-destructive hover:text-destructive hover:bg-destructive/10"
+                        onClick={() => cluster && onRemoveNode(nodeId)}
+                      >
+                        <UserMinus className="w-3 h-3" />
+                      </Button>
+                    )}
                   </div>
                 </div>
               );
             })}
           </div>
         </div>
-
-        <p className="text-[10px] text-muted-foreground mt-1">
-          Heartbeats active every {config.heartbeat_interval_ms}ms
-        </p>
       </CardContent>
     </Card>
   );
@@ -340,10 +349,21 @@ function ShardedTopology({ cluster }: { cluster: ClusterStatusSharded }) {
   );
 }
 
+
 export default function ClusterPage() {
   const { userId } = useUserFilter();
-  const { data: cluster, isLoading: clusterLoading } = useClusterStatus();
+  const { data: cluster, isLoading: clusterLoading, mutate: mutateCluster } = useClusterStatus();
   const { data: stats, isLoading: statsLoading } = useStats(userId || undefined);
+  const { data: pendingData } = usePendingCount();
+
+  async function handleRemoveNode(nodeId: number) {
+    try {
+      await api.leaveCluster(nodeId);
+      mutateCluster();
+    } catch {
+      // ignore — user will see no change
+    }
+  }
 
   if (clusterLoading || statsLoading) {
     return (
@@ -395,7 +415,7 @@ export default function ClusterPage() {
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
         <StatCard
           label="Total Events"
           value={stats?.total_events ?? 0}
@@ -421,6 +441,13 @@ export default function ClusterPage() {
           sub={!sharded ? `Node ${(cluster as ClusterStatusSingle)?.node_id} is Leader` : undefined}
           icon={Server}
         />
+        <StatCard
+          label="Pending Queue"
+          value={pendingData?.pending ?? "—"}
+          sub="awaiting processing"
+          icon={Hourglass}
+          color="text-warning"
+        />
       </div>
 
       {/* Topology */}
@@ -437,7 +464,12 @@ export default function ClusterPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {cluster && !sharded && <RaftStatusCard cluster={cluster as ClusterStatusSingle} />}
-          {cluster && !sharded && <HeartbeatCard cluster={cluster as ClusterStatusSingle} />}
+          {cluster && !sharded && (
+            <HeartbeatCard
+              cluster={cluster as ClusterStatusSingle}
+              onRemoveNode={handleRemoveNode}
+            />
+          )}
           {stats && <PipelineCard stats={stats} />}
         </div>
       )}
@@ -448,6 +480,7 @@ export default function ClusterPage() {
           <PipelineCard stats={stats} />
         </div>
       )}
+
     </div>
   );
 }

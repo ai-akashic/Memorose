@@ -1,8 +1,8 @@
 use axum::{
     extract::{Path, State},
-    routing::{get, post, delete},
+    routing::{get, post, delete, put},
     Json, Router,
-    response::IntoResponse,
+    response::{IntoResponse, Redirect},
     middleware as axum_middleware,
 };
 use memorose_common::{Event, EventContent, GraphEdge, MemoryUnit, RelationType, TimeRange, config::AppConfig};
@@ -119,6 +119,8 @@ async fn main() {
         .route("/version", get(dashboard::handlers::version))
         .route("/apps", get(dashboard::handlers::list_apps))
         .route("/apps/:app_id/stats", get(dashboard::handlers::get_app_stats))
+        .route("/agents", get(dashboard::handlers::list_agents))
+        .route("/agents/:agent_id/stats", get(dashboard::handlers::get_agent_stats))
         .layer(axum_middleware::from_fn_with_state(
             state.clone(),
             dashboard::auth::auth_middleware,
@@ -157,6 +159,9 @@ async fn main() {
         .route("/v1/users/:user_id/apps/:app_id/streams/:stream_id/events", post(ingest_event))
         .route("/v1/users/:user_id/apps/:app_id/streams/:stream_id/retrieve", post(retrieve_memory))
         .route("/v1/users/:user_id/apps/:app_id/streams/:stream_id/tasks/tree", get(get_task_tree))
+        .route("/v1/users/:user_id/tasks/tree", get(get_all_task_trees))
+        .route("/v1/users/:user_id/tasks/ready", get(get_ready_tasks))
+        .route("/v1/users/:user_id/tasks/:task_id/status", put(update_task_status))
         .route("/v1/users/:user_id/graph/edges", post(add_edge))
         .route("/v1/status/pending", get(pending_count))
         .route("/v1/cluster/initialize", post(initialize_cluster))
@@ -166,6 +171,25 @@ async fn main() {
 
     let app = Router::new()
         .route("/", get(root))
+        // Backward-compatible redirects for dashboard paths without the /dashboard base prefix.
+        .route("/login", get(|| async { Redirect::temporary("/dashboard/login/") }))
+        .route("/login/", get(|| async { Redirect::temporary("/dashboard/login/") }))
+        .route("/cluster", get(|| async { Redirect::temporary("/dashboard/cluster/") }))
+        .route("/cluster/", get(|| async { Redirect::temporary("/dashboard/cluster/") }))
+        .route("/memories", get(|| async { Redirect::temporary("/dashboard/memories/") }))
+        .route("/memories/", get(|| async { Redirect::temporary("/dashboard/memories/") }))
+        .route("/playground", get(|| async { Redirect::temporary("/dashboard/playground/") }))
+        .route("/playground/", get(|| async { Redirect::temporary("/dashboard/playground/") }))
+        .route("/apps", get(|| async { Redirect::temporary("/dashboard/apps/") }))
+        .route("/apps/", get(|| async { Redirect::temporary("/dashboard/apps/") }))
+        .route("/apps/:app_id", get(legacy_app_detail_redirect))
+        .route("/apps/:app_id/", get(legacy_app_detail_redirect))
+        .route("/agents", get(|| async { Redirect::temporary("/dashboard/agents/") }))
+        .route("/agents/", get(|| async { Redirect::temporary("/dashboard/agents/") }))
+        .route("/metrics", get(|| async { Redirect::temporary("/dashboard/metrics/") }))
+        .route("/metrics/", get(|| async { Redirect::temporary("/dashboard/metrics/") }))
+        .route("/settings", get(|| async { Redirect::temporary("/dashboard/settings/") }))
+        .route("/settings/", get(|| async { Redirect::temporary("/dashboard/settings/") }))
         .merge(v1_routes)
         .nest("/v1/dashboard", dashboard_routes)
         .nest_service("/dashboard", dashboard_static)
@@ -409,6 +433,12 @@ async fn root() -> &'static str {
     "Memorose is running."
 }
 
+async fn legacy_app_detail_redirect(
+    Path(app_id): Path<String>,
+) -> Redirect {
+    Redirect::temporary(&format!("/dashboard/apps/{}/", app_id))
+}
+
 /// Returns the number of pending (un-consolidated) events across all shards.
 /// Useful for benchmarks to poll until consolidation is complete.
 async fn pending_count(
@@ -488,7 +518,7 @@ async fn ingest_event(
         "json" => EventContent::Json(serde_json::from_str(&payload.content).unwrap_or(serde_json::json!({"error": "invalid json"}))),
         _ => EventContent::Text(payload.content),
     };
-    let mut event = Event::new(user_id, None, app_id, stream_id, content);
+    let mut event = Event::new(None, user_id, None, app_id, stream_id, content);
     if let Some(l) = payload.level {
         event.metadata["target_level"] = serde_json::json!(l);
     }
@@ -538,6 +568,8 @@ struct RetrieveRequest {
     end_time: Option<DateTime<Utc>>,
     #[serde(default)]
     as_of: Option<DateTime<Utc>>,
+    #[serde(default)]
+    agent_id: Option<String>,
 }
 
 fn default_graph_depth() -> usize {
@@ -587,6 +619,7 @@ async fn retrieve_memory(
             match shard.engine.search_hybrid(
                 &user_id,
                 Some(&app_id),
+                payload.agent_id.as_deref(),
                 &payload.query,
                 &embedding_f32,
                 5,
@@ -750,9 +783,120 @@ async fn leave_cluster(
 }
 
 #[derive(serde::Serialize)]
-struct TaskTreeNode {
-    unit: MemoryUnit,
-    children: Vec<TaskTreeNode>,
+struct GoalTree {
+    goal: MemoryUnit,
+    tasks: Vec<L3TaskTree>,
+}
+
+#[derive(serde::Serialize)]
+struct L3TaskTree {
+    task: memorose_common::L3Task,
+    children: Vec<L3TaskTree>,
+}
+
+async fn get_ready_tasks(
+    State(state): State<Arc<AppState>>,
+    Path(user_id): Path<String>,
+) -> axum::response::Response {
+    let shard = state.shard_manager.shard_for_user(&user_id);
+    let engine = &shard.engine;
+    
+    match engine.get_ready_l3_tasks(&user_id).await {
+        Ok(tasks) => axum::response::Json(tasks).into_response(),
+        Err(e) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct UpdateTaskStatusRequest {
+    status: memorose_common::TaskStatus,
+    progress: Option<f32>,
+    result_summary: Option<String>,
+}
+
+async fn update_task_status(
+    State(state): State<Arc<AppState>>,
+    Path((user_id, task_id)): Path<(String, Uuid)>,
+    axum::Json(req): axum::Json<UpdateTaskStatusRequest>,
+) -> axum::response::Response {
+    let shard = state.shard_manager.shard_for_user(&user_id);
+    let engine = &shard.engine;
+    
+    match engine.get_l3_task(&user_id, task_id).await {
+        Ok(Some(mut task)) => {
+            task.status = req.status.clone();
+            if let Some(p) = req.progress {
+                task.progress = p;
+            }
+            if let Some(summary) = req.result_summary {
+                task.result_summary = Some(summary);
+            }
+            task.updated_at = chrono::Utc::now();
+            
+            if let Err(e) = engine.store_l3_task(&task).await {
+                return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+            }
+
+            // Downward Sedimentation: If completed, log it to L0
+            if task.status == memorose_common::TaskStatus::Completed {
+                let event_content = format!("Agent completed milestone '{}'. Summary: {}", 
+                    task.title, 
+                    task.result_summary.as_deref().unwrap_or("None")
+                );
+                
+                // Assuming stream_id can be derived or ignored for pure system tasks, 
+                // generating a dummy one here, or it should be passed via task model.
+                let event = memorose_common::Event::new(
+                    task.org_id.clone(),
+                    task.user_id.clone(),
+                    task.agent_id.clone(),
+                    task.app_id.clone(),
+                    Uuid::new_v4(), // Need stream context actually
+                    memorose_common::EventContent::Text(event_content)
+                );
+                if let Err(e) = engine.ingest_event(event).await {
+                    tracing::warn!("Failed to sediment L3 task completion to L0: {}", e);
+                }
+            }
+            
+            axum::response::Json(task).into_response()
+        },
+        Ok(None) => (axum::http::StatusCode::NOT_FOUND, "Task not found").into_response(),
+        Err(e) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn get_all_task_trees(
+    State(state): State<Arc<AppState>>,
+    Path(user_id): Path<String>,
+) -> axum::response::Response {
+    let shard = state.shard_manager.shard_for_user(&user_id);
+    let kv = shard.engine.kv();
+    let prefix = format!("u:{}:unit:", user_id);
+    let pairs = match kv.scan(prefix.as_bytes()) {
+        Ok(p) => p,
+        Err(e) => return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+
+    let all_units: Vec<MemoryUnit> = pairs.into_iter()
+        .filter_map(|(_, v)| serde_json::from_slice::<MemoryUnit>(&v).ok())
+        .collect();
+
+    let all_tasks = match shard.engine.list_l3_tasks(&user_id).await {
+        Ok(t) => t,
+        Err(e) => return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+
+    let mut root_nodes = Vec::new();
+    for unit in all_units.into_iter().filter(|u| u.level == 3) {
+        let tasks = build_l3_task_tree(unit.id, &all_tasks, &shard.engine, &user_id, 0).await;
+        root_nodes.push(GoalTree { goal: unit, tasks });
+    }
+
+    // Sort by transaction time descending
+    root_nodes.sort_by(|a, b| b.goal.transaction_time.cmp(&a.goal.transaction_time));
+
+    Json(root_nodes).into_response()
 }
 
 async fn get_task_tree(
@@ -772,9 +916,15 @@ async fn get_task_tree(
         .filter(|u| u.stream_id == stream_id && (app_id.is_empty() || u.app_id == app_id))
         .collect();
 
+    let all_tasks = match shard.engine.list_l3_tasks(&user_id).await {
+        Ok(t) => t,
+        Err(e) => return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+
     let mut root_nodes = Vec::new();
-    for unit in all_units.iter().filter(|u| u.level == 3) {
-        root_nodes.push(build_tree_node(unit, &all_units, &shard.engine, &user_id, 0).await);
+    for unit in all_units.into_iter().filter(|u| u.level == 3) {
+        let tasks = build_l3_task_tree(unit.id, &all_tasks, &shard.engine, &user_id, 0).await;
+        root_nodes.push(GoalTree { goal: unit, tasks });
     }
 
     Json(root_nodes).into_response()
@@ -785,23 +935,20 @@ use async_recursion::async_recursion;
 const MAX_TASK_DEPTH: usize = 10;
 
 #[async_recursion]
-async fn build_tree_node(unit: &MemoryUnit, all: &[MemoryUnit], engine: &MemoroseEngine, user_id: &str, depth: usize) -> TaskTreeNode {
+async fn build_l3_task_tree(parent_id: Uuid, all_tasks: &[memorose_common::L3Task], engine: &MemoroseEngine, user_id: &str, depth: usize) -> Vec<L3TaskTree> {
     let mut children = Vec::new();
 
     if depth < MAX_TASK_DEPTH {
-        if let Ok(incoming) = engine.graph().get_incoming_edges(user_id, unit.id).await {
-            for edge in incoming {
-                if edge.relation == RelationType::IsSubTaskOf {
-                    if let Some(child_unit) = all.iter().find(|u| u.id == edge.source_id) {
-                        children.push(build_tree_node(child_unit, all, engine, user_id, depth + 1).await);
-                    }
-                }
+        for task in all_tasks {
+            if task.parent_id == Some(parent_id) {
+                let task_children = build_l3_task_tree(task.task_id, all_tasks, engine, user_id, depth + 1).await;
+                children.push(L3TaskTree {
+                    task: task.clone(),
+                    children: task_children,
+                });
             }
         }
     }
-
-    TaskTreeNode {
-        unit: unit.clone(),
-        children,
-    }
+    
+    children
 }

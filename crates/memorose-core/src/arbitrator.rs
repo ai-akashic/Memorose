@@ -49,18 +49,18 @@ pub struct Arbitrator {
 }
 
 impl Arbitrator {
-    pub async fn decompose_goal(&self, user_id: &str, app_id: &str, stream_id: uuid::Uuid, goal: &str) -> Result<Vec<MemoryUnit>> {
+    pub async fn decompose_goal(&self, org_id: Option<&str>, user_id: &str, agent_id: Option<&str>, app_id: &str, _stream_id: uuid::Uuid, goal: &str) -> Result<Vec<memorose_common::L3Task>> {
         let client = match &self.llm_client {
             Some(c) => c,
             None => return Ok(Vec::new()),
         };
 
         let system_prompt = "You are a strategic AI planner. \
-            Decompose the following high-level Goal (L3) into a set of 3-5 actionable Milestones (L2). \
+            Decompose the following high-level Goal (L3) into a set of 3-5 actionable Milestones (L3Tasks). \
             For each milestone, identify its dependencies (which other milestones must be completed first). \
             \
             Output format (JSON): \
-            [{\"summary\": \"milestone summary\", \"dependencies\": [\"milestone_name_x\"]}]";
+            [{\"summary\": \"milestone title\", \"description\": \"Detailed action plan for this milestone\", \"dependencies\": [\"milestone_title_x\"]}]";
 
         let combined_prompt = format!("{}\n\nGoal: {}", system_prompt, goal);
         let result = client.generate(&combined_prompt).await?;
@@ -71,28 +71,46 @@ impl Arbitrator {
             .trim_end_matches("```")
             .trim();
 
-        let milestones: Vec<MilestoneDTO> = serde_json::from_str(clean_json).unwrap_or_default();
-
-        let mut units = Vec::new();
-        for m in milestones {
-            let mut unit = MemoryUnit::new(
-                user_id.to_string(), 
-                None, // agent_id (topics are factual derivations)
-                app_id.to_string(), 
-                stream_id, 
-                memorose_common::MemoryType::Factual,
-                m.summary, 
-                None
-            );
-            unit.level = 2;
-            unit.task_metadata = Some(memorose_common::TaskMetadata {
-                status: memorose_common::TaskStatus::Pending,
-                progress: 0.0,
-            });
-            units.push(unit);
+        #[derive(serde::Deserialize)]
+        struct MilestoneDTO {
+            summary: String,
+            #[serde(default)]
+            description: String,
+            #[serde(default)]
+            dependencies: Vec<String>,
         }
 
-        Ok(units)
+        let milestones: Vec<MilestoneDTO> = serde_json::from_str(clean_json).unwrap_or_default();
+
+        let mut tasks = Vec::new();
+        // Create tasks first to get their UUIDs
+        let mut title_to_id = std::collections::HashMap::new();
+        
+        for m in &milestones {
+            let task = memorose_common::L3Task::new(
+                org_id.map(|s| s.to_string()),
+                user_id.to_string(),
+                agent_id.map(|s| s.to_string()),
+                app_id.to_string(),
+                m.summary.clone(),
+                if m.description.is_empty() { m.summary.clone() } else { m.description.clone() },
+            );
+            title_to_id.insert(m.summary.clone(), task.task_id);
+            tasks.push((task, m.dependencies.clone()));
+        }
+
+        // Second pass: wire dependencies
+        let mut final_tasks = Vec::new();
+        for (mut task, deps) in tasks {
+            for dep_title in deps {
+                if let Some(dep_id) = title_to_id.get(&dep_title) {
+                    task.dependencies.push(*dep_id);
+                }
+            }
+            final_tasks.push(task);
+        }
+
+        Ok(final_tasks)
     }
 
     pub fn new() -> Self {
@@ -288,7 +306,7 @@ impl Arbitrator {
         
         let mut topic_units = Vec::new();
         for dto in dtos {
-            let mut unit = MemoryUnit::new(
+            let mut unit = MemoryUnit::new(None, 
                 user_id.to_string(), 
                 None, // agent_id
                 app_id.to_string(), 

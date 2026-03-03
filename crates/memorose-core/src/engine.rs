@@ -627,6 +627,8 @@ impl MemoroseEngine {
         let unit_id = unit.id;
         let user_id = unit.user_id.clone();
         let app_id = unit.app_id.clone();
+        let org_id = unit.org_id.clone();
+        let agent_id = unit.agent_id.clone();
         let stream_id = unit.stream_id;
         let content = unit.content.clone();
         let references = unit.references.clone();
@@ -652,9 +654,11 @@ impl MemoroseEngine {
             let uid = user_id.clone();
             let aid = app_id.clone();
             let cnt = content.clone();
+            let org = org_id.clone();
+            let agent = agent_id.clone();
             tokio::spawn(async move {
                 let key = format!("planning:{}", unit_id);
-                match engine.auto_plan_goal(uid, aid, stream_id, unit_id, cnt, depth + 1).await {
+                match engine.auto_plan_goal(org, uid, agent, aid, stream_id, unit_id, cnt, depth + 1).await {
                     Ok(()) => {
                         let _ = engine.system_kv().put(key.as_bytes(), b"done");
                     }
@@ -668,27 +672,94 @@ impl MemoroseEngine {
         Ok(())
     }
 
-    pub fn auto_plan_goal(&self, user_id: String, app_id: String, stream_id: Uuid, goal_id: Uuid, goal_content: String, depth: usize) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>> {
+    pub fn auto_plan_goal(&self, org_id: Option<String>, user_id: String, agent_id: Option<String>, app_id: String, stream_id: Uuid, goal_id: Uuid, goal_content: String, depth: usize) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>> {
         Box::pin(async move {
             tracing::info!("Auto-planning goal {} (depth {})", goal_id, depth);
 
-            let milestones = self.arbitrator.decompose_goal(&user_id, &app_id, stream_id, &goal_content).await?;
+            let milestones = self.arbitrator.decompose_goal(org_id.as_deref(), &user_id, agent_id.as_deref(), &app_id, stream_id, &goal_content).await?;
 
             if milestones.is_empty() {
                 return Ok(());
             }
 
-            for ms in milestones.clone() {
-                 self.store_memory_unit_with_depth(ms, depth).await?;
+            let mut updated_milestones = Vec::new();
+            for mut ms in milestones {
+                 ms.parent_id = Some(goal_id);
+                 self.store_l3_task(&ms).await?;
+                 updated_milestones.push(ms);
             }
 
-            for ms in milestones {
-                let edge = GraphEdge::new(ms.user_id.clone(), ms.id, goal_id, RelationType::IsSubTaskOf, 1.0);
+            for ms in updated_milestones {
+                let edge = GraphEdge::new(ms.user_id.clone(), ms.task_id, goal_id, RelationType::IsSubTaskOf, 1.0);
                 self.graph.add_edge(&edge).await?;
             }
 
             Ok(())
         })
+    }
+
+    pub async fn store_l3_task(&self, task: &memorose_common::L3Task) -> Result<()> {
+        let key = format!("l3:task:{}:{}", task.user_id, task.task_id);
+        let val = serde_json::to_vec(task)?;
+        self._kv.put(key.as_bytes(), &val)?;
+        Ok(())
+    }
+
+    pub async fn get_l3_task(&self, user_id: &str, task_id: Uuid) -> Result<Option<memorose_common::L3Task>> {
+        let key = format!("l3:task:{}:{}", user_id, task_id);
+        if let Some(val) = self._kv.get(key.as_bytes())? {
+            let task: memorose_common::L3Task = serde_json::from_slice(&val)?;
+            Ok(Some(task))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub async fn list_l3_tasks(&self, user_id: &str) -> Result<Vec<memorose_common::L3Task>> {
+        let prefix = format!("l3:task:{}:", user_id);
+        let results = self._kv.scan(prefix.as_bytes())?;
+        let mut tasks = Vec::new();
+        for (_, val) in results {
+            if let Ok(task) = serde_json::from_slice::<memorose_common::L3Task>(&val) {
+                tasks.push(task);
+            }
+        }
+        Ok(tasks)
+    }
+
+    /// Agent Action Driver: Get tasks that are Pending and have all dependencies Completed.
+    pub async fn get_ready_l3_tasks(&self, user_id: &str) -> Result<Vec<memorose_common::L3Task>> {
+        let all_tasks = self.list_l3_tasks(user_id).await?;
+        
+        // Build a map of task_id -> status for quick dependency checking
+        let status_map: std::collections::HashMap<Uuid, memorose_common::TaskStatus> = all_tasks
+            .iter()
+            .map(|t| (t.task_id, t.status.clone()))
+            .collect();
+
+        let mut ready_tasks = Vec::new();
+        for task in all_tasks {
+            if task.status == memorose_common::TaskStatus::Pending {
+                let mut all_deps_completed = true;
+                for dep_id in &task.dependencies {
+                    if let Some(dep_status) = status_map.get(dep_id) {
+                        if *dep_status != memorose_common::TaskStatus::Completed {
+                            all_deps_completed = false;
+                            break;
+                        }
+                    } else {
+                        // If a dependency is missing, we consider it blocked/not completed
+                        all_deps_completed = false;
+                        break;
+                    }
+                }
+                
+                if all_deps_completed {
+                    ready_tasks.push(task);
+                }
+            }
+        }
+        Ok(ready_tasks)
     }
 
     pub async fn store_memory_units(&self, units: Vec<MemoryUnit>) -> Result<()> {
@@ -984,9 +1055,16 @@ impl MemoroseEngine {
         Ok(final_results.into_iter().take(limit).collect())
     }
 
-    pub async fn search_hybrid(&self, user_id: &str, app_id: Option<&str>, query_text: &str, vector: &[f32], limit: usize, enable_arbitration: bool, min_score: Option<f32>, graph_depth: usize, valid_time: Option<TimeRange>, transaction_time: Option<TimeRange>) -> Result<Vec<(MemoryUnit, f32)>> {
+    pub async fn search_hybrid(&self, user_id: &str, app_id: Option<&str>, agent_id: Option<&str>, query_text: &str, vector: &[f32], limit: usize, enable_arbitration: bool, min_score: Option<f32>, graph_depth: usize, valid_time: Option<TimeRange>, transaction_time: Option<TimeRange>) -> Result<Vec<(MemoryUnit, f32)>> {
         let time_filter = self.build_time_filter(valid_time.clone());
-        let vec_filter = self.build_user_filter(user_id, app_id, time_filter);
+        let agent_filter = agent_id.map(|aid| format!("agent_id = '{}'", aid.replace('\'', "''")));
+        let extra = match (time_filter, agent_filter) {
+            (Some(tf), Some(af)) => Some(format!("{} AND {}", tf, af)),
+            (Some(tf), None) => Some(tf),
+            (None, Some(af)) => Some(af),
+            (None, None) => None,
+        };
+        let vec_filter = self.build_user_filter(user_id, app_id, extra);
 
         let vector_future = self.vector.search("memories", vector, limit * 2, vec_filter);
 
@@ -996,10 +1074,11 @@ impl MemoroseEngine {
         let tt = transaction_time.clone();
         let uid = Some(user_id.to_string());
         let aid = app_id.map(|s| s.to_string());
+        let agid = agent_id.map(|s| s.to_string());
         let text_future = tokio::task::spawn_blocking(move || {
             // Ensure reader sees latest committed segments before searching
             index.reload().ok();
-            index.search_bitemporal(&q_text, limit * 2, vt, tt, uid.as_deref(), aid.as_deref())
+            index.search_bitemporal(&q_text, limit * 2, vt, tt, None, uid.as_deref(), aid.as_deref(), agid.as_deref())
         });
 
         let (vector_results, text_results) = tokio::join!(vector_future, text_future);
@@ -1144,7 +1223,7 @@ impl MemoroseEngine {
         let uid = Some(user_id.to_string());
         let aid = app_id.map(|s| s.to_string());
         let ids = tokio::task::spawn_blocking(move || {
-            index.search(&q, limit, tr, uid.as_deref(), aid.as_deref())
+            index.search(&q, limit, tr, None, uid.as_deref(), aid.as_deref())
         }).await??;
 
         let units = self.fetch_units(user_id, ids).await?;
@@ -1334,7 +1413,7 @@ impl MemoroseEngine {
 
             let insight = self.arbitrator.summarize_community(texts).await?;
 
-            let mut l2_unit = MemoryUnit::new(
+            let mut l2_unit = MemoryUnit::new(None, 
                 user_id.to_string(),
                 None,
                 Self::derive_l2_app_id(&units),
@@ -1486,7 +1565,7 @@ impl MemoroseEngine {
             let texts: Vec<String> = units.iter().map(|u| u.content.clone()).collect();
             let insight = self.arbitrator.summarize_community(texts).await?;
 
-            let mut l2_unit = MemoryUnit::new(
+            let mut l2_unit = MemoryUnit::new(None, 
                 user_id.to_string(),
                 None,
                 Self::derive_l2_app_id(&units),
@@ -1788,7 +1867,7 @@ mod tests {
 
         // 1. Test L0 Ingestion
         let stream_id = Uuid::new_v4();
-        let event = Event::new(TEST_USER.into(), None, TEST_APP.into(), stream_id, EventContent::Text("L0 Test".to_string()));
+        let event = Event::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, EventContent::Text("L0 Test".to_string()));
         engine.ingest_event(event.clone()).await?;
 
         let pending = engine.fetch_pending_events().await?;
@@ -1807,7 +1886,7 @@ mod tests {
         // 2. Test L1 Storage & Retrieval
         let mut embedding = vec![0.0; 384];
         embedding[10] = 1.0;
-        let unit = MemoryUnit::new(TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "L1 Insight".to_string(), Some(embedding.clone()));
+        let unit = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "L1 Insight".to_string(), Some(embedding.clone()));
 
         engine.store_memory_unit(unit.clone()).await?;
         engine.index.commit()?;
@@ -1825,7 +1904,7 @@ mod tests {
         assert_eq!(text_hits[0].id, unit.id);
 
         // 3. Test Forgetting Mechanism
-        let mut weak_unit = MemoryUnit::new(TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Weak Memory".to_string(), None);
+        let mut weak_unit = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Weak Memory".to_string(), None);
         weak_unit.importance = 0.15;
         engine.store_memory_unit(weak_unit.clone()).await?;
 
@@ -1852,13 +1931,13 @@ mod tests {
         // 1. Store first memory
         let mut emb1 = vec![0.0; 384];
         emb1[0] = 1.0;
-        let unit1 = MemoryUnit::new(TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Apple is a fruit".to_string(), Some(emb1));
+        let unit1 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Apple is a fruit".to_string(), Some(emb1));
         engine.store_memory_unit(unit1.clone()).await?;
 
         // 2. Store second similar memory
         let mut emb2 = vec![0.0; 384];
         emb2[0] = 0.99;
-        let unit2 = MemoryUnit::new(TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Apples are sweet".to_string(), Some(emb2));
+        let unit2 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Apples are sweet".to_string(), Some(emb2));
         engine.store_memory_unit(unit2.clone()).await?;
 
         // Verify graph edge exists from unit2 to unit1
@@ -1880,12 +1959,12 @@ mod tests {
         let stream_id = Uuid::new_v4();
 
         let mut emb1 = vec![0.0; 384]; emb1[0] = 1.0;
-        let mut unit1 = MemoryUnit::new(TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "I love cats".to_string(), Some(emb1.clone()));
+        let mut unit1 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "I love cats".to_string(), Some(emb1.clone()));
         unit1.transaction_time = Utc::now() - chrono::Duration::days(1);
         engine.store_memory_unit(unit1.clone()).await?;
 
         let mut emb2 = vec![0.0; 384]; emb2[0] = 0.95;
-        let unit2 = MemoryUnit::new(TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "I hate cats now".to_string(), Some(emb2.clone()));
+        let unit2 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "I hate cats now".to_string(), Some(emb2.clone()));
         engine.store_memory_unit(unit2.clone()).await?;
         engine.index.commit()?;
         engine.index.reload()?;
@@ -1913,15 +1992,15 @@ mod tests {
         let stream_id = Uuid::new_v4();
 
         let mut emb1 = vec![0.0; 768]; emb1[0] = 1.0;
-        let u1 = MemoryUnit::new(TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Rust is memory safe".to_string(), Some(emb1.clone()));
+        let u1 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Rust is memory safe".to_string(), Some(emb1.clone()));
         engine.store_memory_unit(u1.clone()).await?;
 
         let mut emb2 = vec![0.0; 768]; emb2[0] = 0.95;
-        let u2 = MemoryUnit::new(TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "The borrow checker prevents data races".to_string(), Some(emb2.clone()));
+        let u2 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "The borrow checker prevents data races".to_string(), Some(emb2.clone()));
         engine.store_memory_unit(u2.clone()).await?;
 
         let mut emb3 = vec![0.0; 768]; emb3[0] = 0.90;
-        let u3 = MemoryUnit::new(TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Ownership is key to Rust".to_string(), Some(emb3.clone()));
+        let u3 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Ownership is key to Rust".to_string(), Some(emb3.clone()));
         engine.store_memory_unit(u3.clone()).await?;
 
         let _ = engine.process_communities(TEST_USER).await;
@@ -1955,8 +2034,8 @@ mod tests {
         let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let stream_id = Uuid::new_v4();
 
-        let u1 = MemoryUnit::new(TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Memory A".into(), None);
-        let u2 = MemoryUnit::new(TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Memory B".into(), None);
+        let u1 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Memory A".into(), None);
+        let u2 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Memory B".into(), None);
         engine.store_memory_unit(u1.clone()).await?;
         engine.store_memory_unit(u2.clone()).await?;
 
@@ -1980,11 +2059,11 @@ mod tests {
         let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let stream_id = Uuid::new_v4();
 
-        let mut u1 = MemoryUnit::new(TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Memorose started in 2020".into(), None);
+        let mut u1 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Memorose started in 2020".into(), None);
         u1.valid_time = Some(chrono::TimeZone::with_ymd_and_hms(&Utc, 2020, 1, 1, 0, 0, 0).unwrap());
         engine.store_memory_unit(u1.clone()).await?;
 
-        let mut u2 = MemoryUnit::new(TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Memorose is advanced in 2026".into(), None);
+        let mut u2 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Memorose is advanced in 2026".into(), None);
         u2.valid_time = Some(chrono::TimeZone::with_ymd_and_hms(&Utc, 2026, 1, 1, 0, 0, 0).unwrap());
         engine.store_memory_unit(u2.clone()).await?;
 
@@ -2010,9 +2089,9 @@ mod tests {
         let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let stream_id = Uuid::new_v4();
 
-        let mut u1 = MemoryUnit::new(TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Highly relevant".into(), Some(vec![1.0; 768]));
+        let mut u1 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Highly relevant".into(), Some(vec![1.0; 768]));
         u1.importance = 1.0;
-        let mut u2 = MemoryUnit::new(TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Less relevant".into(), Some(vec![0.5; 768]));
+        let mut u2 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Less relevant".into(), Some(vec![0.5; 768]));
         u2.importance = 0.5;
 
         engine.store_memory_units(vec![u1.clone(), u2.clone()]).await?;
@@ -2021,6 +2100,7 @@ mod tests {
 
         let results = engine.search_hybrid(
             TEST_USER,
+            None,
             None,
             "relevant",
             &vec![1.0; 768],
@@ -2053,12 +2133,12 @@ mod tests {
         let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?
             .with_reranker(std::sync::Arc::new(MockReranker));
 
-        let u1 = MemoryUnit::new(TEST_USER.into(), None, TEST_APP.into(), Uuid::new_v4(), memorose_common::MemoryType::Factual, "Test".into(), Some(vec![1.0; 768]));
+        let u1 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), Uuid::new_v4(), memorose_common::MemoryType::Factual, "Test".into(), Some(vec![1.0; 768]));
         engine.store_memory_unit(u1).await?;
         engine.index.commit()?;
         engine.index.reload()?;
 
-        let results = engine.search_hybrid(TEST_USER, None, "Test", &vec![1.0; 768], 10, false, None, 0, None, None).await?;
+        let results = engine.search_hybrid(TEST_USER, None, None, "Test", &vec![1.0; 768], 10, false, None, 0, None, None).await?;
         assert!(results.is_empty());
 
         Ok(())
@@ -2071,10 +2151,10 @@ mod tests {
         let stream_id = Uuid::new_v4();
 
         // 1. Create parent L2
-        let mut parent = MemoryUnit::new(TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Parent Task".into(), None);
+        let mut parent = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Parent Task".into(), None);
         parent.level = 2;
         parent.task_metadata = Some(memorose_common::TaskMetadata {
-            status: memorose_common::TaskStatus::Active,
+            status: memorose_common::TaskStatus::InProgress,
             progress: 0.0,
         });
         let parent_id = parent.id;
@@ -2082,7 +2162,7 @@ mod tests {
 
         // 2. Create 10 children L1s and link them
         for i in 0..10 {
-            let mut child = MemoryUnit::new(TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, format!("Child {}", i), None);
+            let mut child = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, format!("Child {}", i), None);
             child.level = 1;
             child.task_metadata = Some(memorose_common::TaskMetadata {
                 status: memorose_common::TaskStatus::Completed,
@@ -2126,13 +2206,13 @@ mod tests {
         let stream_id = Uuid::new_v4();
 
         // Store memory for user A
-        let unit_a = MemoryUnit::new("user_a".into(), None, "app1".into(), stream_id, memorose_common::MemoryType::Factual, "Secret of user A".into(), None);
+        let unit_a = MemoryUnit::new(None, "user_a".into(), None, "app1".into(), stream_id, memorose_common::MemoryType::Factual, "Secret of user A".into(), None);
         engine.store_memory_unit(unit_a.clone()).await?;
         engine.index.commit()?;
         engine.index.reload()?;
 
         // Store memory for user B
-        let unit_b = MemoryUnit::new("user_b".into(), None, "app1".into(), stream_id, memorose_common::MemoryType::Factual, "Secret of user B".into(), None);
+        let unit_b = MemoryUnit::new(None, "user_b".into(), None, "app1".into(), stream_id, memorose_common::MemoryType::Factual, "Secret of user B".into(), None);
         engine.store_memory_unit(unit_b.clone()).await?;
         engine.index.commit()?;
         engine.index.reload()?;
@@ -2155,7 +2235,7 @@ mod tests {
         let temp_dir = tempdir()?;
         let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
 
-        let event = Event::new(
+        let event = Event::new(None, 
             TEST_USER.into(),
             None,
             TEST_APP.into(),
@@ -2186,7 +2266,7 @@ mod tests {
         let stream_id = Uuid::new_v4();
 
         for i in 0..4 {
-            let unit = MemoryUnit::new(
+            let unit = MemoryUnit::new(None, 
                 TEST_USER.into(),
                 None,
                 TEST_APP.into(),
@@ -2199,7 +2279,7 @@ mod tests {
         }
 
         for i in 0..2 {
-            let unit = MemoryUnit::new(
+            let unit = MemoryUnit::new(None, 
                 TEST_USER.into(),
                 None,
                 TEST_APP.into(),
@@ -2215,7 +2295,7 @@ mod tests {
         assert_eq!((before, after), (4, 6));
         assert!(before / 5 < after / 5);
 
-        let unit = MemoryUnit::new(
+        let unit = MemoryUnit::new(None, 
             TEST_USER.into(),
             None,
             TEST_APP.into(),
