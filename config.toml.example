@@ -53,7 +53,7 @@ similarity_threshold = 0.3
 # Provider: "gemini" | "openai" | "mock"
 provider = "gemini"
 # Model for semantic compression
-model = "gemini-3-flash-preview"
+model = "gemini-3.1-flash-lite-preview"
 # Embedding model
 embedding_model = "gemini-embedding-001"
 # API request settings

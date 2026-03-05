@@ -11,15 +11,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
-import { Bot, Database, Activity, Zap } from "lucide-react";
+import { Bot, Database, Activity } from "lucide-react";
 import { formatNumber } from "@/lib/utils";
 import type { AgentSummary } from "@/lib/types";
 import { motion } from "framer-motion";
 
-function formatRelativeTime(timestamp: number | null): string {
+function formatRelativeTime(timestamp: number | null, now: number): string {
   if (!timestamp) return "Never";
-  const diff = Date.now() - timestamp * 1000;
+  const diff = now - timestamp * 1000;
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return "Just now";
   if (mins < 60) return `${mins}m ago`;
@@ -34,79 +33,75 @@ function KpiCard({
   value,
   icon: Icon,
   color = "text-primary",
-  glow = "shadow-primary/20",
+  delay = 0,
 }: {
   label: string;
   value: number | string;
   icon: React.ElementType;
   color?: string;
-  glow?: string;
+  delay?: number;
 }) {
   return (
-    <Card className="glass-card relative overflow-hidden group hover:bg-white/[0.04] transition-all duration-300">
-      <CardContent className="pt-4 pb-3 relative z-10">
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/70">{label}</span>
-          <div className={`p-1.5 rounded-md bg-background/50 border border-white/5 ${color} shadow-sm ${glow} group-hover:scale-110 transition-transform duration-300`}>
-            <Icon className="w-3.5 h-3.5 opacity-80" />
+    <motion.div
+      initial={{ opacity: 0, y: 15 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, delay, ease: "easeOut" }}
+      className="h-full"
+    >
+      <Card className="glass-card group relative overflow-hidden hover:bg-white/[0.04] transition-all duration-500 h-full border-white/[0.04] hover:border-white/10">
+        <CardContent className="p-5 flex flex-col justify-between h-full relative z-10">
+          <div className="flex items-center justify-between">
+            <Icon className={`w-4 h-4 ${color} opacity-60 group-hover:opacity-100 transition-opacity`} />
+            <span className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold group-hover:text-muted-foreground/70 transition-colors">
+              {label}
+            </span>
           </div>
-        </div>
-        <div className="text-2xl font-bold tracking-tight font-mono text-foreground/90">
-          {typeof value === "number" ? formatNumber(value) : value}
-        </div>
-      </CardContent>
-      <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/[0.02] to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-    </Card>
+          <div className="text-3xl font-bold tracking-tighter font-mono text-foreground/90 mt-4 group-hover:text-white transition-colors">
+            {typeof value === "number" ? formatNumber(value) : value}
+          </div>
+        </CardContent>
+        <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/[0.01] to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
+      </Card>
+    </motion.div>
   );
 }
 
-function AgentRow({ agent, index }: { agent: AgentSummary; index: number }) {
-  const relTime = formatRelativeTime(agent.last_activity);
-  const isRecent = agent.last_activity && Date.now() - agent.last_activity * 1000 < 3600000;
+function AgentRow({ agent, index, now }: { agent: AgentSummary; index: number; now: number }) {
+  const relTime = formatRelativeTime(agent.last_activity, now);
+  const isRecent = agent.last_activity && now - agent.last_activity * 1000 < 3600000;
 
   return (
     <motion.tr
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.04, duration: 0.25 }}
-      className="border-b border-white/5 hover:bg-white/[0.03] transition-colors group"
+      transition={{ delay: index * 0.03, duration: 0.25 }}
+      className="border-b border-white/[0.03] hover:bg-white/[0.03] transition-colors group"
     >
-      <TableCell>
-        <div className="flex items-center gap-2.5">
-          <div className="relative flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 border border-primary/10 group-hover:bg-primary/20 group-hover:border-primary/20 transition-colors shrink-0">
-            <Bot className="w-3.5 h-3.5 text-primary" />
+      <TableCell className="px-5">
+        <div className="flex items-center gap-3">
+          <div className="relative flex h-7 w-7 items-center justify-center rounded-lg bg-white/[0.02] border border-white/[0.04] group-hover:border-primary/20 transition-colors shrink-0">
+            <Bot className="w-3.5 h-3.5 text-muted-foreground group-hover:text-primary transition-colors" />
             {isRecent && (
-              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-success border border-background animate-pulse" />
+              <span className="absolute -top-0.5 -right-0.5 w-1 h-1 rounded-full bg-success shadow-[0_0_5px_rgba(34,197,94,0.8)] animate-pulse" />
             )}
           </div>
-          <span className="font-mono text-xs text-foreground/90">{agent.agent_id}</span>
+          <span className="font-mono text-xs text-foreground/80 group-hover:text-white transition-colors">{agent.agent_id}</span>
         </div>
       </TableCell>
       <TableCell className="text-center">
-        <span className="font-mono text-sm font-semibold tabular-nums">{formatNumber(agent.total_memories)}</span>
+        <span className="font-mono text-[11px] text-foreground/60">{formatNumber(agent.total_memories)}</span>
       </TableCell>
       <TableCell className="text-center">
-        <Badge variant="outline" className="text-xs font-mono bg-primary/5 text-primary border-primary/20 tabular-nums">
-          {formatNumber(agent.l1_count)}
-        </Badge>
+        <span className="font-mono text-[11px] text-primary/70">{formatNumber(agent.l1_count)}</span>
       </TableCell>
       <TableCell className="text-center">
-        <Badge variant="outline" className="text-xs font-mono bg-success/5 text-success border-success/20 tabular-nums">
-          {formatNumber(agent.l2_count)}
-        </Badge>
+        <span className="font-mono text-[11px] text-success/70">{formatNumber(agent.l2_count)}</span>
       </TableCell>
       <TableCell className="text-center">
-        <span className="font-mono text-sm tabular-nums">{formatNumber(agent.total_events)}</span>
+        <span className="font-mono text-[11px] text-muted-foreground/50">{formatNumber(agent.total_events)}</span>
       </TableCell>
-      <TableCell>
-        <div className="flex flex-col">
-          <span className={`text-xs font-medium ${isRecent ? "text-success" : "text-muted-foreground"}`}>{relTime}</span>
-          {agent.last_activity && (
-            <span className="text-[10px] text-muted-foreground/50 font-mono">
-              {new Date(agent.last_activity * 1000).toLocaleDateString()}
-            </span>
-          )}
-        </div>
+      <TableCell className="px-5">
+        <span className={`font-mono text-[10px] uppercase tracking-wider ${isRecent ? "text-success/70" : "text-muted-foreground/30"}`}>{relTime}</span>
       </TableCell>
     </motion.tr>
   );
@@ -119,82 +114,74 @@ export default function AgentsPage() {
   const totalEvents = data?.agents.reduce((sum, a) => sum + a.total_events, 0) ?? 0;
 
   return (
-    <div className="space-y-6 relative">
+    <div className="space-y-8 relative pb-10">
       <div className="absolute top-0 right-0 w-[500px] h-[300px] blob-bg opacity-20 pointer-events-none -z-10 mix-blend-screen" />
 
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
-        <h1 className="text-3xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-b from-white to-white/60">
-          Agents
-        </h1>
-        <p className="text-muted-foreground mt-1 text-sm">Memory metrics grouped by agent_id</p>
+        <div className="flex items-center gap-3">
+          <div className="w-1 h-6 bg-primary/40 rounded-full" />
+          <h1 className="text-sm font-bold tracking-[0.3em] uppercase text-muted-foreground/60">
+            Agents
+          </h1>
+        </div>
       </motion.div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {isLoading ? (
-          [1, 2, 3].map((i) => <Skeleton key={i} className="h-[88px] glass-card rounded-xl opacity-30" />)
+          [1, 2, 3].map((i) => <Skeleton key={i} className="h-28 glass-card rounded-xl opacity-10 border-white/5" />)
         ) : (
           <>
-            <KpiCard label="Total Agents" value={data?.total_count ?? 0} icon={Bot} />
-            <KpiCard label="Total Memories" value={totalMemories} icon={Database} color="text-success" glow="shadow-success/20" />
-            <KpiCard label="Total Events" value={totalEvents} icon={Activity} color="text-warning" glow="shadow-warning/20" />
+            <KpiCard label="Count" value={data?.total_count ?? 0} icon={Bot} delay={0.1} />
+            <KpiCard label="Total Memories" value={totalMemories} icon={Database} color="text-success" delay={0.15} />
+            <KpiCard label="Total Events" value={totalEvents} icon={Activity} color="text-warning" delay={0.2} />
           </>
         )}
       </div>
 
       {/* Agent Table */}
-      <div className="glass-card rounded-xl overflow-hidden border border-white/[0.06]">
-        {/* Header */}
-        <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2">
-          <Zap className="w-3.5 h-3.5 text-primary opacity-70" />
-          <span className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground/70">Agent Registry</span>
-          {data && (
-            <span className="ml-auto text-[10px] font-mono text-muted-foreground/40">{data.total_count} agents</span>
-          )}
-        </div>
+      <div className="glass-card rounded-xl overflow-hidden border border-white/[0.06] shadow-2xl shadow-black/50">
+        <TableHeader className="bg-white/[0.03]">
+          <TableRow className="border-white/5 hover:bg-transparent">
+            <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold px-5">AGT</TableHead>
+            <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold text-center">MEM</TableHead>
+            <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold text-center">L1</TableHead>
+            <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold text-center">L2</TableHead>
+            <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold text-center">EVT</TableHead>
+            <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold px-5">ACT</TableHead>
+          </TableRow>
+        </TableHeader>
 
         {error ? (
-          <div className="p-6 text-sm text-destructive">
-            Failed to load agents: {(error as Error).message}
+          <div className="p-10 text-center">
+             <span className="text-[10px] uppercase tracking-widest text-destructive font-bold">Sync Error</span>
           </div>
         ) : (
           <Table>
-            <TableHeader>
-              <TableRow className="border-white/5 hover:bg-transparent">
-                <TableHead className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-semibold">Agent ID</TableHead>
-                <TableHead className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-semibold text-center">Memories</TableHead>
-                <TableHead className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-semibold text-center">L1</TableHead>
-                <TableHead className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-semibold text-center">L2</TableHead>
-                <TableHead className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-semibold text-center">Events</TableHead>
-                <TableHead className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-semibold">Last Active</TableHead>
-              </TableRow>
-            </TableHeader>
             <TableBody>
               {isLoading ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <TableRow key={i} className="border-white/5">
                     <TableCell colSpan={6}>
-                      <Skeleton className="h-8 w-full opacity-20" />
+                      <Skeleton className="h-8 w-full opacity-10" />
                     </TableCell>
                   </TableRow>
                 ))
               ) : !data || data.agents.length === 0 ? (
                 <TableRow className="border-white/5 hover:bg-transparent">
-                  <TableCell colSpan={6} className="py-16">
+                  <TableCell colSpan={6} className="py-24">
                     <div className="flex flex-col items-center gap-3 text-center">
-                      <div className="w-14 h-14 rounded-2xl bg-white/[0.03] border border-white/5 flex items-center justify-center">
-                        <Bot className="w-7 h-7 opacity-20" />
+                      <div className="w-12 h-12 rounded-2xl bg-white/[0.02] border border-white/5 flex items-center justify-center">
+                        <Bot className="w-5 h-5 opacity-10" />
                       </div>
-                      <div>
-                        <p className="text-sm text-muted-foreground font-medium">No agents found</p>
-                        <p className="text-xs text-muted-foreground/60 mt-0.5">Agents appear once memories with an agent_id are ingested</p>
-                      </div>
+                      <p className="text-[10px] uppercase tracking-widest text-muted-foreground/30 font-bold">Zero Registry</p>
                     </div>
                   </TableCell>
                 </TableRow>
               ) : (
                 data.agents.map((agent, i) => (
-                  <AgentRow key={agent.agent_id} agent={agent} index={i} />
+                  // eslint-disable-next-line react-hooks/purity
+                  <AgentRow key={agent.agent_id} agent={agent} index={i} now={Date.now()} />
                 ))
               )}
             </TableBody>

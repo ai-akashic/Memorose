@@ -433,6 +433,7 @@ struct DashboardMemoryRow {
     reference_count: usize,
     has_assets: bool,
     item_type: &'static str,
+    memory_type: Option<String>,
 }
 
 fn event_content_preview(content: &EventContent) -> (String, bool) {
@@ -513,22 +514,30 @@ pub async fn list_memories(
                             true
                         }
                     })
-                    .map(|u| DashboardMemoryRow {
-                        id: u.id.to_string(),
-                        org_id: u.org_id,
-                        user_id: u.user_id,
-                        app_id: u.app_id,
-                        agent_id: u.agent_id,
-                        content: u.content,
-                        level: u.level,
-                        importance: u.importance,
-                        keywords: u.keywords,
-                        access_count: u.access_count,
-                        last_accessed_at: u.last_accessed_at,
-                        transaction_time: u.transaction_time,
-                        reference_count: u.references.len(),
-                        has_assets: !u.assets.is_empty(),
-                        item_type: "memory",
+                    .map(|u| {
+                        let memory_type_str = match u.memory_type {
+                            memorose_common::MemoryType::Factual => "factual",
+                            memorose_common::MemoryType::Procedural => "procedural",
+                        }.to_string();
+                        
+                        DashboardMemoryRow {
+                            id: u.id.to_string(),
+                            org_id: u.org_id,
+                            user_id: u.user_id,
+                            app_id: u.app_id,
+                            agent_id: u.agent_id,
+                            content: u.content,
+                            level: u.level,
+                            importance: u.importance,
+                            keywords: u.keywords,
+                            access_count: u.access_count,
+                            last_accessed_at: u.last_accessed_at,
+                            transaction_time: u.transaction_time,
+                            reference_count: u.references.len(),
+                            has_assets: !u.assets.is_empty(),
+                            item_type: "memory",
+                            memory_type: Some(memory_type_str),
+                        }
                     })
                     .take(10_000)
                     .collect();
@@ -589,6 +598,7 @@ pub async fn list_memories(
                             reference_count: 0,
                             has_assets,
                             item_type: "event",
+                            memory_type: None,
                         }
                     })
                     .take(10_000)

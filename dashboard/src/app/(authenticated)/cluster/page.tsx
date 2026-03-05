@@ -20,35 +20,75 @@ import {
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { motion } from "framer-motion";
 
 function StatCard({
   label,
   value,
-  sub,
   icon: Icon,
   color = "text-primary",
+  delay = 0,
 }: {
   label: string;
   value: string | number;
-  sub?: string;
   icon: React.ElementType;
   color?: string;
+  delay?: number;
 }) {
   return (
-    <Card className="group hover:shadow-md hover:border-primary/20 transition-all duration-200">
-      <CardContent className="pt-4 pb-3">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{label}</span>
-          <div className={`p-1.5 rounded-lg bg-muted/50 group-hover:bg-primary/10 transition-colors`}>
-            <Icon className={`w-3.5 h-3.5 ${color}`} />
+    <motion.div
+      initial={{ opacity: 0, y: 15 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, delay, ease: "easeOut" }}
+      className="h-full"
+    >
+      <Card className="glass-card group relative overflow-hidden hover:bg-white/[0.04] transition-all duration-500 h-full border-white/[0.04] hover:border-white/10">
+        <CardContent className="p-5 flex flex-col justify-between h-full relative z-10">
+          <div className="flex items-center justify-between">
+            <Icon className={`w-4 h-4 ${color} opacity-60 group-hover:opacity-100 transition-opacity`} />
+            <span className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold group-hover:text-muted-foreground/70 transition-colors">
+              {label}
+            </span>
           </div>
-        </div>
-        <div className="text-2xl font-bold tracking-tight">{typeof value === "number" ? formatNumber(value) : value}</div>
-        {sub && <div className="text-xs text-muted-foreground mt-1">{sub}</div>}
-      </CardContent>
-    </Card>
+          <div className="text-3xl font-bold tracking-tighter font-mono text-foreground/90 mt-4 group-hover:text-white transition-colors">
+            {typeof value === "number" ? formatNumber(value) : value}
+          </div>
+        </CardContent>
+        <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/[0.01] to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
+      </Card>
+    </motion.div>
+  );
+}
+
+function RaftMetricsGrid({ data, stateColor }: { data: ShardStatus | ClusterStatusSingle, stateColor: string }) {
+  return (
+    <div className="grid grid-cols-3 gap-2 mt-4">
+      <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center border-white/5">
+        <span className="text-[9px] uppercase tracking-widest text-muted-foreground/50">State</span>
+        <span className={`text-xs font-bold uppercase mt-1 ${stateColor}`}>{data.raft_state}</span>
+      </div>
+      <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center border-white/5">
+        <span className="text-[9px] uppercase tracking-widest text-muted-foreground/50">Term</span>
+        <span className="text-xs font-mono font-bold text-foreground/80 mt-1">{data.current_term}</span>
+      </div>
+      <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center border-white/5">
+        <span className="text-[9px] uppercase tracking-widest text-muted-foreground/50">Log Index</span>
+        <span className="text-xs font-mono font-bold text-foreground/80 mt-1">{data.last_log_index}</span>
+      </div>
+      <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center border-white/5">
+        <span className="text-[9px] uppercase tracking-widest text-muted-foreground/50">Applied</span>
+        <span className="text-xs font-mono font-bold text-foreground/80 mt-1">{data.last_applied}</span>
+      </div>
+      <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center border-white/5">
+        <span className="text-[9px] uppercase tracking-widest text-muted-foreground/50">Lag</span>
+        <span className={`text-xs font-mono font-bold mt-1 ${data.replication_lag > 10 ? "text-warning" : "text-success"}`}>{data.replication_lag}</span>
+      </div>
+      <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center border-white/5">
+        <span className="text-[9px] uppercase tracking-widest text-muted-foreground/50">Voters</span>
+        <span className="text-xs font-mono font-bold text-foreground/80 mt-1">{data.voters?.length ?? 0}</span>
+      </div>
+    </div>
   );
 }
 
@@ -62,36 +102,18 @@ function ShardRaftCard({ shard }: { shard: ShardStatus }) {
   const isHealthy = shard.replication_lag <= 10;
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
+    <Card className="glass-card border-white/[0.04] hover:border-white/10 transition-colors">
+      <CardHeader className="p-4 pb-0">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-xs flex items-center gap-1.5">
-            <Layers className="w-3.5 h-3.5 text-primary" />
-            Shard {shard.shard_id}
-          </CardTitle>
-          <div className="flex items-center gap-1.5">
-            <div className={`w-1.5 h-1.5 rounded-full ${isHealthy ? 'bg-success' : 'bg-warning'} animate-pulse`} />
-            <span className="text-[10px] text-muted-foreground">
-              {isHealthy ? 'Healthy' : 'Degraded'}
-            </span>
+          <div className="flex items-center gap-2">
+            <Layers className="w-4 h-4 text-primary opacity-60" />
+            <span className="uppercase tracking-[0.2em] text-muted-foreground/70 font-bold text-[10px]">S{shard.shard_id}</span>
           </div>
+          <div className={`w-2 h-2 rounded-full ${isHealthy ? 'bg-success shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-warning shadow-[0_0_8px_rgba(245,158,11,0.5)]'} animate-pulse`} />
         </div>
       </CardHeader>
-      <CardContent className="space-y-2">
-        {[
-          { label: "State", value: shard.raft_state, className: `font-medium ${stateColor}` },
-          { label: "Raft Node ID", value: shard.raft_node_id, className: "font-mono" },
-          { label: "Term", value: shard.current_term, className: "font-mono" },
-          { label: "Log Index", value: shard.last_log_index, className: "font-mono" },
-          { label: "Applied", value: shard.last_applied, className: "font-mono" },
-          { label: "Replication Lag", value: `${shard.replication_lag} entries`, className: `font-mono ${shard.replication_lag > 10 ? "text-warning" : "text-success"}` },
-          { label: "Voters", value: shard.voters.length, className: "font-mono" },
-        ].map((row) => (
-          <div key={row.label} className="flex justify-between text-xs">
-            <span className="text-muted-foreground">{row.label}</span>
-            <span className={row.className}>{row.value}</span>
-          </div>
-        ))}
+      <CardContent className="p-4 pt-2">
+        <RaftMetricsGrid data={shard} stateColor={stateColor} />
       </CardContent>
     </Card>
   );
@@ -105,27 +127,18 @@ function RaftStatusCard({ cluster }: { cluster: ClusterStatusSingle }) {
   }[cluster.raft_state] || "text-muted-foreground";
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-xs flex items-center gap-1.5">
-          <GitBranch className="w-3.5 h-3.5 text-primary" />
-          Raft Consensus
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-2">
-        {[
-          { label: "State", value: cluster.raft_state, className: `font-medium ${stateColor}` },
-          { label: "Term", value: cluster.current_term, className: "font-mono" },
-          { label: "Log Index", value: cluster.last_log_index, className: "font-mono" },
-          { label: "Applied", value: cluster.last_applied, className: "font-mono" },
-          { label: "Replication Lag", value: `${cluster.replication_lag} entries`, className: `font-mono ${cluster.replication_lag > 10 ? "text-warning" : "text-success"}` },
-          { label: "Voters", value: cluster.voters.length, className: "font-mono" },
-        ].map((row) => (
-          <div key={row.label} className="flex justify-between text-xs">
-            <span className="text-muted-foreground">{row.label}</span>
-            <span className={row.className}>{row.value}</span>
+    <Card className="glass-card border-white/[0.04] hover:border-white/10 transition-colors">
+      <CardHeader className="p-4 pb-0">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <GitBranch className="w-4 h-4 text-primary opacity-60" />
+            <span className="uppercase tracking-[0.2em] text-muted-foreground/70 font-bold text-[10px]">Consensus</span>
           </div>
-        ))}
+          <div className={`w-2 h-2 rounded-full ${cluster.replication_lag <= 10 ? 'bg-success shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-warning shadow-[0_0_8px_rgba(245,158,11,0.5)]'} animate-pulse`} />
+        </div>
+      </CardHeader>
+      <CardContent className="p-4 pt-2">
+        <RaftMetricsGrid data={cluster} stateColor={stateColor} />
       </CardContent>
     </Card>
   );
@@ -139,64 +152,56 @@ function HeartbeatCard({ cluster, onRemoveNode }: { cluster: ClusterStatusSingle
   };
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-xs flex items-center gap-1.5">
-          <Activity className="w-3.5 h-3.5 text-primary" />
-          Heartbeat & Health
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="space-y-2">
-          <div className="flex justify-between text-xs">
-            <span className="text-muted-foreground">Heartbeat Interval</span>
-            <span className="font-mono">{config.heartbeat_interval_ms}ms</span>
+    <Card className="glass-card border-white/[0.04] hover:border-white/10 transition-colors">
+      <CardHeader className="p-4 pb-0">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Activity className="w-4 h-4 text-primary opacity-60" />
+            <span className="uppercase tracking-[0.2em] text-muted-foreground/70 font-bold text-[10px]">Heartbeat</span>
           </div>
-          <div className="flex justify-between text-xs">
-            <span className="text-muted-foreground">Election Timeout</span>
-            <span className="font-mono">{config.election_timeout_min_ms}-{config.election_timeout_max_ms}ms</span>
+        </div>
+      </CardHeader>
+      <CardContent className="p-4 pt-4 space-y-4">
+        <div className="grid grid-cols-2 gap-2">
+          <div className="glass-card p-2 rounded-lg flex flex-col items-center justify-center border-white/5">
+            <span className="text-[9px] uppercase tracking-widest text-muted-foreground/50">Interval</span>
+            <span className="text-xs font-mono font-bold text-foreground/80 mt-1">{config.heartbeat_interval_ms}ms</span>
+          </div>
+          <div className="glass-card p-2 rounded-lg flex flex-col items-center justify-center border-white/5">
+            <span className="text-[9px] uppercase tracking-widest text-muted-foreground/50">Timeout</span>
+            <span className="text-xs font-mono font-bold text-foreground/80 mt-1">{config.election_timeout_min_ms}ms</span>
           </div>
         </div>
 
-        <div className="border-t pt-2">
-          <div className="text-xs text-muted-foreground mb-2">Node Status</div>
-          <div className="space-y-2">
-            {cluster.voters.map((nodeId) => {
-              const isLeader = nodeId === cluster.current_leader;
-              const isSelf = nodeId === cluster.node_id;
-              const isHealthy = cluster.replication_lag === 0 || isLeader;
+        <div className="space-y-1">
+          {cluster.voters.map((nodeId) => {
+            const isLeader = nodeId === cluster.current_leader;
+            const isSelf = nodeId === cluster.node_id;
+            const isHealthy = cluster.replication_lag === 0 || isLeader;
 
-              return (
-                <div key={nodeId} className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full ${isHealthy ? 'bg-success' : 'bg-warning'} animate-pulse`} />
-                    <span className="text-xs font-mono">
-                      Node {nodeId}
-                      {isSelf && <span className="ml-1 text-muted-foreground">(self)</span>}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {isLeader && (
-                      <Badge variant="outline" className="text-[10px] h-4 px-1.5 bg-success/10 text-success border-success/20">
-                        Leader
-                      </Badge>
-                    )}
-                    <span className="text-xs text-success">Online</span>
-                    {!isSelf && !isLeader && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-5 px-1.5 text-[10px] text-destructive hover:text-destructive hover:bg-destructive/10"
-                        onClick={() => cluster && onRemoveNode(nodeId)}
-                      >
-                        <UserMinus className="w-3 h-3" />
-                      </Button>
-                    )}
-                  </div>
+            return (
+              <div key={nodeId} className="flex items-center justify-between py-1.5 px-2 rounded-md hover:bg-white/[0.02] transition-colors">
+                <div className="flex items-center gap-2">
+                  <div className={`w-1.5 h-1.5 rounded-full ${isHealthy ? 'bg-success shadow-[0_0_5px_rgba(34,197,94,0.5)]' : 'bg-warning shadow-[0_0_5px_rgba(245,158,11,0.5)]'} animate-pulse`} />
+                  <span className="text-xs font-mono text-foreground/80">N{nodeId}</span>
+                  {isSelf && <span className="text-[10px] uppercase text-muted-foreground/40 font-bold ml-1">(Self)</span>}
                 </div>
-              );
-            })}
-          </div>
+                <div className="flex items-center gap-2">
+                  {isLeader && <Star className="w-3 h-3 text-success opacity-80" />}
+                  {!isSelf && !isLeader && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-5 w-5 hover:bg-destructive/10 hover:text-destructive text-muted-foreground/30 transition-colors"
+                      onClick={() => onRemoveNode(nodeId)}
+                    >
+                      <UserMinus className="w-3 h-3" />
+                    </Button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </CardContent>
     </Card>
@@ -205,30 +210,30 @@ function HeartbeatCard({ cluster, onRemoveNode }: { cluster: ClusterStatusSingle
 
 function PipelineCard({ stats }: { stats: NonNullable<ReturnType<typeof useStats>["data"]> }) {
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-xs flex items-center gap-1.5">
-          <Zap className="w-3.5 h-3.5 text-primary" />
-          Memory Pipeline
-        </CardTitle>
+    <Card className="glass-card border-white/[0.04] hover:border-white/10 transition-colors">
+      <CardHeader className="p-4 pb-0">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Zap className="w-4 h-4 text-primary opacity-60" />
+            <span className="uppercase tracking-[0.2em] text-muted-foreground/70 font-bold text-[10px]">Pipeline</span>
+          </div>
+        </div>
       </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent className="p-4 pt-5 space-y-5">
         {[
-          { label: "L0 (Pending)", count: stats.pending_events, color: "bg-warning" },
-          { label: "L1 (Consolidated)", count: stats.memory_by_level.l1, color: "bg-primary" },
-          { label: "L2 (Insights)", count: stats.memory_by_level.l2, color: "bg-success" },
+          { label: "L0", count: stats.pending_events, color: "bg-warning", glow: "shadow-[0_0_10px_rgba(245,158,11,0.3)]" },
+          { label: "L1", count: stats.memory_by_level.l1, color: "bg-primary", glow: "shadow-[0_0_10px_rgba(56,125,255,0.3)]" },
+          { label: "L2", count: stats.memory_by_level.l2, color: "bg-success", glow: "shadow-[0_0_10px_rgba(34,197,94,0.3)]" },
         ].map((level) => (
-          <div key={level.label}>
-            <div className="flex justify-between text-xs mb-1">
-              <span className="text-muted-foreground">{level.label}</span>
-              <span className="font-mono">{formatNumber(level.count)}</span>
+          <div key={level.label} className="relative">
+            <div className="flex justify-between items-end mb-1.5">
+              <span className="text-[10px] font-mono text-muted-foreground/50 font-bold">{level.label}</span>
+              <span className="text-xs font-mono text-foreground/80">{formatNumber(level.count)}</span>
             </div>
-            <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+            <div className="h-1 bg-black/40 rounded-full overflow-hidden border border-white/[0.02]">
               <div
-                className={`h-full ${level.color} rounded-full transition-all`}
-                style={{
-                  width: `${Math.min(100, (level.count / Math.max(stats.total_memory_units, 1)) * 100)}%`,
-                }}
+                className={`h-full ${level.color} ${level.glow} rounded-full transition-all duration-1000`}
+                style={{ width: `${Math.max(2, Math.min(100, (level.count / Math.max(stats.total_memory_units, 1)) * 100))}%` }}
               />
             </div>
           </div>
@@ -242,39 +247,41 @@ function SingleShardTopology({ cluster }: { cluster: ClusterStatusSingle }) {
   const hasNodes = cluster.voters.length > 0 || cluster.learners.length > 0;
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-xs flex items-center gap-1.5">
-          <Server className="w-3.5 h-3.5 text-primary" />
-          Cluster Topology
+    <Card className="glass-card">
+      <CardHeader className="pb-3 border-b border-white/[0.05]">
+        <CardTitle className="text-xs flex items-center gap-2">
+          <div className="p-1.5 rounded-md bg-primary/10 border border-primary/20">
+            <Server className="w-3.5 h-3.5 text-primary" />
+          </div>
+          <span className="uppercase tracking-widest text-muted-foreground/80 font-bold">Cluster Topology</span>
         </CardTitle>
       </CardHeader>
       <CardContent>
         {hasNodes ? (
-          <div className="flex items-center justify-center gap-5 py-3">
+          <div className="flex items-center justify-center gap-6 py-6">
             {cluster.voters.map((nodeId) => {
               const isLeader = nodeId === cluster.current_leader;
               const isSelf = nodeId === cluster.node_id;
               return (
-                <div key={nodeId} className="text-center">
+                <div key={nodeId} className="text-center group">
                   <div
-                    className={`w-14 h-14 rounded-xl flex items-center justify-center border-2 ${
+                    className={`relative w-16 h-16 rounded-2xl flex items-center justify-center border-2 transition-all duration-300 mx-auto ${
                       isLeader
-                        ? "border-success bg-success/10"
-                        : "border-border bg-muted"
+                        ? "border-success bg-success/10 shadow-[0_0_20px_rgba(34,197,94,0.15)] group-hover:scale-105"
+                        : "border-white/10 bg-black/40 group-hover:border-white/20"
                     }`}
                   >
                     <div className="text-center">
-                      {isLeader && <Star className="w-3 h-3 text-success mx-auto mb-0.5" />}
-                      <span className={`text-xs font-mono ${isSelf ? "font-bold" : ""}`}>
+                      {isLeader && <Star className="w-3.5 h-3.5 text-success mx-auto mb-1 animate-pulse" />}
+                      <span className={`text-sm font-mono ${isSelf ? "font-bold text-white" : "text-foreground/70"}`}>
                         N{nodeId}
                       </span>
                     </div>
                   </div>
-                  <div className="text-xs text-muted-foreground mt-1.5">
-                    {isLeader ? "Leader" : "Follower"}
+                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-bold mt-3">
+                    {isLeader ? <span className="text-success">Leader</span> : "Follower"}
                   </div>
-                  <div className="text-xs text-muted-foreground font-mono">
+                  <div className="text-[10px] text-muted-foreground/40 font-mono mt-0.5">
                     :{3000 + nodeId - 1}
                   </div>
                 </div>
@@ -282,22 +289,22 @@ function SingleShardTopology({ cluster }: { cluster: ClusterStatusSingle }) {
             })}
             {cluster.learners.map((nodeId) => (
               <div key={nodeId} className="text-center">
-                <div className="w-14 h-14 rounded-xl flex items-center justify-center border-2 border-dashed border-border bg-muted/50">
-                  <span className="text-xs font-mono">N{nodeId}</span>
+                <div className="w-16 h-16 rounded-2xl flex items-center justify-center border-2 border-dashed border-white/10 bg-white/[0.02] mx-auto">
+                  <span className="text-sm font-mono text-muted-foreground/50">N{nodeId}</span>
                 </div>
-                <div className="text-xs text-muted-foreground mt-1.5">Learner</div>
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground/40 font-bold mt-3">Learner</div>
               </div>
             ))}
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center py-6 text-center">
-            <div className="w-14 h-14 rounded-xl flex items-center justify-center border-2 border-success bg-success/10 mb-2">
+          <div className="flex flex-col items-center justify-center py-10 text-center">
+            <div className="relative w-16 h-16 rounded-2xl flex items-center justify-center border-2 border-success bg-success/10 shadow-[0_0_20px_rgba(34,197,94,0.15)] mb-4">
               <div className="text-center">
-                <Star className="w-3 h-3 text-success mx-auto mb-0.5" />
-                <span className="text-xs font-mono font-bold">N{cluster.node_id}</span>
+                <Star className="w-4 h-4 text-success mx-auto mb-1 animate-pulse" />
+                <span className="text-sm font-mono font-bold text-white">N{cluster.node_id}</span>
               </div>
             </div>
-            <div className="text-xs text-muted-foreground">
+            <div className="text-xs text-muted-foreground/80 font-medium">
               {cluster.raft_state} &middot; Term {cluster.current_term}
             </div>
           </div>
@@ -309,35 +316,39 @@ function SingleShardTopology({ cluster }: { cluster: ClusterStatusSingle }) {
 
 function ShardedTopology({ cluster }: { cluster: ClusterStatusSharded }) {
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-xs flex items-center gap-1.5">
-          <Server className="w-3.5 h-3.5 text-primary" />
-          Sharded Cluster &middot; Node {cluster.physical_node_id} &middot; {cluster.shard_count} Shards
+    <Card className="glass-card">
+      <CardHeader className="pb-3 border-b border-white/[0.05]">
+        <CardTitle className="text-xs flex items-center gap-2">
+          <div className="p-1.5 rounded-md bg-primary/10 border border-primary/20">
+            <Server className="w-3.5 h-3.5 text-primary" />
+          </div>
+          <span className="uppercase tracking-widest text-muted-foreground/80 font-bold">
+            Sharded Cluster &middot; Node {cluster.physical_node_id} &middot; {cluster.shard_count} Shards
+          </span>
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="flex items-center justify-center gap-4 py-3 flex-wrap">
+        <div className="flex items-center justify-center gap-5 py-6 flex-wrap">
           {cluster.shards.map((shard) => {
             const isLeader = shard.raft_state === "Leader";
             return (
-              <div key={shard.shard_id} className="text-center">
+              <div key={shard.shard_id} className="text-center group">
                 <div
-                  className={`w-16 h-16 rounded-xl flex items-center justify-center border-2 ${
+                  className={`w-16 h-16 rounded-2xl flex items-center justify-center border-2 transition-all duration-300 mx-auto ${
                     isLeader
-                      ? "border-success bg-success/10"
-                      : "border-border bg-muted"
+                      ? "border-success bg-success/10 shadow-[0_0_20px_rgba(34,197,94,0.15)] group-hover:scale-105"
+                      : "border-white/10 bg-black/40 group-hover:border-white/20"
                   }`}
                 >
                   <div className="text-center">
-                    {isLeader && <Star className="w-3 h-3 text-success mx-auto mb-0.5" />}
-                    <span className="text-xs font-mono font-bold">S{shard.shard_id}</span>
+                    {isLeader && <Star className="w-3.5 h-3.5 text-success mx-auto mb-1 animate-pulse" />}
+                    <span className="text-sm font-mono font-bold text-white">S{shard.shard_id}</span>
                   </div>
                 </div>
-                <div className="text-xs text-muted-foreground mt-1.5">
+                <div className={`text-[10px] uppercase tracking-wider font-bold mt-3 ${isLeader ? 'text-success' : 'text-muted-foreground/60'}`}>
                   {shard.raft_state}
                 </div>
-                <div className="text-xs text-muted-foreground font-mono">
+                <div className="text-[10px] text-muted-foreground/40 font-mono mt-0.5">
                   T{shard.current_term}
                 </div>
               </div>
@@ -419,34 +430,35 @@ export default function ClusterPage() {
         <StatCard
           label="Total Events"
           value={stats?.total_events ?? 0}
-          sub={`${stats?.pending_events ?? 0} pending`}
           icon={Activity}
+          delay={0.1}
         />
         <StatCard
           label="Memory Units"
           value={stats?.total_memory_units ?? 0}
-          sub={`L1: ${stats?.memory_by_level.l1 ?? 0} | L2: ${stats?.memory_by_level.l2 ?? 0}`}
           icon={Database}
           color="text-success"
+          delay={0.15}
         />
         <StatCard
           label="Graph Edges"
           value={stats?.total_edges ?? 0}
           icon={GitBranch}
           color="text-warning"
+          delay={0.2}
         />
         <StatCard
           label={sharded ? "Shards" : "Nodes"}
           value={sharded ? (cluster as ClusterStatusSharded).shard_count : (cluster as ClusterStatusSingle)?.voters.length ?? 0}
-          sub={!sharded ? `Node ${(cluster as ClusterStatusSingle)?.node_id} is Leader` : undefined}
           icon={Server}
+          delay={0.25}
         />
         <StatCard
-          label="Pending Queue"
+          label="Pending Q"
           value={pendingData?.pending ?? "—"}
-          sub="awaiting processing"
           icon={Hourglass}
           color="text-warning"
+          delay={0.3}
         />
       </div>
 

@@ -196,7 +196,16 @@ impl TextIndex {
         let id_field = schema.get_field("id").unwrap();
 
         let query_parser = tantivy::query::QueryParser::for_index(&self.index, vec![content_field]);
-        let base_query = query_parser.parse_query(query_str)?;
+        let base_query = match query_parser.parse_query(query_str) {
+            Ok(q) => q,
+            Err(_) => {
+                // Fallback: strip special characters that Tantivy parser dislikes
+                let sanitized: String = query_str.chars()
+                    .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+                    .collect();
+                query_parser.parse_query(&sanitized).unwrap_or_else(|_| Box::new(tantivy::query::AllQuery))
+            }
+        };
 
         let mut sub_queries: Vec<(tantivy::query::Occur, Box<dyn tantivy::query::Query>)> = vec![
             (tantivy::query::Occur::Must, base_query),

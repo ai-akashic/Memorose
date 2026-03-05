@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, Send, User, Bot, Sparkles, Search, SlidersHorizontal } from "lucide-react";
+import { Loader2, Send, Bot, Sparkles, Search, SlidersHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import type { RetrieveResponse } from "@/lib/types";
@@ -182,49 +182,49 @@ function ChatPanel() {
         initial={{ opacity: 0, x: 20 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ duration: 0.5, delay: 0.1 }}
-        className="flex gap-4 p-3 glass-card rounded-xl shadow-lg border-white/5 mb-4 self-end"
+        className="flex gap-6 p-4 glass-card rounded-2xl shadow-xl border-white/[0.04] mb-4 self-end bg-white/[0.01]"
       >
-        <div className="flex flex-col gap-1">
-          <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold px-1">Session Entity</label>
+        <div className="flex flex-col gap-1.5">
+          <label className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/50 font-bold px-1">Session</label>
           <Input
             type="text"
             value={userId}
             onChange={(e) => setUserId(e.target.value)}
             placeholder="User ID"
-            className="w-32 h-8 text-xs font-mono bg-black/20 border-white/10"
+            className="w-40 h-9 text-[13px] font-mono bg-black/20 border-white/5"
           />
         </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold px-1">Context Scope</label>
+        <div className="flex flex-col gap-1.5">
+          <label className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/50 font-bold px-1">Scope</label>
           <Input
             type="text"
             value={appId}
             onChange={(e) => setAppId(e.target.value)}
             placeholder="App ID"
-            className="w-32 h-8 text-xs font-mono bg-black/20 border-white/10"
+            className="w-40 h-9 text-[13px] font-mono bg-black/20 border-white/5"
           />
         </div>
       </motion.div>
 
-      <Card className="flex-1 flex flex-col overflow-hidden glass-card rounded-2xl border-white/10 shadow-2xl relative">
-        <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/20 pointer-events-none" />
+      <Card className="flex-1 flex flex-col overflow-hidden glass-card rounded-3xl border-white/[0.04] shadow-2xl relative">
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/30 pointer-events-none" />
 
-        <div className="flex-1 overflow-y-auto p-6 z-10 scroll-smooth" ref={scrollRef}>
-          <div className="space-y-6 max-w-3xl mx-auto">
+        <div className="flex-1 overflow-y-auto p-8 z-10 scroll-smooth" ref={scrollRef}>
+          <div className="space-y-8 max-w-3xl mx-auto">
             <AnimatePresence>
               {messages.length === 0 && (
                 <motion.div
-                  initial={{ opacity: 0, scale: 0.95 }}
+                  initial={{ opacity: 0, scale: 0.98 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.95 }}
+                  exit={{ opacity: 0, scale: 0.98 }}
                   className="flex flex-col items-center justify-center h-[50vh] text-muted-foreground"
                 >
-                  <div className="w-16 h-16 rounded-3xl bg-white/[0.03] backdrop-blur-xl border border-white/10 flex items-center justify-center mb-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.1)]">
-                    <Bot className="w-8 h-8 opacity-40" />
+                  <div className="w-20 h-20 rounded-[40px] bg-white/[0.03] backdrop-blur-2xl border border-white/5 flex items-center justify-center mb-8 shadow-2xl">
+                    <Bot className="w-10 h-10 opacity-30" />
                   </div>
-                  <h3 className="text-lg font-medium text-foreground/80 mb-2">Initialize Cognitive Stream</h3>
-                  <p className="text-sm opacity-60 max-w-xs text-center">
-                    All dialogs are persistently encoded into the L0/L1/L2 memory hierarchy in real-time.
+                  <h3 className="text-xl font-bold tracking-tight text-foreground/80 mb-3 uppercase tracking-[0.2em]">Initialize Stream</h3>
+                  <p className="text-sm opacity-50 max-w-xs text-center leading-relaxed">
+                    Persistent encoding active. Data flowing to L0/L1/L2 memory hierarchy.
                   </p>
                 </motion.div>
               )}
@@ -234,30 +234,30 @@ function ChatPanel() {
               {messages.map((message) => (
                 <motion.div
                   key={message.id}
-                  initial={{ opacity: 0, y: 15, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ type: "spring", stiffness: 350, damping: 30 }}
                   className={cn(
                     "flex gap-4",
                     message.role === "user" ? "justify-end" : "justify-start"
                   )}
                 >
                   {message.role === "assistant" && (
-                    <div className="w-8 h-8 rounded-full bg-white/[0.05] border border-white/10 flex items-center justify-center shrink-0 shadow-sm mt-1">
-                      <Bot className="w-4 h-4 text-primary" />
+                    <div className="w-9 h-9 rounded-full bg-white/[0.03] border border-white/5 flex items-center justify-center shrink-0 shadow-sm mt-1">
+                      <Bot className="w-5 h-5 text-primary opacity-60" />
                     </div>
                   )}
                   <div
                     className={cn(
-                      "max-w-[75%] rounded-2xl px-5 py-3.5 shadow-sm text-sm leading-relaxed",
+                      "max-w-[80%] rounded-[20px] px-6 py-4 shadow-sm text-[15px] leading-relaxed",
                       message.role === "user"
-                        ? "bg-primary text-primary-foreground shadow-[0_0_15px_rgba(255,255,255,0.1)] rounded-tr-sm"
-                        : "glass-card bg-black/40 border-white/5 rounded-tl-sm text-foreground/90"
+                        ? "bg-primary text-primary-foreground shadow-[0_10px_30px_rgba(255,255,255,0.1)] rounded-tr-sm"
+                        : "glass-card bg-black/40 border-white/[0.03] rounded-tl-sm text-foreground/90 font-medium"
                     )}
                   >
                     <p className="whitespace-pre-wrap">{message.content}</p>
                     {message.role === "assistant" && message.content === "" && !streaming && (
-                      <span className="opacity-50 italic">Error retrieving response.</span>
+                      <span className="opacity-40 italic text-sm">Failed to retrieve neural signal.</span>
                     )}
                     {message.role === "assistant" && message.content === "" && streaming && (
                       <TypingIndicator />
@@ -270,40 +270,35 @@ function ChatPanel() {
         </div>
 
         {/* Input Area */}
-        <div className="p-4 z-20">
+        <div className="p-6 z-20">
           <div className="max-w-3xl mx-auto relative group">
-            <div className="absolute -inset-1 bg-gradient-to-r from-primary/20 via-white/5 to-primary/20 rounded-xl blur opacity-30 group-hover:opacity-60 transition duration-1000 group-hover:duration-200" />
-            <div className="relative flex gap-3 items-center glass-card bg-black/60 rounded-xl p-2 border-white/10">
+            <div className="absolute -inset-1 bg-gradient-to-r from-primary/10 via-white/[0.02] to-primary/10 rounded-2xl blur-md opacity-20 group-hover:opacity-40 transition duration-1000" />
+            <div className="relative flex gap-4 items-center glass-card bg-black/40 rounded-2xl p-2.5 border-white/[0.06] shadow-2xl">
               <Input
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyPress={handleKeyPress}
-                placeholder="Message the agent..."
+                placeholder="Send neural pulse..."
                 disabled={loading}
-                className="flex-1 bg-transparent border-none shadow-none focus-visible:ring-0 text-base h-12 px-4 placeholder:text-muted-foreground/50"
+                className="flex-1 bg-transparent border-none shadow-none focus:ring-0 text-[16px] h-14 px-5 placeholder:text-muted-foreground/20"
               />
               <Button
                 onClick={handleSend}
                 disabled={loading || !input.trim()}
                 size="icon"
                 className={cn(
-                  "h-10 w-10 rounded-lg transition-all duration-300",
-                  input.trim() ? "bg-primary text-primary-foreground shadow-[0_0_15px_rgba(255,255,255,0.3)]" : "bg-white/5 text-muted-foreground hover:bg-white/10"
+                  "h-12 w-12 rounded-xl transition-all duration-500",
+                  input.trim() ? "bg-primary text-primary-foreground shadow-[0_0_20px_rgba(255,255,255,0.2)]" : "bg-white/5 text-muted-foreground/40"
                 )}
               >
                 {loading ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <Loader2 className="w-5 h-5 animate-spin" />
                 ) : (
-                  <Send className="w-4 h-4" />
+                  <Send className="w-5 h-5" />
                 )}
               </Button>
             </div>
-          </div>
-          <div className="text-center mt-3">
-            <p className="text-[10px] text-muted-foreground/60 uppercase tracking-widest">
-              Secured by Memorose Engine
-            </p>
           </div>
         </div>
       </Card>
@@ -325,6 +320,18 @@ function RetrievePanel() {
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<RetrieveResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Suggestions
+  const [apps, setApps] = useState<string[]>([]);
+  const [users, setUsers] = useState<string[]>([]);
+  const [streams] = useState<string[]>(["chat", "system", "logs", "internal"]);
+
+  useEffect(() => {
+    // Fetch apps
+    api.list_apps().then(res => setApps(res.map(a => a.app_id))).catch(() => {});
+    // Fetch agents (often used as user_id or to find users)
+    api.agents().then(res => setUsers(res.agents.map(a => a.agent_id))).catch(() => {});
+  }, []);
 
   async function handleRetrieve() {
     if (!query.trim()) return;
@@ -351,35 +358,59 @@ function RetrievePanel() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {/* Context + Query */}
-      <Card className="glass-card border-white/10">
-        <div className="p-4 space-y-4">
-          <div className="grid grid-cols-3 gap-3">
-            <div className="space-y-1">
-              <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">User ID</label>
-              <Input value={userId} onChange={(e) => setUserId(e.target.value)} className="h-8 text-xs font-mono bg-black/20 border-white/10" />
+      <Card className="glass-card border-white/[0.04] p-6 rounded-3xl shadow-xl">
+        <div className="space-y-6">
+          <div className="grid grid-cols-3 gap-6">
+            <div className="space-y-2">
+              <label className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold px-1">User ID</label>
+              <Input 
+                list="user-suggestions"
+                value={userId} 
+                onChange={(e) => setUserId(e.target.value)} 
+                className="h-11 text-[13px] font-mono bg-black/20 border-white/[0.05]" 
+              />
+              <datalist id="user-suggestions">
+                {users.map(u => <option key={u} value={u} />)}
+              </datalist>
             </div>
-            <div className="space-y-1">
-              <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">App ID</label>
-              <Input value={appId} onChange={(e) => setAppId(e.target.value)} className="h-8 text-xs font-mono bg-black/20 border-white/10" />
+            <div className="space-y-2">
+              <label className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold px-1">App ID</label>
+              <Input 
+                list="app-suggestions"
+                value={appId} 
+                onChange={(e) => setAppId(e.target.value)} 
+                className="h-11 text-[13px] font-mono bg-black/20 border-white/[0.05]" 
+              />
+              <datalist id="app-suggestions">
+                {apps.map(a => <option key={a} value={a} />)}
+              </datalist>
             </div>
-            <div className="space-y-1">
-              <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Stream ID</label>
-              <Input value={streamId} onChange={(e) => setStreamId(e.target.value)} className="h-8 text-xs font-mono bg-black/20 border-white/10" />
+            <div className="space-y-2">
+              <label className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold px-1">Stream ID</label>
+              <Input 
+                list="stream-suggestions"
+                value={streamId} 
+                onChange={(e) => setStreamId(e.target.value)} 
+                className="h-11 text-[13px] font-mono bg-black/20 border-white/[0.05]" 
+              />
+              <datalist id="stream-suggestions">
+                {streams.map(s => <option key={s} value={s} />)}
+              </datalist>
             </div>
           </div>
 
-          <div className="flex gap-3">
+          <div className="flex gap-4">
             <Input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Enter retrieval query..."
-              className="flex-1 h-10 bg-black/20 border-white/10"
+              placeholder="Query memory matrix..."
+              className="flex-1 h-14 bg-black/30 border-white/5 text-base px-6 placeholder:text-muted-foreground/10"
               onKeyDown={(e) => e.key === "Enter" && handleRetrieve()}
             />
-            <Button onClick={handleRetrieve} disabled={loading || !query.trim()} className="h-10 gap-1.5">
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+            <Button onClick={handleRetrieve} disabled={loading || !query.trim()} className="h-14 px-8 gap-3 uppercase tracking-widest font-bold text-xs rounded-2xl shadow-lg">
+              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
               Retrieve
             </Button>
           </div>
@@ -387,37 +418,26 @@ function RetrievePanel() {
       </Card>
 
       {/* Advanced params */}
-      <Card className="glass-card border-white/10">
-        <div className="p-4">
-          <div className="flex items-center gap-1.5 mb-3">
-            <SlidersHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Advanced Parameters</span>
+      <Card className="glass-card border-white/[0.04] p-6 rounded-3xl">
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 mb-2">
+            <SlidersHorizontal className="w-3.5 h-3.5 text-muted-foreground/40" />
+            <span className="text-[10px] font-bold text-muted-foreground/40 uppercase tracking-[0.2em]">Parameters</span>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-            <div className="space-y-1">
-              <label className="text-[10px] text-muted-foreground">Limit</label>
-              <Input value={limit} onChange={(e) => setLimit(e.target.value)} placeholder="10" className="h-8 text-xs font-mono bg-black/20 border-white/10" />
-            </div>
-            <div className="space-y-1">
-              <label className="text-[10px] text-muted-foreground">Min Score</label>
-              <Input value={minScore} onChange={(e) => setMinScore(e.target.value)} placeholder="0.0–1.0" className="h-8 text-xs font-mono bg-black/20 border-white/10" />
-            </div>
-            <div className="space-y-1">
-              <label className="text-[10px] text-muted-foreground">Graph Depth</label>
-              <Input value={graphDepth} onChange={(e) => setGraphDepth(e.target.value)} placeholder="1–5" className="h-8 text-xs font-mono bg-black/20 border-white/10" />
-            </div>
-            <div className="space-y-1">
-              <label className="text-[10px] text-muted-foreground">Valid From</label>
-              <Input value={validTimeStart} onChange={(e) => setValidTimeStart(e.target.value)} placeholder="ISO 8601" className="h-8 text-xs font-mono bg-black/20 border-white/10" />
-            </div>
-            <div className="space-y-1">
-              <label className="text-[10px] text-muted-foreground">Valid To</label>
-              <Input value={validTimeEnd} onChange={(e) => setValidTimeEnd(e.target.value)} placeholder="ISO 8601" className="h-8 text-xs font-mono bg-black/20 border-white/10" />
-            </div>
-            <div className="space-y-1">
-              <label className="text-[10px] text-muted-foreground">As Of</label>
-              <Input value={asOf} onChange={(e) => setAsOf(e.target.value)} placeholder="ISO 8601" className="h-8 text-xs font-mono bg-black/20 border-white/10" />
-            </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            {[
+              { label: "Limit", value: limit, setter: setLimit, placeholder: "10" },
+              { label: "Score", value: minScore, setter: setMinScore, placeholder: "0.0" },
+              { label: "Depth", value: graphDepth, setter: setGraphDepth, placeholder: "1" },
+              { label: "From", value: validTimeStart, setter: setValidTimeStart, placeholder: "ISO" },
+              { label: "To", value: validTimeEnd, setter: setValidTimeEnd, placeholder: "ISO" },
+              { label: "As Of", value: asOf, setter: setAsOf, placeholder: "NOW" },
+            ].map((p) => (
+              <div key={p.label} className="space-y-2">
+                <label className="text-[9px] uppercase tracking-widest text-muted-foreground/30 font-bold px-1">{p.label}</label>
+                <Input value={p.value} onChange={(e) => p.setter(e.target.value)} placeholder={p.placeholder} className="h-10 text-[11px] font-mono bg-black/20 border-white/[0.03]" />
+              </div>
+            ))}
           </div>
         </div>
       </Card>

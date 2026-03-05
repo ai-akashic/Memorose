@@ -163,6 +163,9 @@ export const api = {
   agents: () =>
     fetchAPI<import("./types").AgentListResponse>("/agents"),
 
+  list_apps: () =>
+    fetchAPI<import("./types").AppSummary[]>("/apps"),
+
   agentStats: (agentId: string) =>
     fetchAPI<import("./types").AgentSummary & Record<string, unknown>>(`/agents/${encodeURIComponent(agentId)}/stats`),
 

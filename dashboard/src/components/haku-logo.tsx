@@ -5,26 +5,27 @@ export function HakuLogo({ size = 24, className }: { size?: number; className?: 
 }
 
 // Color definitions for each petal (3-stop gradients: base → ridge → tip)
+// Adjusted for a more low-profile, desaturated "hardcore" look
 const outerColors = [
-  ["#180d30", "#5a35a0", "#3a2070"], // Amethyst
-  ["#0d1835", "#2850a0", "#1a3570"], // Sapphire
-  ["#0d2820", "#20856a", "#155a48"], // Emerald
-  ["#2a2510", "#8a7528", "#5a5018"], // Topaz
-  ["#300d18", "#a03555", "#702038"], // Ruby
+  ["#11091d", "#362060", "#231343"], // Muted Amethyst
+  ["#080e20", "#183060", "#0f2043"], // Muted Sapphire
+  ["#081813", "#135040", "#0c362b"], // Muted Emerald
+  ["#19160a", "#534618", "#362d0e"], // Muted Topaz
+  ["#1d080e", "#602033", "#431322"], // Muted Ruby
 ];
 const midColors = [
-  ["#4040a0", "#8888dd", "#6868c0"], // Iris
-  ["#3070a8", "#68b0e8", "#4890cc"], // Azure
-  ["#30a880", "#68e0bb", "#48c0a0"], // Jade
-  ["#a89030", "#e8d068", "#ccb048"], // Gold
-  ["#a84068", "#e878a8", "#cc5888"], // Rose
+  ["#262660", "#525285", "#3e3e73"], // Muted Iris
+  ["#1d4365", "#3e6a8b", "#2b567a"], // Muted Azure
+  ["#1d654d", "#3e8670", "#2b7360"], // Muted Jade
+  ["#65561d", "#8b7d3e", "#7a6a2b"], // Muted Gold
+  ["#65263e", "#8b4865", "#7a3551"], // Muted Rose
 ];
 const innerColors = [
-  ["#a088dd", "#d8c8ff", "#c0a8f0"], // Lavender
-  ["#78b8f0", "#c0e0ff", "#98d0f8"], // Sky
-  ["#68e0c0", "#b0f8e8", "#88ecd8"], // Mint
-  ["#f0d068", "#fff0b0", "#f8e088"], // Champagne
-  ["#f088b0", "#ffd0e0", "#f8a8c8"], // Blush
+  ["#605285", "#827899", "#736590"], // Pale Lavender
+  ["#486e90", "#738699", "#5b7c95"], // Pale Sky
+  ["#3e8673", "#6a958b", "#528173"], // Pale Mint
+  ["#907d3e", "#998f6a", "#958652"], // Pale Champagne
+  ["#90526a", "#997d86", "#95657a"], // Pale Blush
 ];
 
 const outerAngles = [0, 72, 144, 216, 288];
@@ -76,48 +77,48 @@ export function MemoroseLogo({ size = 24, className }: { size?: number; classNam
         {/* Specular highlight overlay */}
         <linearGradient id="mr-hl" x1="0.5" y1="1" x2="0.5" y2="0">
           <stop offset="0%" stopColor="white" stopOpacity="0" />
-          <stop offset="50%" stopColor="white" stopOpacity="0.18" />
-          <stop offset="80%" stopColor="white" stopOpacity="0.05" />
+          <stop offset="50%" stopColor="white" stopOpacity="0.08" />
+          <stop offset="80%" stopColor="white" stopOpacity="0.02" />
           <stop offset="100%" stopColor="white" stopOpacity="0" />
         </linearGradient>
 
         {/* Ambient occlusion at center overlap */}
         <radialGradient id="mr-ao" cx="0.5" cy="0.5" r="0.22">
-          <stop offset="0%" stopColor="#000" stopOpacity="0.28" />
-          <stop offset="80%" stopColor="#000" stopOpacity="0.06" />
+          <stop offset="0%" stopColor="#000" stopOpacity="0.35" />
+          <stop offset="80%" stopColor="#000" stopOpacity="0.10" />
           <stop offset="100%" stopColor="#000" stopOpacity="0" />
         </radialGradient>
 
         {/* Core radial glow */}
         <radialGradient id="mr-core" cx="0.5" cy="0.5" r="0.22">
-          <stop offset="0%" stopColor="#ffffff" stopOpacity="0.98" />
-          <stop offset="35%" stopColor="#f0eaff" stopOpacity="0.6" />
-          <stop offset="65%" stopColor="#d0c8e8" stopOpacity="0.15" />
-          <stop offset="100%" stopColor="#d0c8e8" stopOpacity="0" />
+          <stop offset="0%" stopColor="#ffffff" stopOpacity="0.80" />
+          <stop offset="35%" stopColor="#d4d4d8" stopOpacity="0.4" />
+          <stop offset="65%" stopColor="#a1a1aa" stopOpacity="0.08" />
+          <stop offset="100%" stopColor="#a1a1aa" stopOpacity="0" />
         </radialGradient>
 
         {/* Ambient halo behind the bloom */}
         <radialGradient id="mr-halo" cx="0.5" cy="0.5" r="0.5">
-          <stop offset="0%" stopColor="#7060a0" stopOpacity="0.06" />
+          <stop offset="0%" stopColor="#52525b" stopOpacity="0.03" />
           <stop offset="100%" stopColor="#18181b" stopOpacity="0" />
         </radialGradient>
 
         {/* Layered shadow filters */}
         <filter id="mr-sh-o" x="-25%" y="-25%" width="150%" height="150%">
-          <feDropShadow dx="0" dy="4" stdDeviation="16" floodColor="#08050f" floodOpacity="0.6" />
+          <feDropShadow dx="0" dy="4" stdDeviation="12" floodColor="#000000" floodOpacity="0.7" />
         </filter>
         <filter id="mr-sh-m" x="-20%" y="-20%" width="140%" height="140%">
-          <feDropShadow dx="0" dy="2" stdDeviation="10" floodColor="#10082a" floodOpacity="0.45" />
+          <feDropShadow dx="0" dy="2" stdDeviation="8" floodColor="#000000" floodOpacity="0.5" />
         </filter>
         <filter id="mr-glow" x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur stdDeviation="6" result="blur" />
+          <feGaussianBlur stdDeviation="4" result="blur" />
           <feMerge>
             <feMergeNode in="blur" />
             <feMergeNode in="SourceGraphic" />
           </feMerge>
         </filter>
         <filter id="mr-cglow" x="-60%" y="-60%" width="220%" height="220%">
-          <feGaussianBlur stdDeviation="8" result="blur" />
+          <feGaussianBlur stdDeviation="6" result="blur" />
           <feMerge>
             <feMergeNode in="blur" />
             <feMergeNode in="SourceGraphic" />

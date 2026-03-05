@@ -7,7 +7,7 @@ async fn main() {
         .expect("GOOGLE_API_KEY not set. Run with: GOOGLE_API_KEY=... cargo run --example test_batch_embed");
     let client = GeminiClient::new(
         api_key,
-        "gemini-3-flash-preview".to_string(),
+        "gemini-3.1-flash-lite-preview".to_string(),
         "gemini-embedding-001".to_string(),
     );
 

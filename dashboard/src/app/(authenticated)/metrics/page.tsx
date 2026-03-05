@@ -50,6 +50,7 @@ function NumberTicker({ value }: { value: number }) {
       }
     };
     window.requestAnimationFrame(step);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
   return <span>{formatNumber(displayValue)}</span>;
@@ -61,28 +62,37 @@ function StatCard({
   icon: Icon,
   color = "text-primary",
   className = "",
+  delay = 0,
 }: {
   label: string;
   value: string | number;
   icon: React.ElementType;
   color?: string;
   className?: string;
+  delay?: number;
 }) {
   return (
-    <Card className={`glass-card relative overflow-hidden group hover:bg-white/[0.04] transition-all duration-300 ${className}`}>
-      <CardContent className="pt-4 pb-3 h-full flex flex-col justify-between relative z-10">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-[10px] text-muted-foreground/80 font-bold tracking-widest uppercase">{label}</span>
-          <div className={`p-1.5 rounded-md bg-background/50 border border-white/5 ${color} shadow-sm group-hover:scale-110 transition-transform duration-300`}>
-            <Icon className="w-3.5 h-3.5 opacity-80" />
+    <motion.div
+      initial={{ opacity: 0, y: 15 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, delay, ease: "easeOut" }}
+      className={`h-full ${className}`}
+    >
+      <Card className="glass-card group relative overflow-hidden hover:bg-white/[0.04] transition-all duration-500 h-full border-white/[0.04] hover:border-white/10">
+        <CardContent className="p-5 flex flex-col justify-between h-full relative z-10">
+          <div className="flex items-center justify-between">
+            <Icon className={`w-4 h-4 ${color} opacity-60 group-hover:opacity-100 transition-opacity`} />
+            <span className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold group-hover:text-muted-foreground/70 transition-colors">
+              {label}
+            </span>
           </div>
-        </div>
-        <div className="text-2xl font-bold tracking-tight text-foreground/90 font-mono">
-          {typeof value === "number" ? <NumberTicker value={value} /> : value}
-        </div>
-      </CardContent>
-      <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/[0.02] to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-    </Card>
+          <div className="text-3xl font-bold tracking-tighter font-mono text-foreground/90 mt-4 group-hover:text-white transition-colors">
+            {typeof value === "number" ? <NumberTicker value={value} /> : value}
+          </div>
+        </CardContent>
+        <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/[0.01] to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
+      </Card>
+    </motion.div>
   );
 }
 
@@ -97,35 +107,35 @@ function RelationDistribution({ graphData, className = "" }: { graphData: GraphD
   }));
 
   return (
-    <Card className={`glass-card flex flex-col ${className}`}>
+    <Card className={`glass-card flex flex-col border-white/[0.04] ${className}`}>
       <CardHeader className="pb-2 flex-shrink-0">
-        <CardTitle className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground">Neural Pathways</CardTitle>
+        <CardTitle className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground/40">Pathways</CardTitle>
       </CardHeader>
-      <CardContent className="flex-1 flex flex-col justify-center items-center">
+      <CardContent className="flex-1 flex flex-col justify-center items-center p-4">
         {data.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No edges yet</p>
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground/30 font-bold">Empty</p>
         ) : (
-          <div className="h-full w-full min-h-[140px]">
+          <div className="h-full w-full min-h-[160px] flex-1">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
                   data={data}
                   cx="50%"
                   cy="50%"
-                  innerRadius={75}
-                  outerRadius={110}
-                  paddingAngle={8}
+                  innerRadius="55%"
+                  outerRadius="85%"
+                  paddingAngle={6}
                   dataKey="value"
                   stroke="none"
                   labelLine={false}
                 >
                   {data.map((_, i) => (
-                    <Cell key={i} fill={COLORS[i % COLORS.length]} className="outline-none" style={{ filter: `drop-shadow(0 0 8px ${COLORS[i % COLORS.length]}60)` }} />
+                    <Cell key={i} fill={COLORS[i % COLORS.length]} className="outline-none opacity-60 hover:opacity-100 transition-opacity" style={{ filter: `drop-shadow(0 0 8px ${COLORS[i % COLORS.length]}40)` }} />
                   ))}
                 </Pie>
                 <Tooltip
-                  contentStyle={{ background: "rgba(10, 10, 15, 0.9)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "12px" }}
-                  itemStyle={{ color: "hsl(0 0% 90%)", fontSize: "11px", fontWeight: "bold" }}
+                  contentStyle={{ background: "rgba(0, 0, 0, 0.8)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "8px" }}
+                  itemStyle={{ color: "hsl(0 0% 90%)", fontSize: "10px", fontWeight: "bold", textTransform: "uppercase" }}
                 />
               </PieChart>
             </ResponsiveContainer>
@@ -160,9 +170,9 @@ function ImportanceHistogram({ className = "" }: { className?: string }) {
   }, []);
 
   return (
-    <Card className={`glass-card flex flex-col ${className}`}>
+    <Card className={`glass-card flex flex-col border-white/[0.04] ${className}`}>
       <CardHeader className="pb-0 flex-shrink-0">
-        <CardTitle className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground">Significance Density</CardTitle>
+        <CardTitle className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground/40">Density</CardTitle>
       </CardHeader>
       <CardContent className="flex-1 pt-6">
         <div className="h-full w-full">
@@ -170,25 +180,25 @@ function ImportanceHistogram({ className = "" }: { className?: string }) {
             <AreaChart data={histData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
               <defs>
                 <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="hsl(217 91% 60%)" stopOpacity={0.5} />
+                  <stop offset="5%" stopColor="hsl(217 91% 60%)" stopOpacity={0.3} />
                   <stop offset="95%" stopColor="hsl(217 91% 60%)" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <XAxis dataKey="range" axisLine={false} tickLine={false} tick={{ fill: "hsl(215 20% 50%)", fontSize: 10, fontWeight: "bold" }} dy={10} />
-              <YAxis axisLine={false} tickLine={false} tick={{ fill: "hsl(215 20% 50%)", fontSize: 10, fontWeight: "bold" }} />
+              <XAxis dataKey="range" hide />
+              <YAxis hide />
               <Tooltip
-                contentStyle={{ background: "rgba(10, 10, 15, 0.9)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "12px" }}
-                itemStyle={{ color: "hsl(0 0% 90%)", fontSize: "12px", fontFamily: "monospace" }}
-                cursor={{ stroke: 'rgba(255,255,255,0.2)', strokeWidth: 1 }}
+                contentStyle={{ background: "rgba(0, 0, 0, 0.8)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "8px" }}
+                itemStyle={{ color: "hsl(0 0% 90%)", fontSize: "10px", fontFamily: "monospace" }}
+                cursor={{ stroke: 'rgba(255,255,255,0.1)', strokeWidth: 1 }}
               />
               <Area 
                 type="monotone" 
                 dataKey="count" 
                 stroke="hsl(217 91% 60%)" 
-                strokeWidth={4} 
+                strokeWidth={2} 
                 fillOpacity={1} 
                 fill="url(#colorCount)" 
-                activeDot={{ r: 6, strokeWidth: 0, fill: "hsl(217 91% 70%)", style: { filter: "drop-shadow(0 0 10px hsl(217 91% 60%))" } }}
+                activeDot={{ r: 4, strokeWidth: 0, fill: "hsl(217 91% 70%)" }}
               />
             </AreaChart>
           </ResponsiveContainer>
@@ -199,28 +209,27 @@ function ImportanceHistogram({ className = "" }: { className?: string }) {
 }
 
 function WorkerStatus({ config, className = "" }: { config: NonNullable<ReturnType<typeof useClusterStatus>["data"]>, className?: string }) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const snapshotLogs = "snapshot_policy_logs" in config ? (config as any).snapshot_policy_logs : "N/A";
   return (
-    <Card className={`glass-card flex flex-col ${className}`}>
-      <CardHeader className="pb-4 border-b border-white/[0.05]">
+    <Card className={`glass-card flex flex-col border-white/[0.04] ${className}`}>
+      <CardHeader className="pb-4 border-b border-white/[0.03]">
         <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-success animate-pulse shadow-[0_0_10px_hsl(142,76%,36%)]" />
-          <CardTitle className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground">Node Config</CardTitle>
+          <div className="w-1.5 h-1.5 rounded-full bg-success animate-pulse shadow-[0_0_5px_hsl(142,76%,36%)]" />
+          <CardTitle className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground/40">Node</CardTitle>
         </div>
       </CardHeader>
-      <CardContent className="space-y-4 pt-4">
-        <div className="flex justify-between items-center text-xs">
-          <span className="text-muted-foreground font-medium">Heartbeat</span>
-          <span className="font-mono bg-white/5 px-2 py-1 rounded text-foreground/90 border border-white/5">{config.config.heartbeat_interval_ms}ms</span>
-        </div>
-        <div className="flex justify-between items-center text-xs">
-          <span className="text-muted-foreground font-medium">Election</span>
-          <span className="font-mono bg-white/5 px-2 py-1 rounded text-foreground/90 border border-white/5">{config.config.election_timeout_min_ms}ms</span>
-        </div>
-        <div className="flex justify-between items-center text-xs">
-          <span className="text-muted-foreground font-medium">Snapshot</span>
-          <span className="font-mono bg-white/5 px-2 py-1 rounded text-foreground/90 border border-white/5">{snapshotLogs} logs</span>
-        </div>
+      <CardContent className="space-y-3 pt-4 px-5">
+        {[
+          { label: "Heartbeat", value: `${config.config.heartbeat_interval_ms}ms` },
+          { label: "Election", value: `${config.config.election_timeout_min_ms}ms` },
+          { label: "Snapshot", value: `${snapshotLogs} logs` },
+        ].map((item) => (
+          <div key={item.label} className="flex flex-col gap-0.5">
+            <span className="text-[9px] uppercase tracking-widest text-muted-foreground/30 font-bold">{item.label}</span>
+            <span className="font-mono text-[11px] text-foreground/70">{item.value}</span>
+          </div>
+        ))}
       </CardContent>
     </Card>
   );
@@ -267,29 +276,32 @@ export default function MetricsPage() {
           animate={{ opacity: 1, y: 0 }}
           className="flex items-center justify-between"
         >
-          <h1 className="text-3xl font-bold tracking-tighter bg-clip-text text-transparent bg-gradient-to-b from-white to-white/40">
-            System Telemetry
-          </h1>
+          <div className="flex items-center gap-3">
+            <div className="w-1 h-6 bg-primary/40 rounded-full" />
+            <h1 className="text-sm font-bold tracking-[0.3em] uppercase text-muted-foreground/60">
+              Telemetry <span className="text-muted-foreground/20 ml-2">v1.0.4</span>
+            </h1>
+          </div>
         </motion.div>
 
         <motion.div 
           initial={{ opacity: 0, scale: 0.98 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-          className="grid grid-cols-1 md:grid-cols-4 gap-4 auto-rows-[160px]"
+          className="grid grid-cols-1 md:grid-cols-4 gap-3 auto-rows-[140px]"
         >
           {/* Top Row KPIs */}
-          <StatCard label="Ingested Events" value={stats?.total_events ?? 0} icon={Activity} />
-          <StatCard label="Pending Stream" value={stats?.pending_events ?? 0} icon={Activity} color="text-warning" />
-          <StatCard label="Memory Clusters" value={stats?.total_memory_units ?? 0} icon={Database} color="text-success" />
-          <StatCard label="Neural Edges" value={stats?.total_edges ?? 0} icon={GitBranch} color="text-chart-2" />
+          <StatCard label="Ingested" value={stats?.total_events ?? 0} icon={Activity} delay={0.1} />
+          <StatCard label="Pending" value={stats?.pending_events ?? 0} icon={Activity} color="text-warning" delay={0.15} />
+          <StatCard label="Clusters" value={stats?.total_memory_units ?? 0} icon={Database} color="text-success" delay={0.2} />
+          <StatCard label="Edges" value={stats?.total_edges ?? 0} icon={GitBranch} color="text-primary" delay={0.25} />
 
           {/* Pipeline Flow - Large Block */}
-          <Card className="glass-card md:col-span-2 md:row-span-2 p-6 flex flex-col relative group overflow-hidden">
-             <div className="absolute inset-0 bg-gradient-to-b from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+          <Card className="glass-card md:col-span-2 md:row-span-2 p-6 flex flex-col relative group overflow-hidden border-white/[0.04] hover:border-white/10 transition-colors">
+             <div className="absolute inset-0 bg-gradient-to-b from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
              <div className="flex items-center gap-2 mb-6 relative z-10">
-               <Layers className="w-3.5 h-3.5 text-primary opacity-70" />
-               <span className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground/80">Cognitive Flow</span>
+               <Layers className="w-3.5 h-3.5 text-primary opacity-40 group-hover:opacity-70 transition-opacity" />
+               <span className="text-[10px] uppercase tracking-[0.3em] font-bold text-muted-foreground/30 group-hover:text-muted-foreground/60 transition-colors">Cognitive Flow</span>
              </div>
              <div className="flex-1 w-full h-full relative z-10 min-h-0 flex items-center justify-center pt-2 pb-4">
                {stats && <RainbowWaterfall stats={stats} />}
@@ -306,12 +318,12 @@ export default function MetricsPage() {
           {cluster ? (
             <WorkerStatus config={cluster} className="md:col-span-1 md:row-span-2" />
           ) : (
-            <div className="md:col-span-1 md:row-span-2 glass-card rounded-xl opacity-20" />
+            <div className="md:col-span-1 md:row-span-2 glass-card rounded-xl opacity-10 animate-pulse border-white/5" />
           )}
           
-          <div className="md:col-span-1 md:row-span-2 flex flex-col gap-4">
-            <StatCard label="Uptime" value="99.9%" icon={Activity} color="text-success" className="h-full flex-1" />
-            <StatCard label="Region" value="Global" icon={Database} className="h-full flex-1" />
+          <div className="md:col-span-1 md:row-span-2 flex flex-col gap-3">
+            <StatCard label="Health" value="99.9%" icon={Activity} color="text-success" className="h-full flex-1" delay={0.3} />
+            <StatCard label="Region" value="Global" icon={Database} className="h-full flex-1" delay={0.35} />
           </div>
         </motion.div>
       </div>

@@ -253,7 +253,7 @@ fn default_batch_size() -> usize { 100 }
 fn default_entropy_threshold() -> f64 { 2.5 }
 fn default_similarity_threshold() -> f64 { 0.7 }
 fn default_llm_provider() -> String { "gemini".to_string() }
-fn default_llm_model() -> String { "gemini-2.0-flash".to_string() }
+fn default_llm_model() -> String { "gemini-3.1-flash-lite-preview".to_string() }
 fn default_embedding_model() -> String { "text-embedding-004".to_string() }
 fn default_max_retries() -> u32 { 3 }
 fn default_timeout_secs() -> u64 { 30 }
@@ -378,7 +378,7 @@ mod tests {
                     "similarity_threshold": 0.7,
                     "llm": {
                         "provider": "gemini",
-                        "model": "gemini-2.0-flash",
+                        "model": "gemini-3.1-flash-lite-preview",
                         "embedding_model": "text-embedding-004",
                         "max_retries": 3,
                         "timeout_secs": 30,

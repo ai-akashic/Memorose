@@ -1,10 +1,10 @@
 import React from 'react';
-import { L3TaskTree, GoalTree } from '@/lib/types';
+import { L3TaskTree, GoalTree, L3Task } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { CheckCircle2, Circle, ArrowRight, Loader2, AlertCircle, XCircle } from 'lucide-react';
+import { CheckCircle2, Circle, Loader2, AlertCircle, XCircle } from 'lucide-react';
 
-function StatusIcon({ status }: { status: any }) {
+function StatusIcon({ status }: { status: L3Task['status'] }) {
   if (status === 'Completed') return <CheckCircle2 className="w-4 h-4 text-green-500" />;
   if (status === 'InProgress') return <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />;
   if (typeof status === 'object' && status !== null) {
@@ -15,7 +15,7 @@ function StatusIcon({ status }: { status: any }) {
   return <Circle className="w-4 h-4 text-gray-400" />;
 }
 
-function StatusBadge({ status }: { status: any }) {
+function StatusBadge({ status }: { status: L3Task['status'] }) {
   if (status === 'Completed') return <Badge variant="outline" className="text-green-500 border-green-500/30">Completed</Badge>;
   if (status === 'InProgress') return <Badge variant="outline" className="text-blue-500 border-blue-500/30">In Progress</Badge>;
   if (typeof status === 'object' && status !== null) {

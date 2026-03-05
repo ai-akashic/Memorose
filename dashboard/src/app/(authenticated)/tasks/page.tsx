@@ -204,7 +204,7 @@ export default function TasksPage() {
               <Zap className="w-3.5 h-3.5" />
               Ready
               {ready && ready.length > 0 && (
-                <Badge className="ml-1 h-4 px-1.5 text-[9px] bg-primary/80">{ready.length}</Badge>
+                <Badge className="ml-1 h-4 px-1.5 text-[10px] bg-primary/80">{ready.length}</Badge>
               )}
             </TabsTrigger>
           </TabsList>

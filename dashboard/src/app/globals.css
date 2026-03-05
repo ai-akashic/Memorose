@@ -102,33 +102,29 @@
     -webkit-user-select: text;
   }
   body {
-    @apply bg-background text-foreground antialiased;
+    @apply bg-background text-foreground antialiased text-[15px];
     font-family: var(--font-sans), system-ui, sans-serif;
     /* Lively background pattern: subtle dots */
-    background-image: radial-gradient(hsl(var(--muted-foreground) / 0.15) 1px, transparent 1px);
-    background-size: 20px 20px;
+    background-image: radial-gradient(hsl(var(--muted-foreground) / 0.1) 1px, transparent 1px);
+    background-size: 24px 24px;
+    line-height: 1.6;
   }
   
   .glass-card {
-    @apply bg-card/80 backdrop-blur-md border border-white/[0.05] shadow-[0_8px_32px_rgba(0,0,0,0.2)];
+    @apply bg-card/60 backdrop-blur-xl border border-white/[0.06] shadow-[0_12px_40px_rgba(0,0,0,0.3)];
   }
 
   @keyframes spin-slow {
-    from {
-      transform: rotate(0deg);
-    }
-    to {
-      transform: rotate(360deg);
-    }
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
   }
 
   .blob-bg {
-    background: conic-gradient(from 0deg, hsl(var(--primary) / 0.1), hsl(var(--chart-1) / 0.1), hsl(var(--chart-4) / 0.1), hsl(var(--primary) / 0.1));
-    filter: blur(60px); /* Reduced from 120px for performance */
-    animation: spin-slow 30s linear infinite; /* Slowed down to save CPU */
+    background: conic-gradient(from 0deg, hsl(var(--primary) / 0.15), hsl(var(--chart-1) / 0.15), hsl(var(--chart-4) / 0.15), hsl(var(--primary) / 0.15));
+    filter: blur(80px);
+    animation: spin-slow 40s linear infinite;
     border-radius: 50%;
-    /* Removed mix-blend-screen for performance */
-    transform: translateZ(0); /* Hardware acceleration */
+    transform: translateZ(0);
   }
 
   ::selection {

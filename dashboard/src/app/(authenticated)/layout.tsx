@@ -62,6 +62,7 @@ export default function AuthenticatedLayout({
   const [userId, setUserId] = useState("");
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMounted(true);
     const handleLogout = () => {
       clearToken();
@@ -133,8 +134,8 @@ export default function AuthenticatedLayout({
                     {!isActive && (
                        <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg -z-10" />
                     )}
-                    <item.icon className={cn("w-4 h-4 shrink-0 transition-transform group-hover:scale-110", isActive ? "opacity-100" : "opacity-70")} />
-                    {!collapsed && <span className="truncate">{item.label}</span>}
+                    <item.icon className={cn("w-3.5 h-3.5 shrink-0 transition-transform group-hover:scale-110", isActive ? "opacity-100" : "opacity-40")} />
+                    {!collapsed && <span className="truncate text-[11px] uppercase tracking-widest font-bold">{item.label}</span>}
                   </Link>
                 );
 
@@ -142,7 +143,7 @@ export default function AuthenticatedLayout({
                   return (
                     <Tooltip key={item.href}>
                       <TooltipTrigger asChild>{link}</TooltipTrigger>
-                      <TooltipContent side="right" className="text-xs border-white/10 glass-card bg-black/80">{item.label}</TooltipContent>
+                      <TooltipContent side="right" className="text-[11px] uppercase tracking-widest font-bold border-white/10 glass-card bg-black/80">{item.label}</TooltipContent>
                     </Tooltip>
                   );
                 }
@@ -151,51 +152,51 @@ export default function AuthenticatedLayout({
               })}
             </nav>
 
-            <div className="border-t border-white/5 px-3 py-2.5">
+            <div className="border-t border-white/5 px-3 py-4">
               {collapsed ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <div className="flex justify-center py-1 cursor-default">
-                      <UserRound className={cn("w-4 h-4 shrink-0", userId ? "text-primary opacity-90" : "text-muted-foreground/50")} />
+                      <UserRound className={cn("w-3.5 h-3.5 shrink-0", userId ? "text-primary opacity-80" : "text-muted-foreground/20")} />
                     </div>
                   </TooltipTrigger>
-                  <TooltipContent side="right" className="text-xs border-white/10 glass-card bg-black/80">
-                    {userId || "No user filter"}
+                  <TooltipContent side="right" className="text-[11px] uppercase tracking-widest font-bold border-white/10 glass-card bg-black/80">
+                    {userId || "NO FILTER"}
                   </TooltipContent>
                 </Tooltip>
               ) : (
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-1.5 px-1">
-                    <UserRound className="w-3 h-3 text-muted-foreground/50" />
-                    <span className="text-[10px] uppercase tracking-widest text-muted-foreground/50 font-semibold">User Filter</span>
+                <div className="space-y-2 px-1">
+                  <div className="flex items-center gap-2">
+                    <UserRound className="w-3 h-3 text-muted-foreground/20" />
+                    <span className="text-[9px] uppercase tracking-[0.2em] text-muted-foreground/30 font-bold">Scope</span>
                   </div>
                   <Input
                     value={userId}
                     onChange={(e) => setUserId(e.target.value)}
-                    placeholder="user_id…"
-                    className="h-7 text-xs font-mono bg-white/5 border-white/10 focus:border-primary/40 placeholder:text-muted-foreground/30"
+                    placeholder="USER_ID"
+                    className="h-9 text-[12px] font-mono bg-white/[0.02] border-white/5 focus:border-primary/20 placeholder:text-muted-foreground/10"
                   />
                 </div>
               )}
             </div>
 
-            <div className="border-t border-white/5 p-3 space-y-1 bg-black/20">
+            <div className="border-t border-white/5 p-3 space-y-1 bg-black/10">
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => setCollapsed(!collapsed)}
                 className={cn(
-                  "w-full h-9 justify-start gap-3 text-sm text-muted-foreground hover:text-foreground hover:bg-white/5",
+                  "w-full h-9 justify-start gap-3 text-muted-foreground/40 hover:text-foreground hover:bg-white/5",
                   collapsed && "justify-center"
                 )}
               >
                 <ChevronLeft
                   className={cn(
-                    "w-4 h-4 shrink-0 transition-transform duration-300",
+                    "w-3.5 h-3.5 shrink-0 transition-transform duration-500",
                     collapsed && "rotate-180"
                   )}
                 />
-                {!collapsed && "Collapse"}
+                {!collapsed && <span className="text-[11px] uppercase tracking-widest font-bold">Collapse</span>}
               </Button>
               <Button
                 variant="ghost"
@@ -205,12 +206,12 @@ export default function AuthenticatedLayout({
                   router.push("/login/");
                 }}
                 className={cn(
-                  "w-full h-9 justify-start gap-3 text-sm text-muted-foreground hover:text-destructive hover:bg-destructive/10 group",
+                  "w-full h-9 justify-start gap-3 text-muted-foreground/40 hover:text-destructive hover:bg-destructive/5 group",
                   collapsed && "justify-center"
                 )}
               >
-                <LogOut className="w-4 h-4 shrink-0 group-hover:-translate-x-1 transition-transform" />
-                {!collapsed && "Logout"}
+                <LogOut className="w-3.5 h-3.5 shrink-0 group-hover:-translate-x-0.5 transition-transform" />
+                {!collapsed && <span className="text-[11px] uppercase tracking-widest font-bold">Logout</span>}
               </Button>
             </div>
           </aside>
