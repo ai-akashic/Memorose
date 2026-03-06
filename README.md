@@ -73,9 +73,21 @@ To support complex multi-agent systems and enterprise use cases, Memorose provid
 
 ### Using Docker (Recommended)
 
-The easiest way to run Memorose is using the official Docker image. We provide a ready-to-use Docker Compose setup for a standalone instance.
+The easiest way to run Memorose is using the official Docker image. 
 
-1. **Create `docker-compose.yml`**:
+**Option 1: Quick Run (Docker Run)**
+```bash
+docker run -d \
+  --name memorose \
+  -p 3000:3000 \
+  -e GOOGLE_API_KEY="your_api_key_here" \
+  -e RUST_LOG="info" \
+  -v memorose_data:/app/data \
+  aiakashic/memorose:latest
+```
+
+**Option 2: Docker Compose**
+For a more permanent setup, create a `docker-compose.yml`:
 ```yaml
 version: '3.8'
 
@@ -96,11 +108,12 @@ volumes:
   memorose_data:
 ```
 
-2. **Start the server**:
+Start the server:
 ```bash
 export GOOGLE_API_KEY="your_api_key_here"
 docker-compose up -d
 ```
+
 The API and Dashboard will be available at `http://localhost:3000`.
 
 ---
