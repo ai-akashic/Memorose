@@ -1,4 +1,4 @@
-FROM rust:1.83 as builder
+FROM rust:1.82 as builder
 
 # Install dependencies needed for compiling C/C++ libraries and Protobuf
 RUN apt-get update && apt-get install -y protobuf-compiler cmake libclang-dev && rm -rf /var/lib/apt/lists/*
