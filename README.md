@@ -71,6 +71,42 @@ To support complex multi-agent systems and enterprise use cases, Memorose provid
 
 ## 🚀 Quick Start
 
+### Using Docker (Recommended)
+
+The easiest way to run Memorose is using the official Docker image. We provide a ready-to-use Docker Compose setup for a standalone instance.
+
+1. **Create `docker-compose.yml`**:
+```yaml
+version: '3.8'
+
+services:
+  memorose:
+    image: aiakashic/memorose:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - RUST_LOG=info
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - LLM_PROVIDER=gemini
+    volumes:
+      - memorose_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  memorose_data:
+```
+
+2. **Start the server**:
+```bash
+export GOOGLE_API_KEY="your_api_key_here"
+docker-compose up -d
+```
+The API and Dashboard will be available at `http://localhost:3000`.
+
+---
+
+### From Source
+
 **Prerequisites:** Rust 1.70+ and a [Gemini API Key](https://aistudio.google.com/app/apikey)
 
 ```bash
