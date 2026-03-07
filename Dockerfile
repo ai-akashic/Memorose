@@ -14,8 +14,8 @@ ENV RUSTFLAGS="-Zrecursion-limit=256"
 ENV RUST_MIN_STACK=8388608
 
 # Build both binaries
-RUN cargo build --release -p memorose-server
-RUN cargo build --release -p memorose-gateway
+RUN cargo +nightly build --release -p memorose-server
+RUN cargo +nightly build --release -p memorose-gateway
 
 FROM debian:bookworm-slim
 
