@@ -14,8 +14,6 @@ on:
 
 env:
   REGISTRY: docker.io
-  # Change this to your actual Docker Hub repository name (e.g., aiakashic/memorose)
-  IMAGE_NAME: aiakashic/memorose
 
 jobs:
   build-and-push-image:
@@ -43,7 +41,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE_NAME }}
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/memorose
           tags: |
             type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
             type=semver,pattern={{version}}
