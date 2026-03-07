@@ -83,7 +83,7 @@ docker run -d \
   -e GOOGLE_API_KEY="your_api_key_here" \
   -e RUST_LOG="info" \
   -v memorose_data:/app/data \
-  aiakashic/memorose:latest
+  dylan2024/memorose:latest
 ```
 
 **Option 2: Docker Compose**
@@ -93,7 +93,7 @@ version: '3.8'
 
 services:
   memorose:
-    image: aiakashic/memorose:latest
+    image: dylan2024/memorose:latest
     ports:
       - "3000:3000"
     environment:
