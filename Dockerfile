@@ -1,21 +1,17 @@
-FROM rust:1.77.2 AS builder
+FROM rust:1.88 AS builder
 
 # Install dependencies needed for compiling C/C++ libraries and Protobuf
 RUN apt-get update && apt-get install -y protobuf-compiler cmake libclang-dev && rm -rf /var/lib/apt/lists/*
-
-# Install nightly toolchain for -Z flags needed by lance crate
-RUN rustup toolchain install nightly && rustup default nightly
 
 WORKDIR /usr/src/app
 COPY . .
 
 # Increase recursion limit for lance crate's deeply nested async blocks
-ENV RUSTFLAGS="-Zrecursion-limit=256"
 ENV RUST_MIN_STACK=8388608
 
 # Build both binaries
-RUN cargo +nightly build --release -p memorose-server
-RUN cargo +nightly build --release -p memorose-gateway
+RUN cargo build --release -p memorose-server
+RUN cargo build --release -p memorose-gateway
 
 FROM debian:bookworm-slim
 
