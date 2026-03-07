@@ -1,0 +1,93 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run cortexdb-server",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": ["run", "--package", "cortexdb-server", "--bin", "cortexdb-server"]
+      },
+      "env": {
+        "RUST_LOG": "info",
+        "LLM_PROVIDER": "gemini"
+      },
+      "envFile": "${workspaceFolder}/.env",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Hot Reload: cortexdb-server (cargo-watch)",
+      "type": "node",
+      "request": "launch",
+      "name": "Hot Reload: cortexdb-server",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": [
+        "watch",
+        "-x",
+        "run --package cortexdb-server --bin cortexdb-server"
+      ],
+      "env": {
+        "RUST_LOG": "info",
+        "LLM_PROVIDER": "gemini"
+      },
+      "envFile": "${workspaceFolder}/.env",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen"
+    },
+    {
+      "name": "Run cortexdb-gateway",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": ["run", "--package", "cortexdb-gateway", "--bin", "cortexdb-gateway"]
+      },
+      "env": {
+        "RUST_LOG": "info"
+      },
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Hot Reload: cortexdb-gateway (cargo-watch)",
+      "type": "node",
+      "request": "launch",
+      "name": "Hot Reload: cortexdb-gateway",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": [
+        "watch",
+        "-x",
+        "run --package cortexdb-gateway --bin cortexdb-gateway"
+      ],
+      "env": {
+        "RUST_LOG": "info"
+      },
+      "envFile": "${workspaceFolder}/.env",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen"
+    },
+    {
+      "name": "Debug Current Example (cortexdb-core)",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": [
+          "build",
+          "--package",
+          "cortexdb-core",
+          "--example",
+          "${fileBasenameNoExtension}"
+        ],
+        "filter": { "kind": "example" }
+      },
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "RUST_LOG": "info"
+      },
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "cargo watch server",
+      "type": "shell",
+      "command": "cargo",
+      "args": [
+        "watch",
+        "-x",
+        "run --package cortexdb-server --bin cortexdb-server"
+      ],
+      "problemMatcher": [
+        "$rustc"
+      ],
+      "group": "build",
+      "isBackground": true
+    },
+    {
+      "label": "cargo watch gateway",
+      "type": "shell",
+      "command": "cargo",
+      "args": [
+        "watch",
+        "-x",
+        "run --package cortexdb-gateway --bin cortexdb-gateway"
+      ],
+      "problemMatcher": [
+        "$rustc"
+      ],
+      "group": "build",
+      "isBackground": true
+    }
+  ]
+}
