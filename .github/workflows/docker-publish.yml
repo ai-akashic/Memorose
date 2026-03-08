@@ -9,6 +9,7 @@ on:
     paths:
       - '.github/workflows/**'
       - 'crates/**'
+      - 'dashboard/**'
       - 'Dockerfile'
       - 'Cargo.toml'
       - 'Cargo.lock'
