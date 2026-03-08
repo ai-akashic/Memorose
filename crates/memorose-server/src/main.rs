@@ -209,7 +209,7 @@ async fn main() {
         this_node.http_addr.parse().expect("Invalid http_addr in sharding config")
     } else {
         let http_port = 3000 + (config.raft.node_id as u16 - 1);
-        SocketAddr::from(([127, 0, 0, 1], http_port))
+        SocketAddr::from(([0, 0, 0, 0], http_port))
     };
 
     tracing::info!("HTTP API listening on {}", http_addr);
