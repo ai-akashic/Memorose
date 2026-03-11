@@ -10,9 +10,9 @@
   </p>
 
   <p>
-    <a href="https://github.com/akashic/memorose/stargazers"><img src="https://img.shields.io/github/stars/akashic/memorose?style=for-the-badge&color=yellow" alt="Stars" /></a>
-    <a href="https://github.com/akashic/memorose/network/members"><img src="https://img.shields.io/github/forks/akashic/memorose?style=for-the-badge" alt="Forks" /></a>
-    <a href="https://github.com/akashic/memorose/blob/main/LICENSE"><img src="https://img.shields.io/github/license/akashic/memorose?style=for-the-badge" alt="License" /></a>
+    <a href="https://github.com/ai-akashic/Memorose/stargazers"><img src="https://img.shields.io/github/stars/ai-akashic/Memorose?style=for-the-badge&color=yellow" alt="Stars" /></a>
+    <a href="https://github.com/ai-akashic/Memorose/network/members"><img src="https://img.shields.io/github/forks/ai-akashic/Memorose?style=for-the-badge" alt="Forks" /></a>
+    <a href="https://github.com/ai-akashic/Memorose/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ai-akashic/Memorose?style=for-the-badge" alt="License" /></a>
     <img src="https://img.shields.io/badge/Rust-1.70+-orange?style=for-the-badge&logo=rust" alt="Rust" />
   </p>
 </div>
