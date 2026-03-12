@@ -1,0 +1,57 @@
+# Architecture
+
+Memorose is built as a modular Rust workspace with a tiered storage architecture designed for low-latency memory retrieval.
+
+## Workspace Structure
+
+```
+crates/
+├── memorose-common    # Shared types, config, utilities
+├── memorose-core      # Storage engine, search, indexing
+├── memorose-gateway   # Raft consensus, cluster management
+└── memorose-server    # Axum HTTP server, API routes, dashboard
+```
+
+## Tiered Storage
+
+### L0: Hot Cache
+
+An in-memory LRU cache for the most recently and frequently accessed memories. Provides sub-millisecond read latency for active sessions.
+
+### L1: Warm Index
+
+The primary storage tier combining:
+
+- **LanceDB** for vector similarity search (embeddings)
+- **Tantivy** for full-text BM25 search
+- **Custom KV store** for metadata and knowledge graph edges
+
+Hybrid search queries execute across both LanceDB and Tantivy in parallel, with results fused using Reciprocal Rank Fusion (RRF).
+
+### L2: Cold Storage
+
+Compressed bitemporal archive for historical memories. Supports time-travel queries with both valid-time and transaction-time dimensions.
+
+## Search Pipeline
+
+1. Query arrives via HTTP API
+2. Embedding generated for the query text
+3. Parallel execution:
+   - Vector similarity search (LanceDB)
+   - Full-text BM25 search (Tantivy)
+   - Knowledge graph traversal (optional)
+4. Results fused via RRF scoring
+5. Filtered by user_id, app_id, agent_id, and temporal bounds
+6. Top-k results returned with scores and metadata
+
+## Raft Consensus
+
+For multi-node deployments, Memorose uses Raft consensus to replicate writes across the cluster. The leader handles all writes, and followers serve reads for horizontal scaling.
+
+## Multi-Tenancy
+
+Every memory is scoped by `user_id` and `app_id`. An optional `agent_id` provides further isolation for multi-agent systems. Queries are automatically filtered to the requesting tenant.
+
+## Knowledge Graph
+
+Memorose extracts entities and relationships from stored memories, building a knowledge graph that agents can traverse. This enables reasoning over connected information beyond simple similarity search.

@@ -1,0 +1,115 @@
+# API Reference
+
+Memorose exposes a RESTful HTTP API on the configured port (default: 3000).
+
+## Authentication
+
+All API requests require a Bearer token in the Authorization header:
+
+```
+Authorization: Bearer <your-api-key>
+```
+
+## Endpoints
+
+### Store Memory
+
+```
+POST /v1/memories
+```
+
+**Request Body:**
+
+```json
+{
+  "content": "User prefers dark mode",
+  "user_id": "alice",
+  "app_id": "my-app",
+  "agent_id": "assistant-1",
+  "metadata": {
+    "source": "chat",
+    "importance": 0.8
+  }
+}
+```
+
+**Response:**
+
+```json
+{
+  "id": "mem_abc123",
+  "content": "User prefers dark mode",
+  "user_id": "alice",
+  "app_id": "my-app",
+  "created_at": "2026-03-12T10:00:00Z"
+}
+```
+
+### Search Memories
+
+```
+POST /v1/search
+```
+
+**Request Body:**
+
+```json
+{
+  "query": "What does the user prefer?",
+  "user_id": "alice",
+  "app_id": "my-app",
+  "agent_id": "assistant-1",
+  "limit": 10,
+  "min_score": 0.5
+}
+```
+
+**Response:**
+
+```json
+{
+  "results": [
+    {
+      "id": "mem_abc123",
+      "content": "User prefers dark mode",
+      "score": 0.92,
+      "metadata": { "source": "chat" }
+    }
+  ]
+}
+```
+
+### Delete Memory
+
+```
+DELETE /v1/memories/:id
+```
+
+### List Memories
+
+```
+GET /v1/memories?user_id=alice&app_id=my-app&limit=20&offset=0
+```
+
+### Health Check
+
+```
+GET /health
+```
+
+Returns cluster health status, node role, and storage statistics.
+
+## Error Responses
+
+All errors follow a consistent format:
+
+```json
+{
+  "error": {
+    "code": "not_found",
+    "message": "Memory not found"
+  }
+}
+```
+
+Common error codes: `bad_request`, `unauthorized`, `not_found`, `internal_error`.
