@@ -44,12 +44,16 @@ pub struct LLMConfig {
     pub embedding_model: String,
     #[serde(default = "default_embedding_dim")]
     pub embedding_dim: i32,
+    #[serde(default)]
+    pub embedding_output_dim: Option<i32>,
+    #[serde(default)]
+    pub embedding_task_type: Option<String>,
     pub stt_provider: Option<LLMProvider>,
     pub stt_model: Option<String>,
 }
 
 fn default_embedding_dim() -> i32 {
-    768 // default for gemini-embedding-001
+    3072 // default for gemini-embedding-2
 }
 
 impl LLMConfig {
@@ -183,7 +187,9 @@ impl Default for LLMConfig {
             base_url: None,
             model: String::new(),
             embedding_model: String::new(),
-            embedding_dim: 768,
+            embedding_dim: 3072,
+            embedding_output_dim: None,
+            embedding_task_type: None,
             stt_provider: None,
             stt_model: None,
         }

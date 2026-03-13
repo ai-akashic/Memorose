@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use super::LLMClient;
+use super::{LLMClient, EmbedInput, EmbedPart};
 use base64::{Engine as _, engine::general_purpose};
 
 pub struct GeminiClient {
@@ -11,21 +11,25 @@ pub struct GeminiClient {
     base_url: String,
     model: String,
     embedding_model: String,
+    output_dimensionality: Option<i32>,
+    task_type: Option<String>,
 }
 
 impl GeminiClient {
     pub fn new(api_key: String, model: String, embedding_model: String) -> Self {
-        Self::with_base_url(api_key, model, embedding_model, "https://generativelanguage.googleapis.com".to_string())
+        Self::with_base_url(api_key, model, embedding_model, "https://generativelanguage.googleapis.com".to_string(), None, None)
     }
 
-    pub fn with_base_url(api_key: String, model: String, embedding_model: String, base_url: String) -> Self {
+    pub fn with_base_url(api_key: String, model: String, embedding_model: String, base_url: String, output_dimensionality: Option<i32>, task_type: Option<String>) -> Self {
         let api_key = api_key.trim().to_string();
         tracing::debug!(
-            "GeminiClient initialized: api_key_len={}, model={}, embedding_model={}, base_url={}",
+            "GeminiClient initialized: api_key_len={}, model={}, embedding_model={}, base_url={}, output_dim={:?}, task_type={:?}",
             api_key.len(),
             model,
             embedding_model,
-            base_url
+            base_url,
+            output_dimensionality,
+            task_type,
         );
         Self {
             client: Client::new(),
@@ -33,6 +37,8 @@ impl GeminiClient {
             base_url,
             model,
             embedding_model,
+            output_dimensionality,
+            task_type,
         }
     }
 }
@@ -98,6 +104,10 @@ struct ApiError {
 struct EmbedRequest {
     model: String,
     content: EmbedContent,
+    #[serde(rename = "outputDimensionality", skip_serializing_if = "Option::is_none")]
+    output_dimensionality: Option<i32>,
+    #[serde(rename = "taskType", skip_serializing_if = "Option::is_none")]
+    task_type: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -152,6 +162,8 @@ impl LLMClient for GeminiClient {
             content: EmbedContent {
                 parts: vec![Part::Text { text: text.to_string() }],
             },
+            output_dimensionality: self.output_dimensionality,
+            task_type: self.task_type.clone(),
         };
 
         let response = self.client.post(&url).json(&request).send().await?;
@@ -170,10 +182,15 @@ impl LLMClient for GeminiClient {
             return Err(anyhow!("Gemini Embedding API error: {}", err.message));
         }
 
-        let data = parsed
+        let mut data = parsed
             .embedding
             .map(|e| e.values)
             .ok_or_else(|| anyhow!("No embedding in Gemini response"))?;
+
+        // L2 normalize if output was truncated via MRL
+        if self.output_dimensionality.is_some() {
+            l2_normalize(&mut data);
+        }
 
         Ok(super::LLMResponse { data, usage: Default::default() })
     }
@@ -204,6 +221,8 @@ impl LLMClient for GeminiClient {
                             text: text.to_string(),
                         }],
                     },
+                    output_dimensionality: self.output_dimensionality,
+                    task_type: self.task_type.clone(),
                 })
                 .collect();
 
@@ -252,7 +271,13 @@ impl LLMClient for GeminiClient {
                 ));
             }
 
-            all_embeddings.extend(embeddings.into_iter().map(|e| e.values));
+            all_embeddings.extend(embeddings.into_iter().map(|e| {
+                let mut values = e.values;
+                if self.output_dimensionality.is_some() {
+                    l2_normalize(&mut values);
+                }
+                values
+            }));
         }
 
         Ok(super::LLMResponse { data: all_embeddings, usage: Default::default() })
@@ -375,6 +400,123 @@ impl LLMClient for GeminiClient {
              Part::Inline { inline_data: InlineData { mime_type, data } }
         ]).await
     }
+
+    async fn embed_content(&self, input: EmbedInput) -> Result<super::LLMResponse<Vec<f32>>> {
+        let parts = embed_input_to_parts(input);
+
+        let clean_model = self.embedding_model.trim_start_matches("models/");
+        let model_name = format!("models/{}", clean_model);
+        let url = format!(
+            "{}/v1beta/models/{}:embedContent?key={}",
+            self.base_url.trim_end_matches('/'),
+            clean_model,
+            self.api_key.trim()
+        );
+
+        let request = EmbedRequest {
+            model: model_name,
+            content: EmbedContent { parts },
+            output_dimensionality: self.output_dimensionality,
+            task_type: self.task_type.clone(),
+        };
+
+        let response = self.client.post(&url).json(&request).send().await?;
+        let status = response.status();
+        let body = response.text().await?;
+
+        if !status.is_success() {
+            return Err(anyhow!("Gemini Embedding API error ({}): {}", status, body));
+        }
+
+        let parsed: EmbedResponse = serde_json::from_str(&body)
+            .map_err(|e| anyhow!("Failed to parse Gemini embedding response: {} - body: {}", e, body))?;
+
+        if let Some(err) = parsed.error {
+            return Err(anyhow!("Gemini Embedding API error: {}", err.message));
+        }
+
+        let mut data = parsed
+            .embedding
+            .map(|e| e.values)
+            .ok_or_else(|| anyhow!("No embedding in Gemini response"))?;
+
+        if self.output_dimensionality.is_some() {
+            l2_normalize(&mut data);
+        }
+
+        Ok(super::LLMResponse { data, usage: Default::default() })
+    }
+
+    async fn embed_content_batch(&self, inputs: Vec<EmbedInput>) -> Result<super::LLMResponse<Vec<Vec<f32>>>> {
+        if inputs.is_empty() {
+            return Ok(super::LLMResponse { data: vec![], usage: Default::default() });
+        }
+
+        let clean_model = self.embedding_model.trim_start_matches("models/");
+        let model_name = format!("models/{}", clean_model);
+        let url = format!(
+            "{}/v1beta/models/{}:batchEmbedContents?key={}",
+            self.base_url.trim_end_matches('/'),
+            clean_model,
+            self.api_key.trim()
+        );
+
+        let mut all_embeddings = Vec::with_capacity(inputs.len());
+
+        for chunk in inputs.chunks(GEMINI_BATCH_EMBED_MAX_SIZE) {
+            let requests: Vec<EmbedRequest> = chunk
+                .iter()
+                .map(|input| EmbedRequest {
+                    model: model_name.clone(),
+                    content: EmbedContent {
+                        parts: embed_input_to_parts(input.clone()),
+                    },
+                    output_dimensionality: self.output_dimensionality,
+                    task_type: self.task_type.clone(),
+                })
+                .collect();
+
+            let batch_request = BatchEmbedRequest { requests };
+
+            let response = self.client.post(&url).json(&batch_request).send().await?;
+            let status = response.status();
+            let body = response.text().await?;
+
+            if !status.is_success() {
+                return Err(anyhow!("Gemini Batch Embedding API error ({}): {}", status, body));
+            }
+
+            let parsed: BatchEmbedResponse = serde_json::from_str(&body).map_err(|e| {
+                anyhow!("Failed to parse Gemini batch embedding response: {} - body: {}", e, body)
+            })?;
+
+            if let Some(err) = parsed.error {
+                return Err(anyhow!("Gemini Batch Embedding API error: {}", err.message));
+            }
+
+            let embeddings = parsed
+                .embeddings
+                .ok_or_else(|| anyhow!("No embeddings in Gemini batch response"))?;
+
+            if embeddings.len() != chunk.len() {
+                return Err(anyhow!(
+                    "Gemini batch embedding count mismatch: requested={}, received={}",
+                    chunk.len(),
+                    embeddings.len()
+                ));
+            }
+
+            all_embeddings.extend(embeddings.into_iter().map(|e| {
+                let mut values = e.values;
+                if self.output_dimensionality.is_some() {
+                    l2_normalize(&mut values);
+                }
+                values
+            }));
+        }
+
+        Ok(super::LLMResponse { data: all_embeddings, usage: Default::default() })
+    }
 }
 
 impl GeminiClient {
@@ -442,6 +584,31 @@ impl GeminiClient {
         }).unwrap_or_default();
 
         Ok(super::LLMResponse { data: text, usage })
+    }
+}
+
+/// L2 normalize a vector in-place. Required for MRL-truncated embeddings.
+pub fn l2_normalize(v: &mut [f32]) {
+    let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm > f32::EPSILON {
+        for x in v.iter_mut() {
+            *x /= norm;
+        }
+    }
+}
+
+/// Convert an EmbedInput to the Gemini Part format.
+fn embed_input_to_parts(input: EmbedInput) -> Vec<Part> {
+    match input {
+        EmbedInput::Text(text) => vec![Part::Text { text }],
+        EmbedInput::Multimodal { parts } => {
+            parts.into_iter().map(|p| match p {
+                EmbedPart::Text(text) => Part::Text { text },
+                EmbedPart::InlineData { mime_type, data } => Part::Inline {
+                    inline_data: InlineData { mime_type, data },
+                },
+            }).collect()
+        }
     }
 }
 

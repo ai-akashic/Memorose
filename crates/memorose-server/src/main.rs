@@ -570,6 +570,15 @@ struct RetrieveRequest {
     as_of: Option<DateTime<Utc>>,
     #[serde(default)]
     agent_id: Option<String>,
+    /// Base64-encoded image for cross-modal retrieval
+    #[serde(default)]
+    image: Option<String>,
+    /// Base64-encoded audio for cross-modal retrieval
+    #[serde(default)]
+    audio: Option<String>,
+    /// Base64-encoded video for cross-modal retrieval
+    #[serde(default)]
+    video: Option<String>,
 }
 
 fn default_graph_depth() -> usize {
@@ -586,7 +595,28 @@ async fn retrieve_memory(
     let shard = state.shard_manager.shard_for_user(&user_id);
 
     let query_key = payload.query.clone();
-    let embedding_f32 = if let Some(cached) = state.embedding_cache.get(&query_key).await {
+
+    // Build EmbedInput from request: multimodal if image/audio/video provided, otherwise text
+    let has_multimodal = payload.image.is_some() || payload.audio.is_some() || payload.video.is_some();
+
+    let embedding_f32 = if has_multimodal {
+        use memorose_core::llm::{EmbedInput, EmbedPart};
+        let mut parts = vec![EmbedPart::Text(payload.query.clone())];
+        if let Some(ref img) = payload.image {
+            parts.push(EmbedPart::InlineData { mime_type: "image/jpeg".to_string(), data: img.clone() });
+        }
+        if let Some(ref aud) = payload.audio {
+            parts.push(EmbedPart::InlineData { mime_type: "audio/mp3".to_string(), data: aud.clone() });
+        }
+        if let Some(ref vid) = payload.video {
+            parts.push(EmbedPart::InlineData { mime_type: "video/mp4".to_string(), data: vid.clone() });
+        }
+        let input = EmbedInput::Multimodal { parts };
+        match state.llm_client.embed_content(input).await {
+            Ok(res) => Ok(res.data),
+            Err(e) => Err(e),
+        }
+    } else if let Some(cached) = state.embedding_cache.get(&query_key).await {
         tracing::debug!("Embedding Cache Hit for: '{}'", query_key);
         Ok(cached)
     } else {

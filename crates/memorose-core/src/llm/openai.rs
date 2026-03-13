@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use super::{LLMClient, CompressionOutput};
+use super::{LLMClient, CompressionOutput, EmbedInput, EmbedPart};
 use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize)]
@@ -318,6 +318,80 @@ impl LLMClient for OpenAIClient {
 
     async fn describe_video(&self, _video_url: &str) -> Result<super::LLMResponse<String>> {
         Err(anyhow!("describe_video not fully implemented for OpenAIClient yet"))
+    }
+
+    async fn embed_content(&self, input: EmbedInput) -> Result<super::LLMResponse<Vec<f32>>> {
+        match input {
+            EmbedInput::Text(text) => self.embed(&text).await,
+            EmbedInput::Multimodal { parts } => {
+                // Fallback: convert multimodal parts to text descriptions, then embed
+                let mut text_parts = Vec::new();
+                for part in parts {
+                    match part {
+                        EmbedPart::Text(t) => text_parts.push(t),
+                        EmbedPart::InlineData { mime_type, data } => {
+                            let description = if mime_type.starts_with("image/") {
+                                self.describe_image(&data).await.map(|r| r.data).unwrap_or_else(|_| "Image content".to_string())
+                            } else if mime_type.starts_with("audio/") {
+                                self.transcribe(&data).await.map(|r| r.data).unwrap_or_else(|_| "Audio content".to_string())
+                            } else if mime_type.starts_with("video/") {
+                                self.describe_video(&data).await.map(|r| r.data).unwrap_or_else(|_| "Video content".to_string())
+                            } else {
+                                "Unknown media content".to_string()
+                            };
+                            text_parts.push(description);
+                        }
+                    }
+                }
+                let combined = text_parts.join(" ");
+                self.embed(&combined).await
+            }
+        }
+    }
+
+    async fn embed_content_batch(&self, inputs: Vec<EmbedInput>) -> Result<super::LLMResponse<Vec<Vec<f32>>>> {
+        // Split into text-only (can batch) and multimodal (must process individually)
+        let mut results = Vec::with_capacity(inputs.len());
+        let mut total_usage = memorose_common::TokenUsage::default();
+        let mut text_batch: Vec<(usize, String)> = Vec::new();
+
+        // First pass: collect text-only inputs for batching, process multimodal immediately
+        for (idx, input) in inputs.into_iter().enumerate() {
+            match input {
+                EmbedInput::Text(text) => {
+                    text_batch.push((idx, text));
+                    results.push((idx, Vec::new()));
+                }
+                multimodal => {
+                    let res = self.embed_content(multimodal).await?;
+                    total_usage.prompt_tokens += res.usage.prompt_tokens;
+                    total_usage.completion_tokens += res.usage.completion_tokens;
+                    total_usage.total_tokens += res.usage.total_tokens;
+                    results.push((idx, res.data));
+                }
+            }
+        }
+
+        // Batch embed all text inputs
+        if !text_batch.is_empty() {
+            let texts: Vec<String> = text_batch.iter().map(|(_, t)| t.clone()).collect();
+            let batch_res = self.embed_batch(texts).await?;
+            total_usage.prompt_tokens += batch_res.usage.prompt_tokens;
+            total_usage.completion_tokens += batch_res.usage.completion_tokens;
+            total_usage.total_tokens += batch_res.usage.total_tokens;
+
+            for ((idx, _), emb) in text_batch.into_iter().zip(batch_res.data) {
+                if let Some(entry) = results.iter_mut().find(|(i, _)| *i == idx) {
+                    entry.1 = emb;
+                }
+            }
+        }
+
+        // Sort by original index
+        results.sort_by_key(|(idx, _)| *idx);
+        let data = results.into_iter().map(|(_, emb)| emb).collect();
+
+        Ok(super::LLMResponse { data, usage: total_usage })
     }
 }
 

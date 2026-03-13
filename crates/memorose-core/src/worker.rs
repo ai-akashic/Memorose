@@ -1,5 +1,5 @@
 use crate::MemoroseEngine;
-use crate::llm::LLMClient;
+use crate::llm::{LLMClient, EmbedInput, EmbedPart};
 use memorose_common::{MemoryUnit, config::AppConfig, Asset};
 use tokio::time::Duration;
 use tokio::sync::mpsc;
@@ -244,31 +244,127 @@ impl BackgroundWorker {
         hasher.finish()
     }
 
-    async fn extract_text_from_event(event: &memorose_common::Event, llm: Option<&dyn crate::llm::LLMClient>) -> String {
+    async fn extract_text_and_embed_input(event: &memorose_common::Event, llm: Option<&dyn crate::llm::LLMClient>) -> (String, EmbedInput) {
         match &event.content {
-            memorose_common::EventContent::Text(t) => t.clone(),
+            memorose_common::EventContent::Text(t) => (t.clone(), EmbedInput::Text(t.clone())),
             memorose_common::EventContent::Image(url) => {
-                if let Some(client) = llm {
+                // For native multimodal embedding, try to fetch bytes for inline embedding
+                let text_description = if let Some(client) = llm {
                     client.describe_image(url).await.map(|r| r.data).unwrap_or_else(|_| format!("Image at {}", url))
                 } else {
                     format!("Image at {}", url)
-                }
+                };
+
+                let embed_input = if url.starts_with("http") {
+                    // URL-based: fetch the bytes for inline embedding
+                    match reqwest::get(url).await {
+                        Ok(resp) => {
+                            let mime = resp.headers().get("content-type")
+                                .and_then(|v| v.to_str().ok())
+                                .unwrap_or("image/jpeg")
+                                .to_string();
+                            match resp.bytes().await {
+                                Ok(bytes) => EmbedInput::Multimodal {
+                                    parts: vec![EmbedPart::InlineData {
+                                        mime_type: mime,
+                                        data: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes),
+                                    }],
+                                },
+                                Err(_) => EmbedInput::Text(text_description.clone()),
+                            }
+                        }
+                        Err(_) => EmbedInput::Text(text_description.clone()),
+                    }
+                } else {
+                    // Already base64
+                    EmbedInput::Multimodal {
+                        parts: vec![EmbedPart::InlineData {
+                            mime_type: "image/jpeg".to_string(),
+                            data: url.clone(),
+                        }],
+                    }
+                };
+
+                (text_description, embed_input)
             }
             memorose_common::EventContent::Audio(url) => {
-                if let Some(client) = llm {
+                let text_description = if let Some(client) = llm {
                     client.transcribe(url).await.map(|r| r.data).unwrap_or_else(|_| format!("Audio at {}", url))
                 } else {
                     format!("Audio at {}", url)
-                }
+                };
+
+                let embed_input = if url.starts_with("http") {
+                    match reqwest::get(url).await {
+                        Ok(resp) => {
+                            let mime = resp.headers().get("content-type")
+                                .and_then(|v| v.to_str().ok())
+                                .unwrap_or("audio/mp3")
+                                .to_string();
+                            match resp.bytes().await {
+                                Ok(bytes) => EmbedInput::Multimodal {
+                                    parts: vec![EmbedPart::InlineData {
+                                        mime_type: mime,
+                                        data: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes),
+                                    }],
+                                },
+                                Err(_) => EmbedInput::Text(text_description.clone()),
+                            }
+                        }
+                        Err(_) => EmbedInput::Text(text_description.clone()),
+                    }
+                } else {
+                    EmbedInput::Multimodal {
+                        parts: vec![EmbedPart::InlineData {
+                            mime_type: "audio/mp3".to_string(),
+                            data: url.clone(),
+                        }],
+                    }
+                };
+
+                (text_description, embed_input)
             }
             memorose_common::EventContent::Video(url) => {
-                if let Some(client) = llm {
+                let text_description = if let Some(client) = llm {
                     client.describe_video(url).await.map(|r| r.data).unwrap_or_else(|_| format!("Video at {}", url))
                 } else {
                     format!("Video at {}", url)
-                }
+                };
+
+                let embed_input = if url.starts_with("http") {
+                    match reqwest::get(url).await {
+                        Ok(resp) => {
+                            let mime = resp.headers().get("content-type")
+                                .and_then(|v| v.to_str().ok())
+                                .unwrap_or("video/mp4")
+                                .to_string();
+                            match resp.bytes().await {
+                                Ok(bytes) => EmbedInput::Multimodal {
+                                    parts: vec![EmbedPart::InlineData {
+                                        mime_type: mime,
+                                        data: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes),
+                                    }],
+                                },
+                                Err(_) => EmbedInput::Text(text_description.clone()),
+                            }
+                        }
+                        Err(_) => EmbedInput::Text(text_description.clone()),
+                    }
+                } else {
+                    EmbedInput::Multimodal {
+                        parts: vec![EmbedPart::InlineData {
+                            mime_type: "video/mp4".to_string(),
+                            data: url.clone(),
+                        }],
+                    }
+                };
+
+                (text_description, embed_input)
             }
-            memorose_common::EventContent::Json(val) => val.to_string(),
+            memorose_common::EventContent::Json(val) => {
+                let text = val.to_string();
+                (text.clone(), EmbedInput::Text(text))
+            }
         }
     }
 
@@ -399,24 +495,32 @@ impl BackgroundWorker {
                 
                 // For a packed batch, we will extract the common identifiers from the first event
                 let first_event = events.remove(0);
-                let mut combined_text = format!("Message 1: {}", Self::extract_text_from_event(&first_event, llm.as_deref()).await);
-                
+                let (first_text, first_embed_input) = Self::extract_text_and_embed_input(&first_event, llm.as_deref()).await;
+                let mut combined_text = format!("Message 1: {}", first_text);
+                // Track the first multimodal embed input for the batch
+                let embed_input = if first_embed_input.has_multimodal_parts() {
+                    Some(first_embed_input)
+                } else {
+                    None
+                };
+
                 // Metadata logic (merge simple fields or keep first)
                 let metadata = first_event.metadata.clone();
                 let user_id = first_event.user_id.clone();
                 let app_id = first_event.app_id.clone();
                 let stream_id = first_event.stream_id;
-                let is_agent = metadata.get("role").and_then(|v| v.as_str()) == Some("assistant") 
+                let is_agent = metadata.get("role").and_then(|v| v.as_str()) == Some("assistant")
                     || metadata.get("agent_id").is_some();
-                    
+
                 // We keep all event IDs to mark them as processed later
                 let mut event_ids = vec![first_event.id];
-                
+
                 let mut assets = Self::extract_assets_from_event(&first_event);
 
                 // Append the rest
                 for (i, evt) in events.into_iter().enumerate() {
-                    combined_text.push_str(&format!("\nMessage {}: {}", i + 2, Self::extract_text_from_event(&evt, llm.as_deref()).await));
+                    let (evt_text, _evt_embed_input) = Self::extract_text_and_embed_input(&evt, llm.as_deref()).await;
+                    combined_text.push_str(&format!("\nMessage {}: {}", i + 2, evt_text));
                     event_ids.push(evt.id);
                     assets.extend(Self::extract_assets_from_event(&evt));
                 }
@@ -478,7 +582,7 @@ impl BackgroundWorker {
                         (compressed, valid)
                     };
 
-                    (event_ids, user_id, app_id, stream_id, summary, valid_at, assets, metadata)
+                    (event_ids, user_id, app_id, stream_id, summary, valid_at, assets, metadata, embed_input)
                 });
             }
 
@@ -546,16 +650,16 @@ impl BackgroundWorker {
 
     /// Helper for pipeline batch processing
     async fn process_pipeline_batch(
-        &self, 
-        batch: Vec<(Vec<uuid::Uuid>, String, String, uuid::Uuid, String, Option<String>, Vec<Asset>, serde_json::Value)>
+        &self,
+        batch: Vec<(Vec<uuid::Uuid>, String, String, uuid::Uuid, String, Option<String>, Vec<Asset>, serde_json::Value, Option<EmbedInput>)>
     ) -> Result<Vec<String>> {
         if batch.is_empty() { return Ok(Vec::new()); }
 
         // Phase 2: Batch Embed
-        let mut texts_to_embed = Vec::new();
+        let mut inputs_to_embed = Vec::new();
         let mut needs_embedding = Vec::new();
 
-        for (idx, (event_ids, _, _, _, summary, _, _, metadata)) in batch.iter().enumerate() {
+        for (idx, (event_ids, _, _, _, summary, _, _, metadata, embed_input)) in batch.iter().enumerate() {
             match Self::parse_metadata_embedding(metadata) {
                 Some(Some(_)) => continue,
                 Some(None) | None => {}
@@ -564,20 +668,21 @@ impl BackgroundWorker {
                 tracing::warn!("Skipping empty summary for packed events {:?}", event_ids);
                 continue;
             }
-            texts_to_embed.push(summary.clone());
+            // Use multimodal embed input if available, otherwise fall back to text
+            let input = embed_input.clone().unwrap_or_else(|| EmbedInput::Text(summary.clone()));
+            inputs_to_embed.push(input);
             needs_embedding.push(idx);
         }
 
-        let embeddings = if !texts_to_embed.is_empty() {
+        let embeddings = if !inputs_to_embed.is_empty() {
             if let Some(client) = self.llm_client.as_ref() {
-                // ... same embedding logic ...
-                match client.embed_batch(texts_to_embed.clone()).await {
+                match client.embed_content_batch(inputs_to_embed.clone()).await {
                     Ok(embs) if embs.data.len() == needs_embedding.len() => embs.data,
                     _ => {
-                        // Fallback
-                        let mut embs = Vec::with_capacity(texts_to_embed.len());
-                        for text in texts_to_embed {
-                            embs.push(client.embed(&text).await.map(|r| r.data).unwrap_or_default());
+                        // Fallback to individual embed_content calls
+                        let mut embs = Vec::with_capacity(inputs_to_embed.len());
+                        for input in inputs_to_embed {
+                            embs.push(client.embed_content(input).await.map(|r| r.data).unwrap_or_default());
                         }
                         embs
                     }
@@ -600,7 +705,7 @@ impl BackgroundWorker {
         let mut units_to_store = Vec::new();
         let mut processed_ids = Vec::new();
 
-        for (idx, (event_ids, user_id, app_id, stream_id, summary, valid_at, assets, metadata)) in batch.into_iter().enumerate() {
+        for (idx, (event_ids, user_id, app_id, stream_id, summary, valid_at, assets, metadata, _embed_input)) in batch.into_iter().enumerate() {
             let embedding = match Self::parse_metadata_embedding(&metadata) {
                 Some(Some(vec)) => Some(vec),
                 Some(None) | None => embeddings_by_idx.remove(&idx),

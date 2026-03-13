@@ -33,6 +33,8 @@ mod tests {
             TEST_MODEL.to_string(),
             TEST_EMBEDDING_MODEL.to_string(),
             mock_server.uri(),
+            None,
+            None,
         );
 
         let result = client.generate("Hello").await;
@@ -43,7 +45,7 @@ mod tests {
     #[tokio::test]
     async fn test_generate_403_error() {
         let mock_server = MockServer::start().await;
-        
+
         let error_response = json!({
             "error": {
                 "code": 403,
@@ -62,6 +64,8 @@ mod tests {
             TEST_MODEL.to_string(),
             TEST_EMBEDDING_MODEL.to_string(),
             mock_server.uri(),
+            None,
+            None,
         );
 
         let result = client.generate("Hello").await;
@@ -93,6 +97,8 @@ mod tests {
             TEST_MODEL.to_string(),
             TEST_EMBEDDING_MODEL.to_string(),
             mock_server.uri(),
+            None,
+            None,
         );
 
         let result = client.embed("test text").await;
@@ -125,6 +131,8 @@ mod tests {
             TEST_MODEL.to_string(),
             TEST_EMBEDDING_MODEL.to_string(),
             mock_server.uri(),
+            None,
+            None,
         );
 
         let result = client
@@ -160,6 +168,8 @@ mod tests {
             TEST_MODEL.to_string(),
             TEST_EMBEDDING_MODEL.to_string(),
             mock_server.uri(),
+            None,
+            None,
         );
 
         let result = client
@@ -185,6 +195,8 @@ mod tests {
             TEST_MODEL.to_string(),
             TEST_EMBEDDING_MODEL.to_string(),
             "http://localhost:1234".to_string(), // Dummy LLM base
+            None,
+            None,
         );
 
         let image_url = format!("{}/image.jpg", mock_server.uri());
@@ -201,5 +213,48 @@ mod tests {
         );
         let result = client.transcribe("some-data").await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_l2_normalize() {
+        use crate::llm::gemini::l2_normalize;
+        let mut v = vec![3.0, 4.0];
+        l2_normalize(&mut v);
+        let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+        assert!((norm - 1.0).abs() < 1e-6);
+        assert!((v[0] - 0.6).abs() < 1e-6);
+        assert!((v[1] - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_l2_normalize_zero_vector() {
+        use crate::llm::gemini::l2_normalize;
+        let mut v = vec![0.0, 0.0, 0.0];
+        l2_normalize(&mut v);
+        assert_eq!(v, vec![0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn test_embed_input_text_conversion() {
+        use crate::llm::{EmbedInput, EmbedPart};
+        let input = EmbedInput::Text("hello".to_string());
+        assert!(!input.has_multimodal_parts());
+        assert_eq!(input.as_text(), "hello");
+    }
+
+    #[test]
+    fn test_embed_input_multimodal_detection() {
+        use crate::llm::{EmbedInput, EmbedPart};
+        let input = EmbedInput::Multimodal {
+            parts: vec![
+                EmbedPart::Text("caption".to_string()),
+                EmbedPart::InlineData {
+                    mime_type: "image/jpeg".to_string(),
+                    data: "base64data".to_string(),
+                },
+            ],
+        };
+        assert!(input.has_multimodal_parts());
+        assert_eq!(input.as_text(), "caption");
     }
 }
