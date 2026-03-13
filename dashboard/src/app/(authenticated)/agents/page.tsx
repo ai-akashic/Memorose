@@ -48,11 +48,11 @@ function KpiCard({
       transition={{ duration: 0.4, delay, ease: "easeOut" }}
       className="h-full"
     >
-      <Card className="glass-card group relative overflow-hidden hover:bg-white/[0.04] transition-all duration-500 h-full border-white/[0.04] hover:border-white/10">
+      <Card className="glass-card group relative overflow-hidden transition-all duration-500 h-full">
         <CardContent className="p-5 flex flex-col justify-between h-full relative z-10">
           <div className="flex items-center justify-between">
             <Icon className={`w-4 h-4 ${color} opacity-60 group-hover:opacity-100 transition-opacity`} />
-            <span className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold group-hover:text-muted-foreground/70 transition-colors">
+            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
               {label}
             </span>
           </div>
@@ -60,7 +60,7 @@ function KpiCard({
             {typeof value === "number" ? formatNumber(value) : value}
           </div>
         </CardContent>
-        <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/[0.01] to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
+        
       </Card>
     </motion.div>
   );
@@ -75,14 +75,14 @@ function AgentRow({ agent, index, now }: { agent: AgentSummary; index: number; n
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.03, duration: 0.25 }}
-      className="border-b border-white/[0.03] hover:bg-white/[0.03] transition-colors group"
+      className="border-b border-border hover:bg-card transition-colors group"
     >
       <TableCell className="px-5">
         <div className="flex items-center gap-3">
-          <div className="relative flex h-7 w-7 items-center justify-center rounded-lg bg-white/[0.02] border border-white/[0.04] group-hover:border-primary/20 transition-colors shrink-0">
+          <div className="relative flex h-7 w-7 items-center justify-center rounded-lg bg-card border border-border group-hover:border-primary/20 transition-colors shrink-0">
             <Bot className="w-3.5 h-3.5 text-muted-foreground group-hover:text-primary transition-colors" />
             {isRecent && (
-              <span className="absolute -top-0.5 -right-0.5 w-1 h-1 rounded-full bg-success shadow-[0_0_5px_rgba(34,197,94,0.8)] animate-pulse" />
+              <span className="absolute -top-0.5 -right-0.5 w-1 h-1 rounded-full bg-success animate-pulse" />
             )}
           </div>
           <span className="font-mono text-xs text-foreground/80 group-hover:text-white transition-colors">{agent.agent_id}</span>
@@ -129,7 +129,7 @@ export default function AgentsPage() {
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {isLoading ? (
-          [1, 2, 3].map((i) => <Skeleton key={i} className="h-28 glass-card rounded-xl opacity-10 border-white/5" />)
+          [1, 2, 3].map((i) => <Skeleton key={i} className="h-28 glass-card rounded-xl opacity-10" />)
         ) : (
           <>
             <KpiCard label="Count" value={data?.total_count ?? 0} icon={Bot} delay={0.1} />
@@ -140,41 +140,41 @@ export default function AgentsPage() {
       </div>
 
       {/* Agent Table */}
-      <div className="glass-card rounded-xl overflow-hidden border border-white/[0.06] shadow-2xl shadow-black/50">
-        <TableHeader className="bg-white/[0.03]">
-          <TableRow className="border-white/5 hover:bg-transparent">
-            <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold px-5">AGT</TableHead>
-            <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold text-center">MEM</TableHead>
-            <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold text-center">L1</TableHead>
-            <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold text-center">L2</TableHead>
-            <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold text-center">EVT</TableHead>
-            <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold px-5">ACT</TableHead>
+      <div className="glass-card rounded-xl overflow-hidden">
+        <TableHeader className="bg-card">
+          <TableRow className="border-border hover:bg-transparent">
+            <TableHead className="px-5 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">AGT</TableHead>
+            <TableHead className="text-center text-[11px] font-medium uppercase tracking-widest text-muted-foreground">MEM</TableHead>
+            <TableHead className="text-center text-[11px] font-medium uppercase tracking-widest text-muted-foreground">L1</TableHead>
+            <TableHead className="text-center text-[11px] font-medium uppercase tracking-widest text-muted-foreground">L2</TableHead>
+            <TableHead className="text-center text-[11px] font-medium uppercase tracking-widest text-muted-foreground">EVT</TableHead>
+            <TableHead className="px-5 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">ACT</TableHead>
           </TableRow>
         </TableHeader>
 
         {error ? (
           <div className="p-10 text-center">
-             <span className="text-[10px] uppercase tracking-widest text-destructive font-bold">Sync Error</span>
+             <span className="text-destructive text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Sync Error</span>
           </div>
         ) : (
           <Table>
             <TableBody>
               {isLoading ? (
                 Array.from({ length: 5 }).map((_, i) => (
-                  <TableRow key={i} className="border-white/5">
+                  <TableRow key={i} className="border-border">
                     <TableCell colSpan={6}>
                       <Skeleton className="h-8 w-full opacity-10" />
                     </TableCell>
                   </TableRow>
                 ))
               ) : !data || data.agents.length === 0 ? (
-                <TableRow className="border-white/5 hover:bg-transparent">
+                <TableRow className="border-border hover:bg-transparent">
                   <TableCell colSpan={6} className="py-24">
                     <div className="flex flex-col items-center gap-3 text-center">
-                      <div className="w-12 h-12 rounded-2xl bg-white/[0.02] border border-white/5 flex items-center justify-center">
+                      <div className="w-12 h-12 rounded-2xl bg-card border border-border flex items-center justify-center">
                         <Bot className="w-5 h-5 opacity-10" />
                       </div>
-                      <p className="text-[10px] uppercase tracking-widest text-muted-foreground/30 font-bold">Zero Registry</p>
+                      <p className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Zero Registry</p>
                     </div>
                   </TableCell>
                 </TableRow>

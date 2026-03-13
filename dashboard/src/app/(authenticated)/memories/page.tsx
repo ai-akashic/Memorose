@@ -61,9 +61,9 @@ function LevelBadge({ level }: { level: number }) {
 
 function ImportanceBar({ value }: { value: number }) {
   return (
-    <div className="w-16 h-1 bg-white/5 rounded-full overflow-hidden border border-white/[0.02]">
+    <div className="w-16 h-1 bg-card rounded-full overflow-hidden border border-border">
       <div
-        className="h-full bg-primary transition-all duration-700 shadow-[0_0_8px_rgba(56,125,255,0.4)]"
+        className="h-full bg-primary transition-all duration-700"
         style={{ width: `${value * 100}%` }}
       />
     </div>
@@ -81,60 +81,60 @@ function MemoryDetailSheet({
 }) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="overflow-y-auto sm:max-w-md glass-card border-l border-white/5">
+      <SheetContent className="overflow-y-auto sm:max-w-md glass-card border-l">
         <SheetHeader className="pb-6">
-          <SheetTitle className="text-xs uppercase tracking-[0.2em] font-bold text-muted-foreground/60">Memory Entry</SheetTitle>
+          <SheetTitle className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Memory Entry</SheetTitle>
         </SheetHeader>
 
         {memory && (
           <div className="space-y-6 px-2">
             <div className="flex flex-col gap-1.5">
-              <span className="text-[10px] uppercase tracking-widest text-muted-foreground/40 font-bold">Identifier</span>
+              <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Identifier</span>
               <p className="font-mono text-[11px] text-foreground/70 break-all">{memory.id}</p>
             </div>
             
             <div className="grid grid-cols-2 gap-4">
               <div className="flex flex-col gap-1.5">
-                <span className="text-[10px] uppercase tracking-widest text-muted-foreground/40 font-bold">User</span>
+                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">User</span>
                 <p className="font-mono text-[11px] text-foreground/70">{memory.user_id}</p>
               </div>
               <div className="flex flex-col gap-1.5">
-                <span className="text-[10px] uppercase tracking-widest text-muted-foreground/40 font-bold">Application</span>
+                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Application</span>
                 <p className="font-mono text-[11px] text-foreground/70">{memory.app_id}</p>
               </div>
             </div>
 
             <div className="flex flex-col gap-2">
-              <span className="text-[10px] uppercase tracking-widest text-muted-foreground/40 font-bold">Payload</span>
-              <div className="bg-white/[0.02] border border-white/[0.04] rounded-xl p-4">
+              <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Payload</span>
+              <div className="bg-card border border-border rounded-xl p-4">
                 <p className="text-xs text-foreground/90 leading-relaxed whitespace-pre-wrap">{memory.content}</p>
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-6 py-2">
               <div className="flex flex-col gap-2">
-                <span className="text-[10px] uppercase tracking-widest text-muted-foreground/40 font-bold">Hierarchy</span>
+                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Hierarchy</span>
                 <LevelBadge level={memory.level} />
               </div>
               <div className="flex flex-col gap-2">
-                <span className="text-[10px] uppercase tracking-widest text-muted-foreground/40 font-bold">Significance</span>
+                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Significance</span>
                 <ImportanceBar value={memory.importance} />
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4 opacity-60">
               <div className="flex flex-col gap-1">
-                <span className="text-[10px] uppercase tracking-widest text-muted-foreground/40 font-bold">Telemetry</span>
+                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Telemetry</span>
                 <p className="text-[11px] font-mono text-muted-foreground">ACC: {memory.access_count} · STRM: {memory.stream_id}</p>
               </div>
             </div>
 
             {memory.keywords.length > 0 && (
               <div className="flex flex-col gap-2">
-                <span className="text-[10px] uppercase tracking-widest text-muted-foreground/40 font-bold">Keywords</span>
+                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Keywords</span>
                 <div className="flex flex-wrap gap-1.5">
                   {memory.keywords.map((kw) => (
-                    <span key={kw} className="text-[10px] text-muted-foreground/60 bg-white/5 px-2 py-0.5 rounded-full border border-white/[0.04]">{kw}</span>
+                    <span key={kw} className="bg-card px-2 py-0.5 rounded-full border border-border text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{kw}</span>
                   ))}
                 </div>
               </div>
@@ -256,7 +256,7 @@ function KnowledgeGraph({ userId }: { userId?: string }) {
 
   return (
     <div className="flex flex-col h-full relative group">
-      <div className="absolute top-4 left-4 z-10 flex gap-3 text-[11px] font-mono uppercase tracking-wider text-muted-foreground bg-background/40 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10">
+      <div className="absolute top-4 left-4 z-10 flex gap-3 text-[11px] font-mono uppercase tracking-wider text-muted-foreground bg-background/40 px-3 py-1.5 rounded-full border border-border">
         <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" /> {data.stats.node_count} nodes</span>
         <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-primary/50" /> {data.stats.edge_count} edges</span>
       </div>
@@ -319,12 +319,12 @@ function SearchPlayground({ globalUserId }: { globalUserId?: string }) {
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              className="pl-9 bg-white/5 border-white/10 focus:border-primary/40"
+              className="pl-9 bg-card border-border focus:border-primary/40"
               placeholder="Search memories…"
             />
           </div>
           <Select value={mode} onValueChange={setMode}>
-            <SelectTrigger className="w-[120px] bg-white/5 border-white/10">
+            <SelectTrigger className="w-[120px] bg-card border-border">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -343,35 +343,35 @@ function SearchPlayground({ globalUserId }: { globalUserId?: string }) {
             value={searchUserId}
             onChange={(e) => setSearchUserId(e.target.value)}
             placeholder="user_id (optional)"
-            className="flex-1 h-8 text-xs font-mono bg-white/5 border-white/10 focus:border-primary/40 placeholder:text-muted-foreground/30"
+            className="flex-1 h-8 font-mono bg-card border-border focus:border-primary/40 text-[11px] font-medium uppercase tracking-widest text-muted-foreground"
           />
           <Input
             type="text"
             value={appId}
             onChange={(e) => setAppId(e.target.value)}
             placeholder="app_id (optional)"
-            className="flex-1 h-8 text-xs font-mono bg-white/5 border-white/10 focus:border-primary/40 placeholder:text-muted-foreground/30"
+            className="flex-1 h-8 font-mono bg-card border-border focus:border-primary/40 text-[11px] font-medium uppercase tracking-widest text-muted-foreground"
           />
         </div>
       </form>
 
       {queryTime !== null && (
-        <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 font-semibold mb-3">
+        <p className="font-semibold mb-3 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
           {results.length} results &middot; {queryTime.toFixed(1)}ms
         </p>
       )}
 
       <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
         {results.map((r) => (
-          <div key={r.unit.id} className="p-3 rounded-xl glass-card border border-white/[0.06] hover:border-primary/20 transition-all duration-200">
+          <div key={r.unit.id} className="p-3 rounded-xl glass-card hover:border-primary/20 transition-all duration-200">
             <div className="flex items-center gap-2 mb-1.5">
               <LevelBadge level={r.unit.level} />
               {r.unit.memory_type === "procedural" ? (
-                <Badge variant="outline" className="text-[10px] h-5 px-1.5 text-accent border-accent/30 bg-accent/5">Procedural</Badge>
+                <Badge variant="outline" className="text-[11px] h-5 px-1.5 text-accent border-accent/30 bg-accent/5">Procedural</Badge>
               ) : (
-                <Badge variant="outline" className="text-[10px] h-5 px-1.5 text-primary border-primary/30 bg-primary/5">Factual</Badge>
+                <Badge variant="outline" className="text-[11px] h-5 px-1.5 text-primary border-primary/30 bg-primary/5">Factual</Badge>
               )}
-              <span className="ml-auto text-[10px] font-mono text-muted-foreground/50">
+              <span className="ml-auto font-mono text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
                 {(r.score * 100).toFixed(1)}%
               </span>
             </div>
@@ -455,74 +455,74 @@ function MemoryListTab({ userId }: { userId?: string }) {
   return (
     <div className="space-y-4">
       {/* Filters */}
-      <div className="flex flex-wrap items-center gap-4 bg-white/[0.02] p-2 rounded-xl border border-white/[0.04]">
+      <div className="flex flex-wrap items-center gap-4 bg-card p-2 rounded-xl border border-border">
         <ToggleGroup
           type="single"
           value={levelFilter}
           onValueChange={(v) => { setLevelFilter(v || "all"); setPage(1); }}
-          className="bg-black/20 p-0.5 rounded-lg border border-white/5"
+          className="bg-card p-0.5 rounded-lg border border-border"
         >
           {["all", "0", "1", "2", "3"].map(v => (
-            <ToggleGroupItem key={v} value={v} className="h-7 px-3 text-[10px] font-bold uppercase data-[state=on]:bg-white/10 data-[state=on]:text-white transition-all">
+            <ToggleGroupItem key={v} value={v} className="h-7 px-3 data-[state=on]:bg-white/10 data-[state=on]:text-white transition-all text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
               {v === "all" ? "ALL" : `L${v}`}
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
 
-        <div className="h-4 w-px bg-white/10 mx-1" />
+        <div className="h-4 w-px bg-card mx-1" />
 
         <Select value={agentId} onValueChange={(v) => { setAgentId(v); setPage(1); }}>
-          <SelectTrigger className="w-[140px] h-8 text-[10px] uppercase tracking-widest font-bold bg-transparent border-white/5 hover:bg-white/5 transition-all">
+          <SelectTrigger className="w-[140px] h-8 bg-transparent border-border hover:bg-card transition-all text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
             <SelectValue placeholder="AGENT" />
           </SelectTrigger>
-          <SelectContent className="glass-card border-white/10">
-            <SelectItem value="all" className="text-[10px] uppercase font-bold">ALL AGENTS</SelectItem>
+          <SelectContent className="glass-card">
+            <SelectItem value="all" className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">ALL AGENTS</SelectItem>
             {agentsData?.agents.map((a) => (
-              <SelectItem key={a.agent_id} value={a.agent_id} className="text-[10px] font-mono">{a.agent_id}</SelectItem>
+              <SelectItem key={a.agent_id} value={a.agent_id} className="text-[11px] font-mono">{a.agent_id}</SelectItem>
             ))}
           </SelectContent>
         </Select>
 
         <Select value={sort} onValueChange={setSort}>
-          <SelectTrigger className="w-[140px] h-8 text-[10px] uppercase tracking-widest font-bold bg-transparent border-white/5 hover:bg-white/5 transition-all">
+          <SelectTrigger className="w-[140px] h-8 bg-transparent border-border hover:bg-card transition-all text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
             <SelectValue />
           </SelectTrigger>
-          <SelectContent className="glass-card border-white/10">
-            <SelectItem value="importance" className="text-[10px] uppercase font-bold">IMPORTANCE</SelectItem>
-            <SelectItem value="recent" className="text-[10px] uppercase font-bold">RECENT</SelectItem>
-            <SelectItem value="access_count" className="text-[10px] uppercase font-bold">ACCESS</SelectItem>
+          <SelectContent className="glass-card">
+            <SelectItem value="importance" className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">IMPORTANCE</SelectItem>
+            <SelectItem value="recent" className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">RECENT</SelectItem>
+            <SelectItem value="access_count" className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">ACCESS</SelectItem>
           </SelectContent>
         </Select>
       </div>
 
       {/* Memory Table */}
-      <div className="glass-card rounded-xl border border-white/[0.06] overflow-hidden shadow-2xl shadow-black/50">
+      <div className="glass-card rounded-xl overflow-hidden">
         <Table>
           <TableHeader>
-            <TableRow className="border-white/5 hover:bg-transparent bg-white/[0.03]">
-              <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold w-24 px-4">USR</TableHead>
-              <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold w-24 px-4">AGT</TableHead>
-              <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold text-center w-14 px-4">LVL</TableHead>
-              <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold w-28 px-4">IMP</TableHead>
-              <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold text-center w-16 px-4">ACC</TableHead>
-              <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold text-center w-14 px-4">REF</TableHead>
-              <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold px-4">PAYLOAD</TableHead>
+            <TableRow className="border-border hover:bg-transparent bg-card">
+              <TableHead className="w-24 px-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">USR</TableHead>
+              <TableHead className="w-24 px-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">AGT</TableHead>
+              <TableHead className="text-center w-14 px-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">LVL</TableHead>
+              <TableHead className="w-28 px-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">IMP</TableHead>
+              <TableHead className="text-center w-16 px-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">ACC</TableHead>
+              <TableHead className="text-center w-14 px-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">REF</TableHead>
+              <TableHead className="px-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">PAYLOAD</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
               Array.from({ length: 5 }).map((_, i) => (
-                <TableRow key={i} className="border-white/5">
+                <TableRow key={i} className="border-border">
                   <TableCell colSpan={7}>
                     <Skeleton className="h-10 w-full opacity-20" />
                   </TableCell>
                 </TableRow>
               ))
             ) : memories?.items.length === 0 ? (
-              <TableRow className="border-white/5 hover:bg-transparent">
+              <TableRow className="border-border hover:bg-transparent">
                 <TableCell colSpan={7} className="text-center text-muted-foreground py-16">
                   <div className="flex flex-col items-center gap-3">
-                    <div className="w-12 h-12 rounded-2xl bg-white/[0.03] border border-white/5 flex items-center justify-center">
+                    <div className="w-12 h-12 rounded-2xl bg-card border border-border flex items-center justify-center">
                       <List className="w-6 h-6 opacity-20" />
                     </div>
                     <p className="text-sm font-medium">No memories found</p>
@@ -554,30 +554,30 @@ function MemoryListTab({ userId }: { userId?: string }) {
                     </TableCell>
                     <TableCell>
                       {m.agent_id ? (
-                        <Badge variant="outline" className="text-[10px] h-5 px-1.5 font-mono bg-white/5 border-white/10">{m.agent_id}</Badge>
+                        <Badge variant="outline" className="text-[11px] h-5 px-1.5 font-mono bg-card border-border">{m.agent_id}</Badge>
                       ) : (
-                        <span className="text-xs text-muted-foreground/30">—</span>
+                        <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">—</span>
                       )}
                     </TableCell>
                     <TableCell className="text-center">
                       <div className="flex flex-col items-center gap-1">
                         <LevelBadge level={m.level} />
                         {m.memory_type === "procedural" ? (
-                          <span className="text-[10px] uppercase tracking-wider text-accent/80 font-bold">Procedural</span>
+                          <span className="text-accent/80 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Procedural</span>
                         ) : m.memory_type === "factual" ? (
-                          <span className="text-[10px] uppercase tracking-wider text-primary/80 font-bold">Factual</span>
+                          <span className="text-primary/80 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Factual</span>
                         ) : null}
                       </div>
                     </TableCell>
                     <TableCell><ImportanceBar value={m.importance} /></TableCell>
-                    <TableCell className="text-center font-mono text-xs text-muted-foreground">{m.access_count}</TableCell>
-                    <TableCell className="text-center font-mono text-xs text-muted-foreground">{m.reference_count}</TableCell>
+                    <TableCell className="text-center font-mono text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{m.access_count}</TableCell>
+                    <TableCell className="text-center font-mono text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{m.reference_count}</TableCell>
                     <TableCell>
                       <MemoryContent content={m.content} />
                       {m.keywords.length > 0 && (
                         <div className="flex gap-1.5 mt-2 flex-wrap">
                           {m.keywords.slice(0, 3).map((kw) => (
-                            <span key={kw} className="text-[10px] text-muted-foreground/60 bg-white/5 px-1.5 py-0.5 rounded border border-white/[0.03]">{kw}</span>
+                            <span key={kw} className="bg-card px-1.5 py-0.5 rounded border border-border text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{kw}</span>
                           ))}
                         </div>
                       )}
@@ -591,8 +591,8 @@ function MemoryListTab({ userId }: { userId?: string }) {
 
         {/* Pagination */}
         {memories && memories.total > 20 && (
-          <div className="flex items-center justify-between px-4 py-3 border-t border-white/5 bg-white/[0.01]">
-            <span className="text-xs text-muted-foreground/70 font-medium">
+          <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-card">
+            <span className="font-medium text-[11px] uppercase tracking-widest text-muted-foreground">
               Showing {(page - 1) * 20 + 1}-{Math.min(page * 20, memories.total)} of {memories.total}
             </span>
             <div className="flex gap-1">
@@ -662,17 +662,17 @@ export default function MemoriesPage() {
       </div>
 
       <Tabs defaultValue="list" className="flex-1 flex flex-col min-h-0">
-        <TabsList className="bg-white/[0.02] border border-white/[0.04] self-start p-1 rounded-xl">
-          <TabsTrigger value="list" className="gap-2 text-[10px] uppercase tracking-widest font-bold px-4 data-[state=active]:bg-white/5 data-[state=active]:text-white transition-all">
+        <TabsList className="bg-card border border-border self-start p-1 rounded-xl">
+          <TabsTrigger value="list" className="gap-2 px-4 data-[state=active]:bg-white/5 data-[state=active]:text-white transition-all text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
             <List className="w-3 h-3 opacity-60" /> List
           </TabsTrigger>
-          <TabsTrigger value="graph" className="gap-2 text-[10px] uppercase tracking-widest font-bold px-4 data-[state=active]:bg-white/5 data-[state=active]:text-white transition-all">
+          <TabsTrigger value="graph" className="gap-2 px-4 data-[state=active]:bg-white/5 data-[state=active]:text-white transition-all text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
             <Network className="w-3 h-3 opacity-60" /> Graph
           </TabsTrigger>
-          <TabsTrigger value="search" className="gap-2 text-[10px] uppercase tracking-widest font-bold px-4 data-[state=active]:bg-white/5 data-[state=active]:text-white transition-all">
+          <TabsTrigger value="search" className="gap-2 px-4 data-[state=active]:bg-white/5 data-[state=active]:text-white transition-all text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
             <Search className="w-3 h-3 opacity-60" /> Search
           </TabsTrigger>
-          <TabsTrigger value="tasks" className="gap-2 text-[10px] uppercase tracking-widest font-bold px-4 data-[state=active]:bg-white/5 data-[state=active]:text-white transition-all">
+          <TabsTrigger value="tasks" className="gap-2 px-4 data-[state=active]:bg-white/5 data-[state=active]:text-white transition-all text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
             <CheckSquare className="w-3 h-3 opacity-60" /> Tasks
           </TabsTrigger>
         </TabsList>

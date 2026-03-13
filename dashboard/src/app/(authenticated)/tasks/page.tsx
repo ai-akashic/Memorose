@@ -37,12 +37,12 @@ function statusLabel(status: ReadyTask["status"]): string {
 
 function StatusBadge({ status }: { status: ReadyTask["status"] }) {
   const label = statusLabel(status);
-  if (status === "Completed") return <Badge variant="outline" className="text-[10px] text-success border-success/30 bg-success/5">{label}</Badge>;
-  if (status === "InProgress") return <Badge variant="outline" className="text-[10px] text-primary border-primary/30 bg-primary/5">{label}</Badge>;
-  if (status === "Cancelled") return <Badge variant="outline" className="text-[10px] text-muted-foreground">{label}</Badge>;
-  if (typeof status === "object" && "Blocked" in status) return <Badge variant="outline" className="text-[10px] text-warning border-warning/30 bg-warning/5">{label}</Badge>;
-  if (typeof status === "object" && "Failed" in status) return <Badge variant="outline" className="text-[10px] text-destructive border-destructive/30 bg-destructive/5">{label}</Badge>;
-  return <Badge variant="outline" className="text-[10px]">{label}</Badge>;
+  if (status === "Completed") return <Badge variant="outline" className="text-[11px] text-success border-success/30 bg-success/5">{label}</Badge>;
+  if (status === "InProgress") return <Badge variant="outline" className="text-[11px] text-primary border-primary/30 bg-primary/5">{label}</Badge>;
+  if (status === "Cancelled") return <Badge variant="outline" className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{label}</Badge>;
+  if (typeof status === "object" && "Blocked" in status) return <Badge variant="outline" className="text-[11px] text-warning border-warning/30 bg-warning/5">{label}</Badge>;
+  if (typeof status === "object" && "Failed" in status) return <Badge variant="outline" className="text-[11px] text-destructive border-destructive/30 bg-destructive/5">{label}</Badge>;
+  return <Badge variant="outline" className="text-[11px]">{label}</Badge>;
 }
 
 function ReadyTaskRow({
@@ -79,19 +79,19 @@ function ReadyTaskRow({
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.05, duration: 0.25 }}
-      className="group glass-card rounded-xl p-4 border border-white/[0.06] hover:border-primary/20 hover:bg-white/[0.03] transition-all duration-200"
+      className="group glass-card rounded-xl p-4 hover:border-primary/20 transition-all duration-200"
     >
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium leading-tight">{task.title}</p>
           {task.description && task.description !== task.title && (
-            <p className="text-xs text-muted-foreground mt-1 line-clamp-2 leading-relaxed">{task.description}</p>
+            <p className="mt-1 line-clamp-2 leading-relaxed text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{task.description}</p>
           )}
         </div>
         <StatusBadge status={task.status} />
       </div>
 
-      <div className="flex items-center gap-3 text-[10px] text-muted-foreground/50 mb-3">
+      <div className="flex items-center gap-3 mb-3 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
         <span className="flex items-center gap-1">
           <Clock className="w-3 h-3" />
           {new Date(task.created_at).toLocaleString()}
@@ -99,7 +99,7 @@ function ReadyTaskRow({
         {task.agent_id && (
           <>
             <span>·</span>
-            <span className="font-mono bg-white/5 px-1.5 py-0.5 rounded border border-white/5">{task.agent_id}</span>
+            <span className="font-mono bg-card px-1.5 py-0.5 rounded border border-border">{task.agent_id}</span>
           </>
         )}
       </div>
@@ -109,7 +109,7 @@ function ReadyTaskRow({
           value={result}
           onChange={(e) => setResult(e.target.value)}
           placeholder="Result summary (optional)"
-          className="h-7 text-xs flex-1 bg-white/5 border-white/10 focus:border-primary/40 placeholder:text-muted-foreground/30"
+          className="h-7 flex-1 bg-card border-border focus:border-primary/40 text-[11px] font-medium uppercase tracking-widest text-muted-foreground"
         />
         <Button
           size="sm"
@@ -125,7 +125,7 @@ function ReadyTaskRow({
           size="sm"
           variant="outline"
           disabled={busy}
-          className="h-7 px-2.5 text-xs gap-1.5 border-white/10 text-muted-foreground hover:text-destructive hover:bg-destructive/10 hover:border-destructive/20"
+          className="h-7 px-2.5 gap-1.5 border-border hover:text-destructive hover:bg-destructive/10 hover:border-destructive/20 text-[11px] font-medium uppercase tracking-widest text-muted-foreground"
           onClick={() => markStatus("Cancelled")}
         >
           <XCircle className="w-3 h-3" />
@@ -159,7 +159,7 @@ export default function TasksPage() {
         <div>
           <div className="flex items-center gap-2.5">
             <CheckSquare className="w-6 h-6 text-primary" />
-            <h1 className="text-3xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-b from-white to-white/60">
+            <h1 className="text-3xl font-bold tracking-tight bg-clip-text text-transparent">
               Tasks
             </h1>
           </div>
@@ -170,7 +170,7 @@ export default function TasksPage() {
         <Button
           variant="outline"
           size="sm"
-          className="gap-1.5 text-xs border-white/10 hover:bg-white/5"
+          className="gap-1.5 text-xs border-border hover:bg-card"
           onClick={() => { mutateTree(); mutateReady(); }}
         >
           <RefreshCw className="w-3.5 h-3.5" />
@@ -183,19 +183,19 @@ export default function TasksPage() {
           initial={{ opacity: 0, scale: 0.97 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.4, delay: 0.1 }}
-          className="glass-card rounded-xl border border-dashed border-white/10 py-16 flex flex-col items-center text-center gap-4"
+          className="glass-card rounded-xl border-dashed py-16 flex flex-col items-center text-center gap-4"
         >
-          <div className="w-14 h-14 rounded-2xl bg-white/[0.03] border border-white/5 flex items-center justify-center">
+          <div className="w-14 h-14 rounded-2xl bg-card border border-border flex items-center justify-center">
             <AlertCircle className="w-7 h-7 opacity-20" />
           </div>
           <div>
             <p className="text-sm font-medium text-foreground/60">No user selected</p>
-            <p className="text-xs text-muted-foreground/50 mt-1">Enter a User ID in the sidebar filter to load tasks</p>
+            <p className="mt-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Enter a User ID in the sidebar filter to load tasks</p>
           </div>
         </motion.div>
       ) : (
         <Tabs defaultValue="tree">
-          <TabsList className="bg-white/[0.04] border border-white/[0.06]">
+          <TabsList className="bg-card border border-border">
             <TabsTrigger value="tree" className="gap-1.5 text-xs">
               <GitBranch className="w-3.5 h-3.5" />
               Task Tree
@@ -204,7 +204,7 @@ export default function TasksPage() {
               <Zap className="w-3.5 h-3.5" />
               Ready
               {ready && ready.length > 0 && (
-                <Badge className="ml-1 h-4 px-1.5 text-[10px] bg-primary/80">{ready.length}</Badge>
+                <Badge className="ml-1 h-4 px-1.5 text-[11px] bg-primary/80">{ready.length}</Badge>
               )}
             </TabsTrigger>
           </TabsList>
@@ -220,8 +220,8 @@ export default function TasksPage() {
           </TabsContent>
 
           <TabsContent value="ready" className="mt-4">
-            <Card className="glass-card border-white/[0.06]">
-              <CardHeader className="pb-3 border-b border-white/5">
+            <Card className="glass-card">
+              <CardHeader className="pb-3 border-b border-border">
                 <CardTitle className="text-xs flex items-center gap-2">
                   <div className="p-1.5 rounded-md bg-primary/10 border border-primary/10">
                     <CheckCircle2 className="w-3 h-3 text-primary" />
@@ -236,11 +236,11 @@ export default function TasksPage() {
                   </div>
                 ) : !ready || ready.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-10 text-center">
-                    <div className="w-12 h-12 rounded-2xl bg-white/[0.03] border border-white/5 flex items-center justify-center mb-3">
+                    <div className="w-12 h-12 rounded-2xl bg-card border border-border flex items-center justify-center mb-3">
                       <CheckCircle2 className="w-6 h-6 opacity-20" />
                     </div>
                     <p className="text-sm text-muted-foreground/60 font-medium">No ready tasks</p>
-                    <p className="text-xs text-muted-foreground/40 mt-1">Tasks with no pending dependencies will appear here</p>
+                    <p className="mt-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Tasks with no pending dependencies will appear here</p>
                   </div>
                 ) : (
                   <div className="space-y-2">

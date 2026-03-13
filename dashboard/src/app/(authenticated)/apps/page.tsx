@@ -49,17 +49,17 @@ function AppCard({ app, index, now }: { app: AppSummary; index: number; now: num
       transition={{ delay: index * 0.04, duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
     >
       <Link href={`/apps/${app.app_id}/`}>
-        <Card className="glass-card group relative overflow-hidden border-white/[0.04] hover:border-white/10 hover:shadow-[0_0_40px_rgba(0,0,0,0.4)] transition-all duration-500 cursor-pointer h-full">
-          <div className="absolute inset-0 bg-gradient-to-br from-primary/[0.02] to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700 pointer-events-none" />
+        <Card className="glass-card group relative overflow-hidden hover:shadow-[0_0_40px_rgba(0,0,0,0.4)] transition-all duration-500 cursor-pointer h-full">
+          
 
           <CardContent className="p-6 relative z-10 flex flex-col justify-between h-full">
             <div>
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-white/[0.02] border border-white/[0.04] flex items-center justify-center group-hover:border-primary/20 group-hover:bg-primary/5 transition-all duration-500">
+                  <div className="w-8 h-8 rounded-lg bg-card border border-border flex items-center justify-center group-hover:border-primary/20 group-hover:bg-primary/5 transition-all duration-500">
                     <Package className="w-3.5 h-3.5 text-muted-foreground group-hover:text-primary transition-colors" />
                   </div>
-                  <h3 className="text-xs font-bold tracking-widest uppercase text-foreground/70 group-hover:text-white transition-colors">{app.app_id}</h3>
+                  <h3 className="text-foreground/70 group-hover:text-white text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{app.app_id}</h3>
                 </div>
                 <div className={`w-1 h-1 rounded-full ${isRecent ? "bg-success shadow-[0_0_5px_rgba(34,197,94,0.8)]" : "bg-white/10"}`} />
               </div>
@@ -71,26 +71,26 @@ function AppCard({ app, index, now }: { app: AppSummary; index: number; now: num
                   { label: "MEM", value: formatNumber(app.total_memories) },
                 ].map(({ label, value }) => (
                   <div key={label} className="flex flex-col gap-0.5">
-                    <span className="text-[9px] uppercase tracking-widest text-muted-foreground/30 font-bold">{label}</span>
+                    <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{label}</span>
                     <span className="font-mono text-[11px] text-foreground/60">{value}</span>
                   </div>
                 ))}
               </div>
             </div>
 
-            <div className="space-y-1.5 pt-4 border-t border-white/[0.02]">
+            <div className="space-y-1.5 pt-4 border-t border-border">
               <div className="flex items-center justify-between">
-                <span className="text-[9px] uppercase tracking-widest text-muted-foreground/30 font-bold">L2 Elevation</span>
-                <span className="text-[10px] font-mono text-muted-foreground/40">{l2Pct.toFixed(0)}%</span>
+                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">L2 Elevation</span>
+                <span className="font-mono text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{l2Pct.toFixed(0)}%</span>
               </div>
-              <div className="h-0.5 w-full bg-white/5 rounded-full overflow-hidden">
+              <div className="h-0.5 w-full bg-card rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-primary transition-all duration-1000 shadow-[0_0_8px_rgba(56,125,255,0.4)]"
+                  className="h-full bg-primary transition-all duration-1000"
                   style={{ width: `${Math.min(l2Pct, 100)}%` }}
                 />
               </div>
               <div className="flex justify-between items-center mt-1">
-                <span className="text-[9px] font-mono text-muted-foreground/20 italic">{relTime}</span>
+                <span className="font-mono italic text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{relTime}</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/10 group-hover:text-primary/40 group-hover:translate-x-0.5 transition-all" />
               </div>
             </div>
@@ -134,13 +134,13 @@ export default function AppsPage() {
             Applications
           </h1>
         </div>
-        <p className="text-[10px] uppercase tracking-widest text-muted-foreground/30 font-bold mt-2 ml-4">
+        <p className="mt-2 ml-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
           {loading ? "Initializing…" : error ? "Sync failure" : `${apps?.total_count ?? 0} Instances deployed`}
         </p>
       </motion.div>
 
       {error && (
-        <div className="glass-card rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-xs text-destructive flex items-center gap-3">
+        <div className="glass-card rounded-xl border-destructive/20 bg-destructive/5 p-4 text-xs text-destructive flex items-center gap-3">
           <Activity className="w-4 h-4 shrink-0 opacity-70" />
           <span className="font-mono tracking-tight">{error}</span>
         </div>
@@ -149,16 +149,16 @@ export default function AppsPage() {
       {loading ? (
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-3">
           {[...Array(8)].map((_, i) => (
-            <Skeleton key={i} className="h-44 glass-card rounded-xl opacity-10 border-white/5" />
+            <Skeleton key={i} className="h-44 glass-card rounded-xl opacity-10" />
           ))}
         </div>
       ) : !apps || apps.total_count === 0 ? (
-        <div className="glass-card rounded-2xl border border-dashed border-white/5 py-24 flex flex-col items-center text-center gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-white/[0.02] border border-white/5 flex items-center justify-center">
+        <div className="glass-card rounded-2xl border-dashed py-24 flex flex-col items-center text-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-card border border-border flex items-center justify-center">
             <Package className="w-5 h-5 opacity-20" />
           </div>
           <div>
-            <h3 className="text-xs uppercase tracking-widest font-bold text-muted-foreground/40">Zero Registry</h3>
+            <h3 className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Zero Registry</h3>
           </div>
         </div>
       ) : (

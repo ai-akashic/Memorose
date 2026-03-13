@@ -78,11 +78,11 @@ function StatCard({
       transition={{ duration: 0.4, delay, ease: "easeOut" }}
       className={`h-full ${className}`}
     >
-      <Card className="glass-card group relative overflow-hidden hover:bg-white/[0.04] transition-all duration-500 h-full border-white/[0.04] hover:border-white/10">
+      <Card className="glass-card group relative overflow-hidden transition-all duration-500 h-full">
         <CardContent className="p-5 flex flex-col justify-between h-full relative z-10">
           <div className="flex items-center justify-between">
             <Icon className={`w-4 h-4 ${color} opacity-60 group-hover:opacity-100 transition-opacity`} />
-            <span className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold group-hover:text-muted-foreground/70 transition-colors">
+            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
               {label}
             </span>
           </div>
@@ -90,7 +90,7 @@ function StatCard({
             {typeof value === "number" ? <NumberTicker value={value} /> : value}
           </div>
         </CardContent>
-        <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/[0.01] to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
+        
       </Card>
     </motion.div>
   );
@@ -109,11 +109,11 @@ function RelationDistribution({ graphData, className = "" }: { graphData: GraphD
   return (
     <Card className={`glass-card flex flex-col border-white/[0.04] ${className}`}>
       <CardHeader className="pb-2 flex-shrink-0">
-        <CardTitle className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground/40">Pathways</CardTitle>
+        <CardTitle className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Pathways</CardTitle>
       </CardHeader>
       <CardContent className="flex-1 flex flex-col justify-center items-center p-4">
         {data.length === 0 ? (
-          <p className="text-[10px] uppercase tracking-wider text-muted-foreground/30 font-bold">Empty</p>
+          <p className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Empty</p>
         ) : (
           <div className="h-full w-full min-h-[160px] flex-1">
             <ResponsiveContainer width="100%" height="100%">
@@ -172,7 +172,7 @@ function ImportanceHistogram({ className = "" }: { className?: string }) {
   return (
     <Card className={`glass-card flex flex-col border-white/[0.04] ${className}`}>
       <CardHeader className="pb-0 flex-shrink-0">
-        <CardTitle className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground/40">Density</CardTitle>
+        <CardTitle className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Density</CardTitle>
       </CardHeader>
       <CardContent className="flex-1 pt-6">
         <div className="h-full w-full">
@@ -213,10 +213,10 @@ function WorkerStatus({ config, className = "" }: { config: NonNullable<ReturnTy
   const snapshotLogs = "snapshot_policy_logs" in config ? (config as any).snapshot_policy_logs : "N/A";
   return (
     <Card className={`glass-card flex flex-col border-white/[0.04] ${className}`}>
-      <CardHeader className="pb-4 border-b border-white/[0.03]">
+      <CardHeader className="pb-4 border-b border-border">
         <div className="flex items-center gap-2">
-          <div className="w-1.5 h-1.5 rounded-full bg-success animate-pulse shadow-[0_0_5px_hsl(142,76%,36%)]" />
-          <CardTitle className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground/40">Node</CardTitle>
+          <div className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
+          <CardTitle className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Node</CardTitle>
         </div>
       </CardHeader>
       <CardContent className="space-y-3 pt-4 px-5">
@@ -226,7 +226,7 @@ function WorkerStatus({ config, className = "" }: { config: NonNullable<ReturnTy
           { label: "Snapshot", value: `${snapshotLogs} logs` },
         ].map((item) => (
           <div key={item.label} className="flex flex-col gap-0.5">
-            <span className="text-[9px] uppercase tracking-widest text-muted-foreground/30 font-bold">{item.label}</span>
+            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{item.label}</span>
             <span className="font-mono text-[11px] text-foreground/70">{item.value}</span>
           </div>
         ))}
@@ -297,11 +297,11 @@ export default function MetricsPage() {
           <StatCard label="Edges" value={stats?.total_edges ?? 0} icon={GitBranch} color="text-primary" delay={0.25} />
 
           {/* Pipeline Flow - Large Block */}
-          <Card className="glass-card md:col-span-2 md:row-span-2 p-6 flex flex-col relative group overflow-hidden border-white/[0.04] hover:border-white/10 transition-colors">
-             <div className="absolute inset-0 bg-gradient-to-b from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
+          <Card className="glass-card md:col-span-2 md:row-span-2 p-6 flex flex-col relative group overflow-hidden transition-colors">
+             
              <div className="flex items-center gap-2 mb-6 relative z-10">
                <Layers className="w-3.5 h-3.5 text-primary opacity-40 group-hover:opacity-70 transition-opacity" />
-               <span className="text-[10px] uppercase tracking-[0.3em] font-bold text-muted-foreground/30 group-hover:text-muted-foreground/60 transition-colors">Cognitive Flow</span>
+               <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Cognitive Flow</span>
              </div>
              <div className="flex-1 w-full h-full relative z-10 min-h-0 flex items-center justify-center pt-2 pb-4">
                {stats && <RainbowWaterfall stats={stats} />}
@@ -318,7 +318,7 @@ export default function MetricsPage() {
           {cluster ? (
             <WorkerStatus config={cluster} className="md:col-span-1 md:row-span-2" />
           ) : (
-            <div className="md:col-span-1 md:row-span-2 glass-card rounded-xl opacity-10 animate-pulse border-white/5" />
+            <div className="md:col-span-1 md:row-span-2 glass-card rounded-xl opacity-10 animate-pulse" />
           )}
           
           <div className="md:col-span-1 md:row-span-2 flex flex-col gap-3">

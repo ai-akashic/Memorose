@@ -43,11 +43,11 @@ function StatCard({
       transition={{ duration: 0.4, delay, ease: "easeOut" }}
       className="h-full"
     >
-      <Card className="glass-card group relative overflow-hidden hover:bg-white/[0.04] transition-all duration-500 h-full border-white/[0.04] hover:border-white/10">
+      <Card className="glass-card group relative overflow-hidden transition-all duration-500 h-full">
         <CardContent className="p-5 flex flex-col justify-between h-full relative z-10">
           <div className="flex items-center justify-between">
             <Icon className={`w-4 h-4 ${color} opacity-60 group-hover:opacity-100 transition-opacity`} />
-            <span className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold group-hover:text-muted-foreground/70 transition-colors">
+            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
               {label}
             </span>
           </div>
@@ -55,7 +55,7 @@ function StatCard({
             {typeof value === "number" ? formatNumber(value) : value}
           </div>
         </CardContent>
-        <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/[0.01] to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
+        
       </Card>
     </motion.div>
   );
@@ -64,28 +64,28 @@ function StatCard({
 function RaftMetricsGrid({ data, stateColor }: { data: ShardStatus | ClusterStatusSingle, stateColor: string }) {
   return (
     <div className="grid grid-cols-3 gap-2 mt-4">
-      <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center border-white/5">
-        <span className="text-[9px] uppercase tracking-widest text-muted-foreground/50">State</span>
+      <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center">
+        <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">State</span>
         <span className={`text-xs font-bold uppercase mt-1 ${stateColor}`}>{data.raft_state}</span>
       </div>
-      <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center border-white/5">
-        <span className="text-[9px] uppercase tracking-widest text-muted-foreground/50">Term</span>
+      <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center">
+        <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Term</span>
         <span className="text-xs font-mono font-bold text-foreground/80 mt-1">{data.current_term}</span>
       </div>
-      <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center border-white/5">
-        <span className="text-[9px] uppercase tracking-widest text-muted-foreground/50">Log Index</span>
+      <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center">
+        <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Log Index</span>
         <span className="text-xs font-mono font-bold text-foreground/80 mt-1">{data.last_log_index}</span>
       </div>
-      <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center border-white/5">
-        <span className="text-[9px] uppercase tracking-widest text-muted-foreground/50">Applied</span>
+      <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center">
+        <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Applied</span>
         <span className="text-xs font-mono font-bold text-foreground/80 mt-1">{data.last_applied}</span>
       </div>
-      <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center border-white/5">
-        <span className="text-[9px] uppercase tracking-widest text-muted-foreground/50">Lag</span>
+      <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center">
+        <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Lag</span>
         <span className={`text-xs font-mono font-bold mt-1 ${data.replication_lag > 10 ? "text-warning" : "text-success"}`}>{data.replication_lag}</span>
       </div>
-      <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center border-white/5">
-        <span className="text-[9px] uppercase tracking-widest text-muted-foreground/50">Voters</span>
+      <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center">
+        <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Voters</span>
         <span className="text-xs font-mono font-bold text-foreground/80 mt-1">{data.voters?.length ?? 0}</span>
       </div>
     </div>
@@ -102,12 +102,12 @@ function ShardRaftCard({ shard }: { shard: ShardStatus }) {
   const isHealthy = shard.replication_lag <= 10;
 
   return (
-    <Card className="glass-card border-white/[0.04] hover:border-white/10 transition-colors">
+    <Card className="glass-card transition-colors">
       <CardHeader className="p-4 pb-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Layers className="w-4 h-4 text-primary opacity-60" />
-            <span className="uppercase tracking-[0.2em] text-muted-foreground/70 font-bold text-[10px]">S{shard.shard_id}</span>
+            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">S{shard.shard_id}</span>
           </div>
           <div className={`w-2 h-2 rounded-full ${isHealthy ? 'bg-success shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-warning shadow-[0_0_8px_rgba(245,158,11,0.5)]'} animate-pulse`} />
         </div>
@@ -127,12 +127,12 @@ function RaftStatusCard({ cluster }: { cluster: ClusterStatusSingle }) {
   }[cluster.raft_state] || "text-muted-foreground";
 
   return (
-    <Card className="glass-card border-white/[0.04] hover:border-white/10 transition-colors">
+    <Card className="glass-card transition-colors">
       <CardHeader className="p-4 pb-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <GitBranch className="w-4 h-4 text-primary opacity-60" />
-            <span className="uppercase tracking-[0.2em] text-muted-foreground/70 font-bold text-[10px]">Consensus</span>
+            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Consensus</span>
           </div>
           <div className={`w-2 h-2 rounded-full ${cluster.replication_lag <= 10 ? 'bg-success shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-warning shadow-[0_0_8px_rgba(245,158,11,0.5)]'} animate-pulse`} />
         </div>
@@ -152,23 +152,23 @@ function HeartbeatCard({ cluster, onRemoveNode }: { cluster: ClusterStatusSingle
   };
 
   return (
-    <Card className="glass-card border-white/[0.04] hover:border-white/10 transition-colors">
+    <Card className="glass-card transition-colors">
       <CardHeader className="p-4 pb-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Activity className="w-4 h-4 text-primary opacity-60" />
-            <span className="uppercase tracking-[0.2em] text-muted-foreground/70 font-bold text-[10px]">Heartbeat</span>
+            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Heartbeat</span>
           </div>
         </div>
       </CardHeader>
       <CardContent className="p-4 pt-4 space-y-4">
         <div className="grid grid-cols-2 gap-2">
-          <div className="glass-card p-2 rounded-lg flex flex-col items-center justify-center border-white/5">
-            <span className="text-[9px] uppercase tracking-widest text-muted-foreground/50">Interval</span>
+          <div className="glass-card p-2 rounded-lg flex flex-col items-center justify-center">
+            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Interval</span>
             <span className="text-xs font-mono font-bold text-foreground/80 mt-1">{config.heartbeat_interval_ms}ms</span>
           </div>
-          <div className="glass-card p-2 rounded-lg flex flex-col items-center justify-center border-white/5">
-            <span className="text-[9px] uppercase tracking-widest text-muted-foreground/50">Timeout</span>
+          <div className="glass-card p-2 rounded-lg flex flex-col items-center justify-center">
+            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Timeout</span>
             <span className="text-xs font-mono font-bold text-foreground/80 mt-1">{config.election_timeout_min_ms}ms</span>
           </div>
         </div>
@@ -180,11 +180,11 @@ function HeartbeatCard({ cluster, onRemoveNode }: { cluster: ClusterStatusSingle
             const isHealthy = cluster.replication_lag === 0 || isLeader;
 
             return (
-              <div key={nodeId} className="flex items-center justify-between py-1.5 px-2 rounded-md hover:bg-white/[0.02] transition-colors">
+              <div key={nodeId} className="flex items-center justify-between py-1.5 px-2 rounded-md hover:bg-card transition-colors">
                 <div className="flex items-center gap-2">
                   <div className={`w-1.5 h-1.5 rounded-full ${isHealthy ? 'bg-success shadow-[0_0_5px_rgba(34,197,94,0.5)]' : 'bg-warning shadow-[0_0_5px_rgba(245,158,11,0.5)]'} animate-pulse`} />
                   <span className="text-xs font-mono text-foreground/80">N{nodeId}</span>
-                  {isSelf && <span className="text-[10px] uppercase text-muted-foreground/40 font-bold ml-1">(Self)</span>}
+                  {isSelf && <span className="ml-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">(Self)</span>}
                 </div>
                 <div className="flex items-center gap-2">
                   {isLeader && <Star className="w-3 h-3 text-success opacity-80" />}
@@ -210,12 +210,12 @@ function HeartbeatCard({ cluster, onRemoveNode }: { cluster: ClusterStatusSingle
 
 function PipelineCard({ stats }: { stats: NonNullable<ReturnType<typeof useStats>["data"]> }) {
   return (
-    <Card className="glass-card border-white/[0.04] hover:border-white/10 transition-colors">
+    <Card className="glass-card transition-colors">
       <CardHeader className="p-4 pb-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Zap className="w-4 h-4 text-primary opacity-60" />
-            <span className="uppercase tracking-[0.2em] text-muted-foreground/70 font-bold text-[10px]">Pipeline</span>
+            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Pipeline</span>
           </div>
         </div>
       </CardHeader>
@@ -227,10 +227,10 @@ function PipelineCard({ stats }: { stats: NonNullable<ReturnType<typeof useStats
         ].map((level) => (
           <div key={level.label} className="relative">
             <div className="flex justify-between items-end mb-1.5">
-              <span className="text-[10px] font-mono text-muted-foreground/50 font-bold">{level.label}</span>
+              <span className="font-mono text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{level.label}</span>
               <span className="text-xs font-mono text-foreground/80">{formatNumber(level.count)}</span>
             </div>
-            <div className="h-1 bg-black/40 rounded-full overflow-hidden border border-white/[0.02]">
+            <div className="h-1 bg-card rounded-full overflow-hidden border border-border">
               <div
                 className={`h-full ${level.color} ${level.glow} rounded-full transition-all duration-1000`}
                 style={{ width: `${Math.max(2, Math.min(100, (level.count / Math.max(stats.total_memory_units, 1)) * 100))}%` }}
@@ -248,7 +248,7 @@ function SingleShardTopology({ cluster }: { cluster: ClusterStatusSingle }) {
 
   return (
     <Card className="glass-card">
-      <CardHeader className="pb-3 border-b border-white/[0.05]">
+      <CardHeader className="pb-3 border-b border-border">
         <CardTitle className="text-xs flex items-center gap-2">
           <div className="p-1.5 rounded-md bg-primary/10 border border-primary/20">
             <Server className="w-3.5 h-3.5 text-primary" />
@@ -278,10 +278,10 @@ function SingleShardTopology({ cluster }: { cluster: ClusterStatusSingle }) {
                       </span>
                     </div>
                   </div>
-                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-bold mt-3">
+                  <div className="mt-3 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
                     {isLeader ? <span className="text-success">Leader</span> : "Follower"}
                   </div>
-                  <div className="text-[10px] text-muted-foreground/40 font-mono mt-0.5">
+                  <div className="font-mono mt-0.5 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
                     :{3000 + nodeId - 1}
                   </div>
                 </div>
@@ -289,22 +289,22 @@ function SingleShardTopology({ cluster }: { cluster: ClusterStatusSingle }) {
             })}
             {cluster.learners.map((nodeId) => (
               <div key={nodeId} className="text-center">
-                <div className="w-16 h-16 rounded-2xl flex items-center justify-center border-2 border-dashed border-white/10 bg-white/[0.02] mx-auto">
+                <div className="w-16 h-16 rounded-2xl flex items-center justify-center border-2 border-dashed border-border bg-card mx-auto">
                   <span className="text-sm font-mono text-muted-foreground/50">N{nodeId}</span>
                 </div>
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground/40 font-bold mt-3">Learner</div>
+                <div className="mt-3 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Learner</div>
               </div>
             ))}
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center py-10 text-center">
-            <div className="relative w-16 h-16 rounded-2xl flex items-center justify-center border-2 border-success bg-success/10 shadow-[0_0_20px_rgba(34,197,94,0.15)] mb-4">
+            <div className="relative w-16 h-16 rounded-2xl flex items-center justify-center border-2 border-success bg-success/10 mb-4">
               <div className="text-center">
                 <Star className="w-4 h-4 text-success mx-auto mb-1 animate-pulse" />
                 <span className="text-sm font-mono font-bold text-white">N{cluster.node_id}</span>
               </div>
             </div>
-            <div className="text-xs text-muted-foreground/80 font-medium">
+            <div className="font-medium text-[11px] uppercase tracking-widest text-muted-foreground">
               {cluster.raft_state} &middot; Term {cluster.current_term}
             </div>
           </div>
@@ -317,7 +317,7 @@ function SingleShardTopology({ cluster }: { cluster: ClusterStatusSingle }) {
 function ShardedTopology({ cluster }: { cluster: ClusterStatusSharded }) {
   return (
     <Card className="glass-card">
-      <CardHeader className="pb-3 border-b border-white/[0.05]">
+      <CardHeader className="pb-3 border-b border-border">
         <CardTitle className="text-xs flex items-center gap-2">
           <div className="p-1.5 rounded-md bg-primary/10 border border-primary/20">
             <Server className="w-3.5 h-3.5 text-primary" />
@@ -348,7 +348,7 @@ function ShardedTopology({ cluster }: { cluster: ClusterStatusSharded }) {
                 <div className={`text-[10px] uppercase tracking-wider font-bold mt-3 ${isLeader ? 'text-success' : 'text-muted-foreground/60'}`}>
                   {shard.raft_state}
                 </div>
-                <div className="text-[10px] text-muted-foreground/40 font-mono mt-0.5">
+                <div className="font-mono mt-0.5 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
                   T{shard.current_term}
                 </div>
               </div>

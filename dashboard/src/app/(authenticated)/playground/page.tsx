@@ -182,32 +182,32 @@ function ChatPanel() {
         initial={{ opacity: 0, x: 20 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ duration: 0.5, delay: 0.1 }}
-        className="flex gap-6 p-4 glass-card rounded-2xl shadow-xl border-white/[0.04] mb-4 self-end bg-white/[0.01]"
+        className="flex gap-6 p-4 glass-card rounded-2xl mb-4 self-end"
       >
         <div className="flex flex-col gap-1.5">
-          <label className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/50 font-bold px-1">Session</label>
+          <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Session</label>
           <Input
             type="text"
             value={userId}
             onChange={(e) => setUserId(e.target.value)}
             placeholder="User ID"
-            className="w-40 h-9 text-[13px] font-mono bg-black/20 border-white/5"
+            className="w-40 h-9 text-[13px] font-mono bg-card border-border"
           />
         </div>
         <div className="flex flex-col gap-1.5">
-          <label className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/50 font-bold px-1">Scope</label>
+          <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Scope</label>
           <Input
             type="text"
             value={appId}
             onChange={(e) => setAppId(e.target.value)}
             placeholder="App ID"
-            className="w-40 h-9 text-[13px] font-mono bg-black/20 border-white/5"
+            className="w-40 h-9 text-[13px] font-mono bg-card border-border"
           />
         </div>
       </motion.div>
 
-      <Card className="flex-1 flex flex-col overflow-hidden glass-card rounded-3xl border-white/[0.04] shadow-2xl relative">
-        <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/30 pointer-events-none" />
+      <Card className="flex-1 flex flex-col overflow-hidden glass-card rounded-3xl relative">
+        
 
         <div className="flex-1 overflow-y-auto p-8 z-10 scroll-smooth" ref={scrollRef}>
           <div className="space-y-8 max-w-3xl mx-auto">
@@ -219,7 +219,7 @@ function ChatPanel() {
                   exit={{ opacity: 0, scale: 0.98 }}
                   className="flex flex-col items-center justify-center h-[50vh] text-muted-foreground"
                 >
-                  <div className="w-20 h-20 rounded-[40px] bg-white/[0.03] backdrop-blur-2xl border border-white/5 flex items-center justify-center mb-8 shadow-2xl">
+                  <div className="w-20 h-20 rounded-[40px] bg-card border border-border flex items-center justify-center mb-8">
                     <Bot className="w-10 h-10 opacity-30" />
                   </div>
                   <h3 className="text-xl font-bold tracking-tight text-foreground/80 mb-3 uppercase tracking-[0.2em]">Initialize Stream</h3>
@@ -243,7 +243,7 @@ function ChatPanel() {
                   )}
                 >
                   {message.role === "assistant" && (
-                    <div className="w-9 h-9 rounded-full bg-white/[0.03] border border-white/5 flex items-center justify-center shrink-0 shadow-sm mt-1">
+                    <div className="w-9 h-9 rounded-full bg-card border border-border flex items-center justify-center shrink-0 mt-1">
                       <Bot className="w-5 h-5 text-primary opacity-60" />
                     </div>
                   )}
@@ -272,8 +272,8 @@ function ChatPanel() {
         {/* Input Area */}
         <div className="p-6 z-20">
           <div className="max-w-3xl mx-auto relative group">
-            <div className="absolute -inset-1 bg-gradient-to-r from-primary/10 via-white/[0.02] to-primary/10 rounded-2xl blur-md opacity-20 group-hover:opacity-40 transition duration-1000" />
-            <div className="relative flex gap-4 items-center glass-card bg-black/40 rounded-2xl p-2.5 border-white/[0.06] shadow-2xl">
+            <div className="absolute -inset-1 rounded-2xl blur-md opacity-20 group-hover:opacity-40 transition duration-1000" />
+            <div className="relative flex gap-4 items-center glass-card rounded-2xl p-2.5">
               <Input
                 type="text"
                 value={input}
@@ -281,7 +281,7 @@ function ChatPanel() {
                 onKeyPress={handleKeyPress}
                 placeholder="Send neural pulse..."
                 disabled={loading}
-                className="flex-1 bg-transparent border-none shadow-none focus:ring-0 text-[16px] h-14 px-5 placeholder:text-muted-foreground/20"
+                className="flex-1 bg-transparent border-none focus:ring-0 text-[16px] h-14 px-5 placeholder:text-muted-foreground/20"
               />
               <Button
                 onClick={handleSend}
@@ -360,40 +360,40 @@ function RetrievePanel() {
   return (
     <div className="space-y-6">
       {/* Context + Query */}
-      <Card className="glass-card border-white/[0.04] p-6 rounded-3xl shadow-xl">
+      <Card className="glass-card p-6 rounded-3xl">
         <div className="space-y-6">
           <div className="grid grid-cols-3 gap-6">
             <div className="space-y-2">
-              <label className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold px-1">User ID</label>
+              <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">User ID</label>
               <Input 
                 list="user-suggestions"
                 value={userId} 
                 onChange={(e) => setUserId(e.target.value)} 
-                className="h-11 text-[13px] font-mono bg-black/20 border-white/[0.05]" 
+                className="h-11 text-[13px] font-mono bg-card border-border" 
               />
               <datalist id="user-suggestions">
                 {users.map(u => <option key={u} value={u} />)}
               </datalist>
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold px-1">App ID</label>
+              <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">App ID</label>
               <Input 
                 list="app-suggestions"
                 value={appId} 
                 onChange={(e) => setAppId(e.target.value)} 
-                className="h-11 text-[13px] font-mono bg-black/20 border-white/[0.05]" 
+                className="h-11 text-[13px] font-mono bg-card border-border" 
               />
               <datalist id="app-suggestions">
                 {apps.map(a => <option key={a} value={a} />)}
               </datalist>
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40 font-bold px-1">Stream ID</label>
+              <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Stream ID</label>
               <Input 
                 list="stream-suggestions"
                 value={streamId} 
                 onChange={(e) => setStreamId(e.target.value)} 
-                className="h-11 text-[13px] font-mono bg-black/20 border-white/[0.05]" 
+                className="h-11 text-[13px] font-mono bg-card border-border" 
               />
               <datalist id="stream-suggestions">
                 {streams.map(s => <option key={s} value={s} />)}
@@ -406,10 +406,10 @@ function RetrievePanel() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Query memory matrix..."
-              className="flex-1 h-14 bg-black/30 border-white/5 text-base px-6 placeholder:text-muted-foreground/10"
+              className="flex-1 h-14 bg-card border-border text-base px-6 placeholder:text-muted-foreground/10"
               onKeyDown={(e) => e.key === "Enter" && handleRetrieve()}
             />
-            <Button onClick={handleRetrieve} disabled={loading || !query.trim()} className="h-14 px-8 gap-3 uppercase tracking-widest font-bold text-xs rounded-2xl shadow-lg">
+            <Button onClick={handleRetrieve} disabled={loading || !query.trim()} className="h-14 px-8 gap-3 rounded-2xl text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
               {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
               Retrieve
             </Button>
@@ -418,11 +418,11 @@ function RetrievePanel() {
       </Card>
 
       {/* Advanced params */}
-      <Card className="glass-card border-white/[0.04] p-6 rounded-3xl">
+      <Card className="glass-card p-6 rounded-3xl">
         <div className="space-y-4">
           <div className="flex items-center gap-2 mb-2">
             <SlidersHorizontal className="w-3.5 h-3.5 text-muted-foreground/40" />
-            <span className="text-[10px] font-bold text-muted-foreground/40 uppercase tracking-[0.2em]">Parameters</span>
+            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Parameters</span>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
             {[
@@ -434,8 +434,8 @@ function RetrievePanel() {
               { label: "As Of", value: asOf, setter: setAsOf, placeholder: "NOW" },
             ].map((p) => (
               <div key={p.label} className="space-y-2">
-                <label className="text-[9px] uppercase tracking-widest text-muted-foreground/30 font-bold px-1">{p.label}</label>
-                <Input value={p.value} onChange={(e) => p.setter(e.target.value)} placeholder={p.placeholder} className="h-10 text-[11px] font-mono bg-black/20 border-white/[0.03]" />
+                <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{p.label}</label>
+                <Input value={p.value} onChange={(e) => p.setter(e.target.value)} placeholder={p.placeholder} className="h-10 text-[11px] font-mono bg-card border-border" />
               </div>
             ))}
           </div>
@@ -454,7 +454,7 @@ function RetrievePanel() {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium">{results.results.length} results</span>
-            <span className="text-xs text-muted-foreground">{results.query_time_ms.toFixed(1)}ms</span>
+            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{results.query_time_ms.toFixed(1)}ms</span>
           </div>
           {results.results.length === 0 ? (
             <Card>
@@ -462,16 +462,16 @@ function RetrievePanel() {
             </Card>
           ) : (
             results.results.map((r, i) => (
-              <Card key={r.unit.id || i} className="glass-card border-white/10">
+              <Card key={r.unit.id || i} className="glass-card">
                 <div className="p-4">
                   <div className="flex items-start justify-between gap-3 mb-2">
                     <p className="text-sm leading-relaxed flex-1">{r.unit.content}</p>
                     <div className="shrink-0 text-right">
                       <div className="text-sm font-mono font-semibold text-primary">{(r.score * 100).toFixed(1)}%</div>
-                      <div className="text-[10px] text-muted-foreground">score</div>
+                      <div className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">score</div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3 text-[10px] text-muted-foreground flex-wrap">
+                  <div className="flex items-center gap-3 flex-wrap text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
                     <span className="font-mono">{r.unit.id.substring(0, 8)}</span>
                     <span>L{r.unit.level}</span>
                     {r.unit.memory_type && <span className="capitalize">{r.unit.memory_type}</span>}

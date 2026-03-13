@@ -28,7 +28,6 @@ import {
 import { CommandPalette } from "@/components/CommandPalette";
 import { MemoroseLogo } from "@/components/haku-logo";
 import { Input } from "@/components/ui/input";
-import { motion } from "framer-motion";
 
 const UserFilterContext = createContext<{
   userId: string;
@@ -93,23 +92,27 @@ export default function AuthenticatedLayout({
           <CommandPalette />
           <aside
             className={cn(
-              "flex flex-col shrink-0 border-r border-white/5 bg-black/40 backdrop-blur-xl transition-all duration-300 z-30 h-full overflow-hidden shadow-[inset_-1px_0_0_rgba(255,255,255,0.02)]",
-              collapsed ? "w-16" : "w-60"
+              "flex flex-col shrink-0 border-r border-border bg-card transition-all duration-300 z-30 h-full overflow-hidden",
+              collapsed ? "w-[72px]" : "w-[220px]"
             )}
           >
-            <div className="flex items-center gap-3 px-4 h-16 border-b border-white/5 relative">
-              <div className="absolute inset-0 bg-gradient-to-r from-primary/10 to-transparent opacity-50" />
-              <div className="relative z-10 drop-shadow-[0_0_10px_rgba(255,255,255,0.3)]">
-                <MemoroseLogo size={32} />
+            <div className="flex items-center gap-3 px-4 h-[52px] border-b border-border shrink-0">
+              <div className="relative z-10">
+                <MemoroseLogo size={24} />
               </div>
               {!collapsed && (
-                <span className="font-bold text-base tracking-tight relative z-10 bg-clip-text text-transparent bg-gradient-to-r from-white to-white/70">
-                  Memorose
-                </span>
+                <div className="flex flex-col">
+                  <span className="font-bold text-[15px] tracking-tight leading-none text-text-strong">
+                    Memorose
+                  </span>
+                  <span className="text-[9px] font-medium text-muted-foreground uppercase tracking-widest mt-0.5">
+                    Dashboard
+                  </span>
+                </div>
               )}
             </div>
 
-            <nav className="flex-1 py-4 space-y-1.5 px-3 overflow-y-auto">
+            <nav className="flex-1 py-4 space-y-1 px-3 overflow-y-auto">
               {navItems.map((item) => {
                 const isActive = pathname === item.href || pathname?.startsWith(item.href.replace(/\/$/, ""));
                 const link = (
@@ -117,25 +120,14 @@ export default function AuthenticatedLayout({
                     key={item.href}
                     href={item.href}
                     className={cn(
-                      "relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200 group overflow-hidden",
+                      "relative flex items-center gap-3 px-3 py-2 rounded-md text-[13.5px] transition-colors duration-200 group overflow-hidden",
                       isActive
-                        ? "text-primary-foreground font-medium"
-                        : "text-muted-foreground hover:text-foreground"
+                        ? "text-primary-foreground font-medium bg-primary/10 border border-primary/20"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted"
                     )}
                   >
-                    {isActive && (
-                      <motion.div
-                        layoutId="active-nav-bg"
-                        className="absolute inset-0 bg-gradient-to-r from-primary/80 to-primary/40 rounded-lg -z-10 shadow-[0_0_15px_rgba(56,125,255,0.3)]"
-                        initial={false}
-                        transition={{ type: "spring", stiffness: 350, damping: 30 }}
-                      />
-                    )}
-                    {!isActive && (
-                       <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg -z-10" />
-                    )}
-                    <item.icon className={cn("w-3.5 h-3.5 shrink-0 transition-transform group-hover:scale-110", isActive ? "opacity-100" : "opacity-40")} />
-                    {!collapsed && <span className="truncate text-[11px] uppercase tracking-widest font-bold">{item.label}</span>}
+                    <item.icon className={cn("w-4 h-4 shrink-0", isActive ? "text-primary" : "opacity-70 group-hover:opacity-100")} />
+                    {!collapsed && <span className="truncate">{item.label}</span>}
                   </Link>
                 );
 
@@ -143,60 +135,61 @@ export default function AuthenticatedLayout({
                   return (
                     <Tooltip key={item.href}>
                       <TooltipTrigger asChild>{link}</TooltipTrigger>
-                      <TooltipContent side="right" className="text-[11px] uppercase tracking-widest font-bold border-white/10 glass-card bg-black/80">{item.label}</TooltipContent>
+                      <TooltipContent side="right" className="text-xs bg-popover border-border text-popover-foreground">{item.label}</TooltipContent>
                     </Tooltip>
                   );
                 }
+
 
                 return link;
               })}
             </nav>
 
-            <div className="border-t border-white/5 px-3 py-4">
+            <div className="border-t border-border px-3 py-4">
               {collapsed ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <div className="flex justify-center py-1 cursor-default">
-                      <UserRound className={cn("w-3.5 h-3.5 shrink-0", userId ? "text-primary opacity-80" : "text-muted-foreground/20")} />
+                      <UserRound className={cn("w-4 h-4 shrink-0", userId ? "text-primary opacity-80" : "text-muted-foreground")} />
                     </div>
                   </TooltipTrigger>
-                  <TooltipContent side="right" className="text-[11px] uppercase tracking-widest font-bold border-white/10 glass-card bg-black/80">
+                  <TooltipContent side="right" className="text-xs bg-popover border-border text-popover-foreground">
                     {userId || "NO FILTER"}
                   </TooltipContent>
                 </Tooltip>
               ) : (
                 <div className="space-y-2 px-1">
                   <div className="flex items-center gap-2">
-                    <UserRound className="w-3 h-3 text-muted-foreground/20" />
-                    <span className="text-[9px] uppercase tracking-[0.2em] text-muted-foreground/30 font-bold">Scope</span>
+                    <UserRound className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Scope</span>
                   </div>
                   <Input
                     value={userId}
                     onChange={(e) => setUserId(e.target.value)}
                     placeholder="USER_ID"
-                    className="h-9 text-[12px] font-mono bg-white/[0.02] border-white/5 focus:border-primary/20 placeholder:text-muted-foreground/10"
+                    className="h-8 text-[12px] font-mono bg-muted border-border focus:border-primary placeholder:text-muted-foreground/50"
                   />
                 </div>
               )}
             </div>
 
-            <div className="border-t border-white/5 p-3 space-y-1 bg-black/10">
+            <div className="border-t border-border p-3 space-y-1 bg-background/50">
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => setCollapsed(!collapsed)}
                 className={cn(
-                  "w-full h-9 justify-start gap-3 text-muted-foreground/40 hover:text-foreground hover:bg-white/5",
-                  collapsed && "justify-center"
+                  "w-full h-8 justify-start gap-3 text-muted-foreground hover:text-foreground hover:bg-muted",
+                  collapsed && "justify-center px-0"
                 )}
               >
                 <ChevronLeft
                   className={cn(
-                    "w-3.5 h-3.5 shrink-0 transition-transform duration-500",
+                    "w-4 h-4 shrink-0 transition-transform duration-300",
                     collapsed && "rotate-180"
                   )}
                 />
-                {!collapsed && <span className="text-[11px] uppercase tracking-widest font-bold">Collapse</span>}
+                {!collapsed && <span className="text-[13px] font-medium">Collapse</span>}
               </Button>
               <Button
                 variant="ghost"
@@ -206,18 +199,18 @@ export default function AuthenticatedLayout({
                   router.push("/login/");
                 }}
                 className={cn(
-                  "w-full h-9 justify-start gap-3 text-muted-foreground/40 hover:text-destructive hover:bg-destructive/5 group",
-                  collapsed && "justify-center"
+                  "w-full h-8 justify-start gap-3 text-muted-foreground hover:text-destructive hover:bg-destructive/10 group",
+                  collapsed && "justify-center px-0"
                 )}
               >
-                <LogOut className="w-3.5 h-3.5 shrink-0 group-hover:-translate-x-0.5 transition-transform" />
-                {!collapsed && <span className="text-[11px] uppercase tracking-widest font-bold">Logout</span>}
+                <LogOut className="w-4 h-4 shrink-0 group-hover:-translate-x-0.5 transition-transform" />
+                {!collapsed && <span className="text-[13px] font-medium">Logout</span>}
               </Button>
             </div>
           </aside>
 
-          <main className="flex-1 overflow-auto h-full allow-select">
-            <div className="p-6 max-w-7xl h-full">{children}</div>
+          <main className="flex-1 overflow-auto h-full allow-select bg-background">
+            <div className="p-6 max-w-7xl h-full openclaw-dashboard-enter">{children}</div>
           </main>
         </div>
       </TooltipProvider>

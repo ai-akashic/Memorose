@@ -46,10 +46,10 @@ function ConfigSection({ title, data, delay }: { title: string; data: Record<str
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, delay }}
     >
-      <Card className="glass-card border-white/[0.04] overflow-hidden group hover:border-white/10 transition-all duration-500 shadow-2xl">
-        <CardHeader className="pb-4 border-b border-white/[0.03] bg-white/[0.01]">
+      <Card className="glass-card overflow-hidden group transition-all duration-500">
+        <CardHeader className="pb-4 border-b border-border bg-card">
           <CardTitle className="text-xs flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-primary/5 border border-white/[0.03] group-hover:scale-110 transition-transform duration-500">
+            <div className="p-2 rounded-lg bg-primary/5 border border-border group-hover:scale-110 transition-transform duration-500">
               <Icon className="w-4 h-4 text-primary opacity-60" />
             </div>
             <span className="uppercase tracking-[0.2em] text-muted-foreground/40 font-bold">{title}</span>
@@ -57,8 +57,8 @@ function ConfigSection({ title, data, delay }: { title: string; data: Record<str
         </CardHeader>
         <CardContent className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-5">
           {Object.entries(data).map(([key, value]) => (
-            <div key={key} className="flex flex-col gap-1.5 p-4 rounded-xl bg-white/[0.01] border border-white/[0.02] hover:bg-white/[0.03] hover:border-white/[0.05] transition-all duration-300 group/item">
-              <span className="text-[9px] text-muted-foreground/40 uppercase tracking-widest font-bold flex items-center gap-2">
+            <div key={key} className="flex flex-col gap-1.5 p-4 rounded-xl bg-card border border-border hover:bg-card hover:border-border transition-all duration-300 group/item">
+              <span className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
                 <Terminal className="w-3 h-3 opacity-20 group-hover/item:text-primary group-hover/item:opacity-40 transition-all" />
                 {key.replace(/_/g, ' ')}
               </span>
@@ -113,14 +113,14 @@ function PasswordForm({ onSuccess }: { onSuccess?: () => void }) {
         { id: "confirm-pw", label: "Confirm New Password", value: confirm, onChange: setConfirm },
       ].map(({ id, label, value, onChange }) => (
         <div key={id} className="space-y-2">
-          <Label htmlFor={id} className="text-[10px] uppercase tracking-widest text-muted-foreground/50 font-bold px-1">{label}</Label>
+          <Label htmlFor={id} className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{label}</Label>
           <Input
             id={id}
             type="password"
             value={value}
             onChange={(e) => onChange(e.target.value)}
             required
-            className="bg-black/20 border-white/5 h-11 text-base"
+            className="bg-card border-border h-11 text-base"
           />
         </div>
       ))}
@@ -136,7 +136,7 @@ function PasswordForm({ onSuccess }: { onSuccess?: () => void }) {
           {message.text}
         </motion.div>
       )}
-      <Button type="submit" disabled={loading} className="w-full h-12 mt-2 font-bold uppercase tracking-[0.2em] text-xs rounded-xl shadow-xl">
+      <Button type="submit" disabled={loading} className="w-full h-12 mt-2 rounded-xl text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
         {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Shield className="w-4 h-4 mr-2" />}
         Update Password
       </Button>
@@ -164,11 +164,11 @@ export default function SettingsPage() {
         className="flex flex-col gap-2"
       >
         <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-white/5 rounded-xl border border-white/10 backdrop-blur-md">
+          <div className="p-2.5 bg-card rounded-xl border border-border">
             <SettingsIcon className="w-6 h-6 text-foreground/80" />
           </div>
           <div>
-            <h1 className="text-3xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-br from-white via-white to-white/50">
+            <h1 className="text-3xl font-extrabold tracking-tight bg-clip-text text-transparent">
               Settings
             </h1>
             <p className="text-muted-foreground mt-1 text-sm font-medium">Manage system configuration and security credentials.</p>
@@ -177,7 +177,7 @@ export default function SettingsPage() {
       </motion.div>
 
       {mustChange && (
-        <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="glass-card rounded-xl border border-warning/30 p-5 flex items-start gap-4 bg-warning/5 shadow-lg shadow-warning/5">
+        <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="glass-card rounded-xl border-warning/30 p-5 flex items-start gap-4 bg-warning/5">
           <div className="p-2 bg-warning/20 rounded-lg">
             <AlertTriangle className="w-5 h-5 text-warning" />
           </div>
@@ -193,7 +193,7 @@ export default function SettingsPage() {
       <div className="space-y-6">
         <div className="flex items-center gap-3 px-1">
           <div className="w-1 h-4 bg-primary/40 rounded-full" />
-          <h2 className="text-[10px] uppercase tracking-[0.3em] font-bold text-muted-foreground/40">Configuration</h2>
+          <h2 className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Configuration</h2>
         </div>
         
         <div className="space-y-5">
@@ -207,7 +207,7 @@ export default function SettingsPage() {
           ) : (
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
               {[1, 2, 3, 4].map((i) => (
-                <div key={i} className="glass-card rounded-2xl h-[280px] opacity-20 animate-pulse border-white/5" />
+                <div key={i} className="glass-card rounded-2xl h-[280px] opacity-20 animate-pulse" />
               ))}
             </div>
           )}
@@ -219,26 +219,26 @@ export default function SettingsPage() {
         initial={{ opacity: 0 }} 
         animate={{ opacity: 1 }} 
         transition={{ delay: 0.5 }}
-        className="mt-12 pt-6 border-t border-white/[0.06] flex items-center justify-between"
+        className="mt-12 pt-6 border-t border-border flex items-center justify-between"
       >
         <div>
           <h3 className="text-[11px] uppercase tracking-widest font-bold text-foreground/80 flex items-center gap-2">
             <Shield className="w-4 h-4 text-muted-foreground/60" />
             Reset Password
           </h3>
-          <p className="text-[10px] uppercase tracking-widest text-muted-foreground/30 font-bold mt-1">Authentication Management</p>
+          <p className="mt-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Authentication Management</p>
         </div>
         
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
-            <Button variant="outline" size="sm" className="bg-transparent border-white/10 hover:bg-white/5 text-[10px] uppercase tracking-widest font-bold h-9 px-4 relative">
+            <Button variant="outline" size="sm" className="bg-transparent border-border hover:bg-card h-9 px-4 relative text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
               <Key className="w-3.5 h-3.5 mr-2 opacity-50" />
               Change Credentials
               {mustChange && <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5 rounded-full bg-warning animate-pulse" />}
             </Button>
           </DialogTrigger>
-          <DialogContent className="sm:max-w-[450px] glass-card border-white/10 shadow-2xl">
-            <DialogHeader className="pb-4 border-b border-white/5">
+          <DialogContent className="sm:max-w-[450px] glass-card">
+            <DialogHeader className="pb-4 border-b border-border">
               <DialogTitle className="flex items-center gap-2 text-xl">
                 <Key className="w-5 h-5 text-primary" />
                 Update Password
