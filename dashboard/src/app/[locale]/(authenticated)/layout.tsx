@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { isAuthenticated, clearToken } from "@/lib/auth";
 import {
   LayoutDashboard,
@@ -16,7 +16,8 @@ import {
   CheckSquare,
   UserRound,
 } from "lucide-react";
-import Link from "next/link";
+import { usePathname, Link } from "@/i18n/routing";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,6 +29,7 @@ import {
 import { CommandPalette } from "@/components/CommandPalette";
 import { MemoroseLogo } from "@/components/haku-logo";
 import { Input } from "@/components/ui/input";
+import { LocaleSwitcher } from "@/components/LocaleSwitcher";
 
 const UserFilterContext = createContext<{
   userId: string;
@@ -38,17 +40,6 @@ export function useUserFilter() {
   return useContext(UserFilterContext);
 }
 
-const navItems = [
-  { href: "/cluster/", label: "Cluster", icon: LayoutDashboard },
-  { href: "/memories/", label: "Memories", icon: Database },
-  { href: "/playground/", label: "Playground", icon: MessageSquare },
-  { href: "/apps/", label: "Apps", icon: Package },
-  { href: "/agents/", label: "Agents", icon: Bot },
-  { href: "/tasks/", label: "Tasks", icon: CheckSquare },
-  { href: "/metrics/", label: "Metrics", icon: BarChart3 },
-  { href: "/settings/", label: "Settings", icon: Settings },
-];
-
 export default function AuthenticatedLayout({
   children,
 }: {
@@ -56,9 +47,21 @@ export default function AuthenticatedLayout({
 }) {
   const router = useRouter();
   const pathname = usePathname();
+  const t = useTranslations("Navigation");
   const [collapsed, setCollapsed] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [userId, setUserId] = useState("");
+
+  const navItems = [
+    { href: "/cluster", label: t("cluster"), icon: LayoutDashboard },
+    { href: "/memories", label: t("memories"), icon: Database },
+    { href: "/playground", label: "Playground", icon: MessageSquare },
+    { href: "/apps", label: t("apps"), icon: Package },
+    { href: "/agents", label: t("agents"), icon: Bot },
+    { href: "/tasks", label: t("tasks"), icon: CheckSquare },
+    { href: "/metrics", label: "Metrics", icon: BarChart3 },
+    { href: "/settings", label: t("settings"), icon: Settings },
+  ];
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -114,7 +117,7 @@ export default function AuthenticatedLayout({
 
             <nav className="flex-1 py-4 space-y-1 px-3 overflow-y-auto">
               {navItems.map((item) => {
-                const isActive = pathname === item.href || pathname?.startsWith(item.href.replace(/\/$/, ""));
+                const isActive = pathname === item.href || pathname?.startsWith(item.href);
                 const link = (
                   <Link
                     key={item.href}
@@ -173,24 +176,33 @@ export default function AuthenticatedLayout({
               )}
             </div>
 
-            <div className="border-t border-border p-3 space-y-1 bg-background/50">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setCollapsed(!collapsed)}
-                className={cn(
-                  "w-full h-8 justify-start gap-3 text-muted-foreground hover:text-foreground hover:bg-muted",
-                  collapsed && "justify-center px-0"
-                )}
-              >
-                <ChevronLeft
-                  className={cn(
-                    "w-4 h-4 shrink-0 transition-transform duration-300",
-                    collapsed && "rotate-180"
-                  )}
-                />
-                {!collapsed && <span className="text-[13px] font-medium">Collapse</span>}
-              </Button>
+            <div className="border-t border-border p-3 space-y-1 bg-background/50 flex flex-col items-center">
+              {!collapsed ? (
+                <div className="w-full flex justify-between items-center mb-1">
+                  <LocaleSwitcher />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setCollapsed(!collapsed)}
+                    className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-muted"
+                  >
+                    <ChevronLeft className="w-4 h-4 shrink-0 transition-transform duration-300" />
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <LocaleSwitcher />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setCollapsed(!collapsed)}
+                    className="w-full h-8 justify-center px-0 text-muted-foreground hover:text-foreground hover:bg-muted"
+                  >
+                    <ChevronLeft className="w-4 h-4 shrink-0 transition-transform duration-300 rotate-180" />
+                  </Button>
+                </>
+              )}
+
               <Button
                 variant="ghost"
                 size="sm"
@@ -199,7 +211,7 @@ export default function AuthenticatedLayout({
                   router.push("/login/");
                 }}
                 className={cn(
-                  "w-full h-8 justify-start gap-3 text-muted-foreground hover:text-destructive hover:bg-destructive/10 group",
+                  "w-full h-8 justify-start gap-3 text-muted-foreground hover:text-destructive hover:bg-destructive/10 group mt-1",
                   collapsed && "justify-center px-0"
                 )}
               >
