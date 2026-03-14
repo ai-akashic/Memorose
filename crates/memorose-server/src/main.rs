@@ -210,6 +210,7 @@ async fn main() {
         .route("/dashboard/settings/", get(|| async { Redirect::temporary("/dashboard/en/settings/") }))
         .merge(v1_routes)
         .nest("/v1/dashboard", dashboard_routes)
+        // Fallback for static files on /dashboard prefix
         .nest_service("/dashboard", dashboard_static)
         .layer(
             ServiceBuilder::new()

@@ -53,14 +53,14 @@ export default function AuthenticatedLayout({
   const [userId, setUserId] = useState("");
 
   const navItems = [
-    { href: "/cluster", label: t("cluster"), icon: LayoutDashboard },
-    { href: "/apps", label: t("apps"), icon: Package },
-    { href: "/memories", label: t("memories"), icon: Database },
-    { href: "/playground", label: "Playground", icon: MessageSquare },
-    { href: "/agents", label: t("agents"), icon: Bot },
-    { href: "/tasks", label: t("tasks"), icon: CheckSquare },
-    { href: "/metrics", label: "Metrics", icon: BarChart3 },
-    { href: "/settings", label: t("settings"), icon: Settings },
+    { href: "/cluster/", label: t("cluster"), icon: LayoutDashboard },
+    { href: "/apps/", label: t("apps"), icon: Package },
+    { href: "/memories/", label: t("memories"), icon: Database },
+    { href: "/playground/", label: "Playground", icon: MessageSquare },
+    { href: "/agents/", label: t("agents"), icon: Bot },
+    { href: "/tasks/", label: t("tasks"), icon: CheckSquare },
+    { href: "/metrics/", label: "Metrics", icon: BarChart3 },
+    { href: "/settings/", label: t("settings"), icon: Settings },
   ];
 
   useEffect(() => {
