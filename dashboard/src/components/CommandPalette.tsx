@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/i18n/routing";
 import { Command } from "cmdk";
 import { Search, Monitor, Database, Settings, LogOut } from "lucide-react";
 
