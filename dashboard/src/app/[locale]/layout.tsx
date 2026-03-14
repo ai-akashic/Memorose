@@ -22,7 +22,7 @@ export default async function RootLayout({
   const { locale } = await params;
 
   // Validate that the incoming `locale` parameter is valid
-  if (!routing.locales.includes(locale as any)) {
+  if (!routing.locales.includes(locale as "en" | "zh")) {
     notFound();
   }
 

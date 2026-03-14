@@ -1,173 +1,144 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Card, CardContent } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Package, Activity, ArrowRight } from "lucide-react";
-import { formatNumber } from "@/lib/utils";
-import Link from "next/link";
-import { getToken } from "@/lib/auth";
-import { motion } from "framer-motion";
+import { useState } from "react";
+import { Copy, Plus, KeyRound, Terminal, Trash2 } from "lucide-react";
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 
-interface AppSummary {
-  app_id: string;
-  total_events: number;
-  total_users: number;
-  total_memories: number;
-  l1_count: number;
-  l2_count: number;
-  last_activity: number | null;
-}
+const MOCK_APPS = [
+  { id: "app_a1b2c3", name: "Customer Support Bot", description: "Production memory layer for support channels.", keys: 2 },
+  { id: "app_x9y8z7", name: "Internal Coding Assistant", description: "Dev team knowledge graph.", keys: 1 },
+];
 
-interface AppsResponse {
-  apps: AppSummary[];
-  total_count: number;
-}
-
-function formatRelativeTime(timestamp: number | null, now: number): string {
-  if (!timestamp) return "No activity";
-  const diff = now - timestamp * 1000;
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "Just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-function AppCard({ app, index, now }: { app: AppSummary; index: number; now: number }) {
-  const relTime = formatRelativeTime(app.last_activity, now);
-  const isRecent = app.last_activity && now - app.last_activity * 1000 < 3600000;
-  const memTotal = app.total_memories;
-  const l2Pct = memTotal > 0 ? (app.l2_count / memTotal) * 100 : 0;
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.04, duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-    >
-      <Link href={`/apps/${app.app_id}/`}>
-        <Card className="glass-card group relative overflow-hidden hover:shadow-[0_0_40px_rgba(0,0,0,0.4)] transition-all duration-500 cursor-pointer h-full">
-          
-
-          <CardContent className="p-6 relative z-10 flex flex-col justify-between h-full">
-            <div>
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-card border border-border flex items-center justify-center group-hover:border-primary/20 group-hover:bg-primary/5 transition-all duration-500">
-                    <Package className="w-3.5 h-3.5 text-muted-foreground group-hover:text-primary transition-colors" />
-                  </div>
-                  <h3 className="text-foreground/70 group-hover:text-white text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{app.app_id}</h3>
-                </div>
-                <div className={`w-1 h-1 rounded-full ${isRecent ? "bg-success shadow-[0_0_5px_rgba(34,197,94,0.8)]" : "bg-white/10"}`} />
-              </div>
-
-              <div className="grid grid-cols-3 gap-2 mb-6">
-                {[
-                  { label: "USR", value: formatNumber(app.total_users) },
-                  { label: "EVT", value: formatNumber(app.total_events) },
-                  { label: "MEM", value: formatNumber(app.total_memories) },
-                ].map(({ label, value }) => (
-                  <div key={label} className="flex flex-col gap-0.5">
-                    <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{label}</span>
-                    <span className="font-mono text-[11px] text-foreground/60">{value}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-1.5 pt-4 border-t border-border">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">L2 Elevation</span>
-                <span className="font-mono text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{l2Pct.toFixed(0)}%</span>
-              </div>
-              <div className="h-0.5 w-full bg-card rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-primary transition-all duration-1000"
-                  style={{ width: `${Math.min(l2Pct, 100)}%` }}
-                />
-              </div>
-              <div className="flex justify-between items-center mt-1">
-                <span className="font-mono italic text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{relTime}</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/10 group-hover:text-primary/40 group-hover:translate-x-0.5 transition-all" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </Link>
-    </motion.div>
-  );
-}
+const MOCK_KEYS = [
+  { id: "key_1", name: "Production Key", key: "sk_live_8f92a1...4b2e", created: "2026-03-01", lastUsed: "2 mins ago" },
+  { id: "key_2", name: "Developer Testing", key: "sk_test_11x9f0...9q8w", created: "2026-03-10", lastUsed: "Never" },
+];
 
 export default function AppsPage() {
-  const [apps, setApps] = useState<AppsResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    async function fetchApps() {
-      try {
-        const response = await fetch("/v1/dashboard/apps", {
-          headers: { Authorization: `Bearer ${getToken()}` },
-        });
-        if (!response.ok) throw new Error(`Failed to fetch apps: ${response.status}`);
-        setApps(await response.json());
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Unknown error");
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchApps();
-  }, []);
+  const [selectedApp, setSelectedApp] = useState(MOCK_APPS[0]);
 
   return (
-    <div className="space-y-8 relative pb-10">
-      <div className="absolute top-0 right-0 w-[600px] h-[300px] blob-bg opacity-20 pointer-events-none -z-10 mix-blend-screen" />
-
-      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
-        <div className="flex items-center gap-3">
-          <div className="w-1 h-6 bg-primary/40 rounded-full" />
-          <h1 className="text-sm font-bold tracking-[0.3em] uppercase text-muted-foreground/60">
-            Applications
-          </h1>
+    <div className="flex flex-col h-full gap-8">
+      {/* Header Section */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight text-foreground">Applications</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Manage your agent memory contexts and API keys.
+          </p>
         </div>
-        <p className="mt-2 ml-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
-          {loading ? "Initializing…" : error ? "Sync failure" : `${apps?.total_count ?? 0} Instances deployed`}
-        </p>
-      </motion.div>
+        <Button className="h-9 gap-2">
+          <Plus className="w-4 h-4" />
+          Create App
+        </Button>
+      </div>
 
-      {error && (
-        <div className="glass-card rounded-xl border-destructive/20 bg-destructive/5 p-4 text-xs text-destructive flex items-center gap-3">
-          <Activity className="w-4 h-4 shrink-0 opacity-70" />
-          <span className="font-mono tracking-tight">{error}</span>
-        </div>
-      )}
-
-      {loading ? (
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-3">
-          {[...Array(8)].map((_, i) => (
-            <Skeleton key={i} className="h-44 glass-card rounded-xl opacity-10" />
-          ))}
-        </div>
-      ) : !apps || apps.total_count === 0 ? (
-        <div className="glass-card rounded-2xl border-dashed py-24 flex flex-col items-center text-center gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-card border border-border flex items-center justify-center">
-            <Package className="w-5 h-5 opacity-20" />
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* Left Column: Apps List */}
+        <div className="col-span-1 space-y-4">
+          <div className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+            Your Apps
           </div>
-          <div>
-            <h3 className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Zero Registry</h3>
+          <div className="space-y-2">
+            {MOCK_APPS.map((app) => (
+              <button
+                key={app.id}
+                onClick={() => setSelectedApp(app)}
+                className={`w-full text-left p-4 rounded-lg border transition-all duration-200 ${
+                  selectedApp.id === app.id
+                    ? "bg-muted border-border"
+                    : "bg-card border-border/50 hover:border-border hover:bg-muted/50"
+                }`}
+              >
+                <div className="font-semibold text-[14px] text-foreground">{app.name}</div>
+                <div className="text-xs font-mono text-muted-foreground mt-1">{app.id}</div>
+              </button>
+            ))}
           </div>
         </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-3">
-          {apps.apps.map((app, i) => (
-            <AppCard key={app.app_id} app={app} index={i} now={Date.now()} />
-          ))}
+
+        {/* Right Column: App Detail & API Keys */}
+        <div className="col-span-2 space-y-6">
+          <Card className="glass-card p-6">
+            <div className="flex items-start justify-between">
+              <div>
+                <h2 className="text-lg font-bold">{selectedApp.name}</h2>
+                <p className="text-sm text-muted-foreground mt-1">{selectedApp.description}</p>
+                <div className="flex items-center gap-2 mt-4">
+                  <span className="text-[11px] uppercase tracking-widest text-muted-foreground font-medium">App ID</span>
+                  <code className="text-xs font-mono bg-muted px-2 py-1 rounded border border-border">
+                    {selectedApp.id}
+                  </code>
+                  <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground">
+                    <Copy className="w-3 h-3" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+                <KeyRound className="w-3.5 h-3.5" />
+                API Keys
+              </div>
+              <Button variant="outline" size="sm" className="h-8 text-xs">
+                Generate Key
+              </Button>
+            </div>
+
+            <Card className="glass-card overflow-hidden">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-border bg-muted/30">
+                    <th className="px-4 py-3 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Name</th>
+                    <th className="px-4 py-3 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Secret Key</th>
+                    <th className="px-4 py-3 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Last Used</th>
+                    <th className="px-4 py-3 text-right"></th>
+                  </tr>
+                </thead>
+                <tbody className="text-sm">
+                  {MOCK_KEYS.map((key) => (
+                    <tr key={key.id} className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors">
+                      <td className="px-4 py-3 font-medium">{key.name}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <code className="text-xs font-mono text-muted-foreground">{key.key}</code>
+                          <Button variant="ghost" size="icon" className="h-5 w-5 opacity-50 hover:opacity-100">
+                            <Copy className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground text-xs">{key.lastUsed}</td>
+                      <td className="px-4 py-3 text-right">
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10">
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Card>
+
+            {/* Quick Start Guide */}
+            <Card className="glass-card p-5 mt-4 border-primary/20 bg-primary/5">
+              <div className="flex items-center gap-2 text-primary font-medium text-sm mb-3">
+                <Terminal className="w-4 h-4" />
+                Quick Integration
+              </div>
+              <pre className="text-xs font-mono bg-background border border-border rounded-md p-4 overflow-x-auto text-muted-foreground">
+<span className="text-primary">curl</span> -X POST https://api.memorose.io/v1/users/dylan/streams/sys-01/events \
+  -H <span className="text-green-400">&quot;Authorization: Bearer sk_live_8f92a1...4b2e&quot;</span> \
+  -H <span className="text-green-400">&quot;Content-Type: application/json&quot;</span> \
+  -d <span className="text-yellow-200">{"'{ \"content\": \"I prefer dark mode UI.\" }'"}</span>
+              </pre>
+            </Card>
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }

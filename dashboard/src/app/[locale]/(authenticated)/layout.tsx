@@ -27,9 +27,9 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { CommandPalette } from "@/components/CommandPalette";
-import { MemoroseLogo } from "@/components/haku-logo";
 import { Input } from "@/components/ui/input";
 import { LocaleSwitcher } from "@/components/LocaleSwitcher";
+import { OrgSwitcher } from "@/components/OrgSwitcher";
 
 const UserFilterContext = createContext<{
   userId: string;
@@ -54,9 +54,9 @@ export default function AuthenticatedLayout({
 
   const navItems = [
     { href: "/cluster", label: t("cluster"), icon: LayoutDashboard },
+    { href: "/apps", label: t("apps"), icon: Package },
     { href: "/memories", label: t("memories"), icon: Database },
     { href: "/playground", label: "Playground", icon: MessageSquare },
-    { href: "/apps", label: t("apps"), icon: Package },
     { href: "/agents", label: t("agents"), icon: Bot },
     { href: "/tasks", label: t("tasks"), icon: CheckSquare },
     { href: "/metrics", label: "Metrics", icon: BarChart3 },
@@ -99,21 +99,7 @@ export default function AuthenticatedLayout({
               collapsed ? "w-[72px]" : "w-[220px]"
             )}
           >
-            <div className="flex items-center gap-3 px-4 h-[52px] border-b border-border shrink-0">
-              <div className="relative z-10">
-                <MemoroseLogo size={24} />
-              </div>
-              {!collapsed && (
-                <div className="flex flex-col">
-                  <span className="font-bold text-[15px] tracking-tight leading-none text-text-strong">
-                    Memorose
-                  </span>
-                  <span className="text-[9px] font-medium text-muted-foreground uppercase tracking-widest mt-0.5">
-                    Dashboard
-                  </span>
-                </div>
-              )}
-            </div>
+            <OrgSwitcher collapsed={collapsed} />
 
             <nav className="flex-1 py-4 space-y-1 px-3 overflow-y-auto">
               {navItems.map((item) => {
