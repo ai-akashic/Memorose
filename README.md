@@ -50,6 +50,7 @@ One binary. Sub-10ms retrieval. Zero Python dependencies.
 - [Quick Start](#quick-start)
 - [How It Works](#how-it-works)
 - [Multi-Dimensional Memory](#multi-dimensional-memory)
+- [Memory Domains](#memory-domains)
 - [Six Cognitive Operations](#six-cognitive-operations)
 - [Native Multimodal Embedding](#native-multimodal-embedding)
 - [Feature Comparison](#feature-comparison)
@@ -192,6 +193,46 @@ Query any combination: _"What has agent-X learned about user-Y within app-Z?"_
 
 ---
 
+## Memory Domains
+
+Memorose separates **cognitive tier** from **memory domain**:
+
+- **L0-L3** describes how memory is processed over time
+- **Agent / User / App / Organization** describes who a memory belongs to and who it should serve
+
+This keeps execution experience, personal context, product-level knowledge, and organization-wide knowledge from collapsing into a single undifferentiated memory pool.
+
+| Domain | Primary question | Typical content | Default sharing boundary |
+|--------|------------------|-----------------|--------------------------|
+| **Agent Memory** | _How does this agent do the work?_ | Tool usage patterns, execution traces, recovery strategies, planning heuristics, procedural reflections | Private to one `agent_id` unless explicitly projected upward |
+| **User Memory** | _Who is this user and what do they want?_ | Preferences, identity, goals, constraints, long-lived personal context, user-specific facts | Shared across agents serving the same `user_id` |
+| **App Memory** | _What is shared inside this product context?_ | Reusable workflows, shared vocabulary, app-specific conventions, common cases, patterns contributed from agents and users | Shared within one `app_id`, subject to user opt-in for contributed memory |
+| **Organization Memory** | _What knowledge should be reusable across apps?_ | Policies, organizational terminology, company-wide knowledge, cross-app best practices, higher-level insights | Shared within one `org_id`, subject to user opt-in for contributed memory |
+
+### Domain boundaries
+
+- **Agent memory** is primarily procedural. It should capture how an agent performs work, not who the user is.
+- **User memory** is primarily factual and preferential. It should capture stable personal context that multiple agents may need when serving the same user.
+- **App memory** is not just the union of agent memories. It is the shared knowledge layer for one product surface: the workflows, conventions, and reusable context that make sense inside a single app.
+- **Organization memory** sits above app memory. It is the broadest reusable layer and should hold knowledge that remains useful across multiple apps, not just inside one product silo.
+
+### Sharing model
+
+Memorose treats `agent` and `user` as the **local domains** where new memories are formed first. `app` and `organization` are the **shared domains** that memories can be projected into later.
+
+- New experiences should first become local `agent` or `user` memories.
+- Shared `app` and `organization` memories should be built from authorized projections, not by directly mixing all raw events together.
+- User-controlled sharing matters: enabling shared memory should be an explicit policy decision, and historical data should only be included when that policy allows it.
+
+In short:
+
+- **Agent Memory**: how one agent learns to act
+- **User Memory**: what the system should remember about one user
+- **App Memory**: what participants in one app should be able to reuse
+- **Organization Memory**: what the broader organization should be able to reuse
+
+---
+
 ## Six Cognitive Operations
 
 | | Operation | What it does | When it runs |
@@ -291,7 +332,11 @@ Benchmarked on a single 8-core node with 1M stored memories:
 
 ## Dashboard
 
-Memorose ships with a built-in web dashboard at `http://localhost:3000/dashboard`:
+Memorose includes a Next.js dashboard that runs as a separate web app.
+
+- Local development: `http://localhost:3100/dashboard`
+- Backend API: `http://localhost:3000`
+- Docker Compose: expose the `dashboard` service on port `3100`
 
 - **Memory Browser** — search, filter by user/agent/app, inspect memories
 - **Knowledge Graph** — interactive visualization of memory relationships

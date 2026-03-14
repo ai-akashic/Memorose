@@ -23,19 +23,27 @@ pub struct ShardManager {
 impl ShardManager {
     /// Create a multi-shard manager from sharding config.
     pub async fn new(config: &AppConfig) -> anyhow::Result<Self> {
-        let sharding = config.sharding.as_ref()
+        let sharding = config
+            .sharding
+            .as_ref()
             .expect("ShardManager::new called without sharding config");
         let shard_count = sharding.shard_count.max(1);
         let physical_node_id = sharding.physical_node_id;
         let base_dir = &config.storage.root_dir;
 
         // Find this node's raft_base_port from the sharding node list
-        let this_node = sharding.nodes.iter()
+        let this_node = sharding
+            .nodes
+            .iter()
             .find(|n| n.id == physical_node_id)
             .expect("Physical node ID not found in sharding.nodes");
         let raft_base_port = this_node.raft_base_port;
         let raft_host_raw = this_node.http_addr.split(':').next().unwrap_or("127.0.0.1");
-        let raft_host = if raft_host_raw == "0.0.0.0" { "127.0.0.1" } else { raft_host_raw };
+        let raft_host = if raft_host_raw == "0.0.0.0" {
+            "127.0.0.1"
+        } else {
+            raft_host_raw
+        };
 
         let mut shards = HashMap::new();
 
@@ -46,7 +54,9 @@ impl ShardManager {
 
             tracing::info!(
                 "Initializing shard {} (raft_node_id={}, raft_addr={})",
-                shard_id, raft_node_id, raft_addr_str
+                shard_id,
+                raft_node_id,
+                raft_addr_str
             );
 
             let engine = MemoroseEngine::new(
@@ -56,15 +66,19 @@ impl ShardManager {
                 config.worker.enable_task_reflection,
                 config.worker.auto_link_similarity_threshold,
                 config.llm.embedding_dim,
-            ).await?;
+            )
+            .await?;
 
             // Override raft config for this shard
             let mut shard_config = config.clone();
             shard_config.raft.node_id = raft_node_id;
             shard_config.raft.raft_addr = raft_addr_str.clone();
 
-            let raft = start_raft_node(raft_node_id, engine.clone(), shard_config.clone()).await
-                .map_err(|e| anyhow::anyhow!("Failed to start raft for shard {}: {:?}", shard_id, e))?;
+            let raft = start_raft_node(raft_node_id, engine.clone(), shard_config.clone())
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to start raft for shard {}: {:?}", shard_id, e)
+                })?;
 
             // Start background worker for this shard
             let mut worker = BackgroundWorker::with_config(engine.clone(), shard_config);
@@ -77,7 +91,11 @@ impl ShardManager {
             let raft_addr: SocketAddr = raft_addr_str.parse()?;
             let raft_for_server = raft.clone();
             tokio::spawn(async move {
-                tracing::info!("Raft gRPC server for shard {} listening on {}", shard_id, raft_addr);
+                tracing::info!(
+                    "Raft gRPC server for shard {} listening on {}",
+                    shard_id,
+                    raft_addr
+                );
                 if let Err(e) = run_raft_server(raft_addr, raft_for_server).await {
                     tracing::error!("Raft server error for shard {}: {:?}", shard_id, e);
                 }
@@ -86,7 +104,11 @@ impl ShardManager {
             shards.insert(shard_id, ShardState { engine, raft });
         }
 
-        Ok(Self { shards, shard_count, physical_node_id })
+        Ok(Self {
+            shards,
+            shard_count,
+            physical_node_id,
+        })
     }
 
     /// Create a single-shard manager (backward compatible, no sharding config needed).
@@ -102,9 +124,11 @@ impl ShardManager {
             config.worker.enable_task_reflection,
             config.worker.auto_link_similarity_threshold,
             config.llm.embedding_dim,
-        ).await?;
+        )
+        .await?;
 
-        let raft = start_raft_node(node_id, engine.clone(), config.clone()).await
+        let raft = start_raft_node(node_id, engine.clone(), config.clone())
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to start raft: {:?}", e))?;
 
         // Start background worker
@@ -137,7 +161,8 @@ impl ShardManager {
     /// Route a user_id to the appropriate shard.
     pub fn shard_for_user(&self, user_id: &str) -> &ShardState {
         let shard_id = user_id_to_shard(user_id, self.shard_count);
-        self.shards.get(&shard_id)
+        self.shards
+            .get(&shard_id)
             .expect("shard_for_user: shard missing from map")
     }
 
@@ -189,7 +214,8 @@ impl ShardManager {
                 node.map(|n| {
                     let host = n.http_addr.split(':').next().unwrap_or("127.0.0.1");
                     raft_addr_for_shard(host, n.raft_base_port, shard_id)
-                }).unwrap_or_else(|| config.raft.raft_addr.clone())
+                })
+                .unwrap_or_else(|| config.raft.raft_addr.clone())
             } else {
                 config.raft.raft_addr.clone()
             };
@@ -199,7 +225,11 @@ impl ShardManager {
 
             match shard.raft.initialize(nodes).await {
                 Ok(_) => {
-                    tracing::info!("Initialized raft for shard {} (node_id={})", shard_id, raft_node_id);
+                    tracing::info!(
+                        "Initialized raft for shard {} (node_id={})",
+                        shard_id,
+                        raft_node_id
+                    );
                     results.push(serde_json::json!({
                         "shard_id": shard_id, "status": "initialized"
                     }));
@@ -207,7 +237,10 @@ impl ShardManager {
                 Err(e) => {
                     let err_str = format!("{:?}", e);
                     if err_str.contains("NotAllowed") {
-                        tracing::info!("Shard {} already initialized (NotAllowed), treating as success", shard_id);
+                        tracing::info!(
+                            "Shard {} already initialized (NotAllowed), treating as success",
+                            shard_id
+                        );
                         results.push(serde_json::json!({
                             "shard_id": shard_id, "status": "already_initialized"
                         }));
@@ -224,7 +257,11 @@ impl ShardManager {
     }
 
     /// Add a joining node to all Raft groups.
-    pub async fn join_all(&self, joining_physical_node_id: u32, config: &AppConfig) -> Vec<serde_json::Value> {
+    pub async fn join_all(
+        &self,
+        joining_physical_node_id: u32,
+        config: &AppConfig,
+    ) -> Vec<serde_json::Value> {
         let mut results = Vec::new();
         let sharding = config.sharding.as_ref();
 
@@ -240,7 +277,8 @@ impl ShardManager {
                 node.map(|n| {
                     let host = n.http_addr.split(':').next().unwrap_or("127.0.0.1");
                     raft_addr_for_shard(host, n.raft_base_port, shard_id)
-                }).unwrap_or_default()
+                })
+                .unwrap_or_default()
             } else {
                 // Single-shard mode: expect address to be passed separately
                 String::new()
@@ -272,7 +310,8 @@ impl ShardManager {
 
             // Promote to voter
             let metrics = shard.raft.metrics().borrow().clone();
-            let mut members: BTreeSet<u64> = metrics.membership_config.membership().voter_ids().collect();
+            let mut members: BTreeSet<u64> =
+                metrics.membership_config.membership().voter_ids().collect();
             members.insert(joining_raft_id);
 
             match shard.raft.change_membership(members, false).await {
@@ -306,7 +345,8 @@ impl ShardManager {
             };
 
             let metrics = shard.raft.metrics().borrow().clone();
-            let mut members: BTreeSet<u64> = metrics.membership_config.membership().voter_ids().collect();
+            let mut members: BTreeSet<u64> =
+                metrics.membership_config.membership().voter_ids().collect();
 
             if !members.remove(&leaving_raft_id) {
                 results.push(serde_json::json!({

@@ -1,12 +1,12 @@
 // 性能对比示例：传统实现 vs 优化后的图查询
 
-use memorose_core::MemoroseEngine;
-use memorose_core::graph::{BatchExecutor, QueryCache, CacheConfig, CacheKey};
-use memorose_common::{MemoryUnit, GraphEdge, RelationType};
-use uuid::Uuid;
-use std::time::Instant;
 use anyhow::Result;
+use memorose_common::{GraphEdge, MemoryUnit, RelationType};
+use memorose_core::graph::{BatchExecutor, CacheConfig, CacheKey, QueryCache};
+use memorose_core::MemoroseEngine;
 use std::path::PathBuf;
+use std::time::Instant;
+use uuid::Uuid;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -17,7 +17,9 @@ async fn main() -> Result<()> {
 
     // 初始化引擎
     let data_dir = PathBuf::from("./data_perf_test");
-    if data_dir.exists() { std::fs::remove_dir_all(&data_dir)?; }
+    if data_dir.exists() {
+        std::fs::remove_dir_all(&data_dir)?;
+    }
     let engine = MemoroseEngine::new_with_default_threshold(&data_dir, 1000, true, true).await?;
 
     let user_id = "perf_test_user";
@@ -79,7 +81,8 @@ async fn build_test_graph(
     for i in 0..num_nodes {
         let content = format!("Node {}", i);
         let embedding = vec![i as f32 / num_nodes as f32; 384];
-        let unit = MemoryUnit::new(None, 
+        let unit = MemoryUnit::new(
+            None,
             user_id.to_string(),
             None,
             app_id.to_string(),
@@ -108,7 +111,7 @@ async fn build_test_graph(
         }
     }
 
-    graph.flush().await?;  // 确保数据写入
+    graph.flush().await?; // 确保数据写入
     Ok(node_ids)
 }
 
@@ -126,7 +129,11 @@ async fn test_single_hop_query(
     let edges = graph.get_outgoing_edges(user_id, test_node).await?;
     let duration = start.elapsed();
 
-    println!("  Traditional query: {:?} ({} edges)", duration, edges.len());
+    println!(
+        "  Traditional query: {:?} ({} edges)",
+        duration,
+        edges.len()
+    );
     println!("  ✅ Fast path - already optimized");
 
     Ok(())
@@ -169,12 +176,9 @@ async fn test_multi_hop_traversal(
     // ✅ 优化方式：批量执行
     let executor = BatchExecutor::new(graph.clone());
     let start = Instant::now();
-    let optimized_nodes = executor.batch_multi_hop_traverse(
-        user_id,
-        vec![start_node],
-        2,
-        None,
-    ).await?;
+    let optimized_nodes = executor
+        .batch_multi_hop_traverse(user_id, vec![start_node], 2, None)
+        .await?;
     let optimized_duration = start.elapsed();
 
     println!("  ✅ Optimized (batched):");
@@ -188,13 +192,9 @@ async fn test_multi_hop_traversal(
 }
 
 /// 测试 3: 批量查询对比
-async fn test_batch_query(
-    engine: &MemoroseEngine,
-    user_id: &str,
-    nodes: &[Uuid],
-) -> Result<()> {
+async fn test_batch_query(engine: &MemoroseEngine, user_id: &str, nodes: &[Uuid]) -> Result<()> {
     let graph = engine.graph();
-    let query_nodes = &nodes[0..20];  // 查询前 20 个节点
+    let query_nodes = &nodes[0..20]; // 查询前 20 个节点
 
     // ❌ 传统方式：逐个查询
     let start = Instant::now();
@@ -212,7 +212,9 @@ async fn test_batch_query(
     // ✅ 优化方式：批量查询
     let executor = BatchExecutor::new(graph.clone());
     let start = Instant::now();
-    let edges_map = executor.batch_get_outgoing_edges(user_id, query_nodes).await?;
+    let edges_map = executor
+        .batch_get_outgoing_edges(user_id, query_nodes)
+        .await?;
     let optimized_total: usize = edges_map.values().map(|v| v.len()).sum();
     let optimized_duration = start.elapsed();
 

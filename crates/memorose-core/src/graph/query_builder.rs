@@ -2,10 +2,10 @@
 // But using pure Rust APIs, requiring no Cypher parsing
 
 use crate::storage::graph::GraphStore;
-use memorose_common::{GraphEdge, RelationType};
-use uuid::Uuid;
 use anyhow::Result;
+use memorose_common::{GraphEdge, RelationType};
 use std::collections::HashSet;
+use uuid::Uuid;
 
 /// Graph traversal configuration
 #[derive(Debug, Clone)]
@@ -124,12 +124,14 @@ impl<'a> QueryPlanner<'a> {
             let mut next_frontier = HashSet::new();
 
             // Key optimization: Batch retrieve all edges, rather than querying individually
-            let edges = self.batch_get_edges(
-                &query.user_id,
-                &current_frontier,
-                &traversal.relation_types,
-                traversal.direction,
-            ).await?;
+            let edges = self
+                .batch_get_edges(
+                    &query.user_id,
+                    &current_frontier,
+                    &traversal.relation_types,
+                    traversal.direction,
+                )
+                .await?;
 
             // Filter and collect target nodes
             for edge in edges {
@@ -179,7 +181,10 @@ impl<'a> QueryPlanner<'a> {
 
         match direction {
             TraversalDirection::Outgoing => {
-                let edges_map = self.graph.batch_get_outgoing_edges(user_id, source_nodes).await?;
+                let edges_map = self
+                    .graph
+                    .batch_get_outgoing_edges(user_id, source_nodes)
+                    .await?;
                 for (_, edges) in edges_map {
                     all_edges.extend(edges.into_iter().filter(|e| {
                         relation_types.is_empty() || relation_types.contains(&e.relation)
@@ -187,7 +192,10 @@ impl<'a> QueryPlanner<'a> {
                 }
             }
             TraversalDirection::Incoming => {
-                let edges_map = self.graph.batch_get_incoming_edges(user_id, source_nodes).await?;
+                let edges_map = self
+                    .graph
+                    .batch_get_incoming_edges(user_id, source_nodes)
+                    .await?;
                 for (_, edges) in edges_map {
                     all_edges.extend(edges.into_iter().filter(|e| {
                         relation_types.is_empty() || relation_types.contains(&e.relation)
@@ -195,15 +203,23 @@ impl<'a> QueryPlanner<'a> {
                 }
             }
             TraversalDirection::Both => {
-                let out_map = self.graph.batch_get_outgoing_edges(user_id, source_nodes).await?;
-                let in_map = self.graph.batch_get_incoming_edges(user_id, source_nodes).await?;
-                
+                let out_map = self
+                    .graph
+                    .batch_get_outgoing_edges(user_id, source_nodes)
+                    .await?;
+                let in_map = self
+                    .graph
+                    .batch_get_incoming_edges(user_id, source_nodes)
+                    .await?;
+
                 let mut combined = out_map.into_values().flatten().collect::<Vec<_>>();
                 combined.extend(in_map.into_values().flatten());
-                
-                all_edges.extend(combined.into_iter().filter(|e| {
-                    relation_types.is_empty() || relation_types.contains(&e.relation)
-                }));
+
+                all_edges.extend(
+                    combined.into_iter().filter(|e| {
+                        relation_types.is_empty() || relation_types.contains(&e.relation)
+                    }),
+                );
             }
         }
 
@@ -225,9 +241,9 @@ mod tests {
         let _query = GraphQueryBuilder::new(user_id)
             .start_from(vec![start])
             .traverse(RelationType::RelatedTo)
-                .max_hops(2)
-                .min_weight(0.7)
-                .build()
+            .max_hops(2)
+            .min_weight(0.7)
+            .build()
             .limit(10);
 
         // Execute: let results = query.execute(&graph).await?;

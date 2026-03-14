@@ -1,7 +1,7 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
-use uuid::Uuid;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use uuid::Uuid;
 
 pub mod config;
 pub mod sharding;
@@ -13,8 +13,6 @@ pub struct TokenUsage {
     pub completion_tokens: u32,
     pub total_tokens: u32,
 }
-
-fn default_legacy_id() -> String { "_legacy".to_string() }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryStream {
@@ -58,7 +56,14 @@ pub struct Event {
 }
 
 impl Event {
-    pub fn new(org_id: Option<String>, user_id: String, agent_id: Option<String>, app_id: String, stream_id: Uuid, content: EventContent) -> Self {
+    pub fn new(
+        org_id: Option<String>,
+        user_id: String,
+        agent_id: Option<String>,
+        app_id: String,
+        stream_id: Uuid,
+        content: EventContent,
+    ) -> Self {
         Self {
             id: Uuid::new_v4(),
             org_id,
@@ -76,7 +81,7 @@ impl Event {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum RelationType {
-    Next,         // Temporal sequence
+    Next, // Temporal sequence
     RelatedTo,
     Contradicts,
     Supports,
@@ -123,13 +128,80 @@ impl RelationType {
     }
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryDomain {
+    Agent,
+    #[default]
+    User,
+    App,
+    Organization,
+}
+
+impl MemoryDomain {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MemoryDomain::Agent => "agent",
+            MemoryDomain::User => "user",
+            MemoryDomain::App => "app",
+            MemoryDomain::Organization => "organization",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum EdgeKind {
+    #[default]
+    Native,
+    Projected,
+    Derived,
+}
+
+impl EdgeKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            EdgeKind::Native => "native",
+            EdgeKind::Projected => "projected",
+            EdgeKind::Derived => "derived",
+        }
+    }
+
+    pub fn from_str(value: &str) -> Self {
+        match value {
+            "projected" => EdgeKind::Projected,
+            "derived" => EdgeKind::Derived,
+            _ => EdgeKind::Native,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShareTarget {
+    App,
+    Organization,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SharePolicy {
+    #[serde(default)]
+    pub contribute: bool,
+    #[serde(default)]
+    pub consume: bool,
+    #[serde(default)]
+    pub include_history: bool,
+    #[serde(default)]
+    pub targets: Vec<ShareTarget>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TaskStatus {
     Pending,
     InProgress,
     Blocked(String), // Reason for being blocked
     Completed,
-    Failed(String),  // Reason for failure
+    Failed(String), // Reason for failure
     Cancelled,
 }
 
@@ -141,18 +213,18 @@ pub struct L3Task {
     pub agent_id: Option<String>,
     pub app_id: String,
     pub parent_id: Option<Uuid>, // Hierarchy support
-    
+
     pub title: String,
     pub description: String,
     pub status: TaskStatus,
     pub progress: f32, // 0.0 - 1.0
-    
+
     pub dependencies: Vec<Uuid>, // Pre-requisites
     pub context_refs: Vec<Uuid>, // Links to L1/L2 MemoryUnit IDs
-    
+
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result_summary: Option<String>,
 }
@@ -197,19 +269,58 @@ pub struct TaskMetadata {
 pub struct GraphEdge {
     pub source_id: Uuid,
     pub target_id: Uuid,
-    #[serde(default = "default_legacy_id")]
     pub user_id: String,
+    pub namespace_key: String,
+    pub source_namespace_key: String,
+    pub target_namespace_key: String,
+    pub edge_kind: EdgeKind,
     pub relation: RelationType,
     pub weight: f32,
     pub transaction_time: DateTime<Utc>,
 }
 
 impl GraphEdge {
-    pub fn new(user_id: String, source: Uuid, target: Uuid, relation: RelationType, weight: f32) -> Self {
+    pub fn new(
+        user_id: String,
+        source: Uuid,
+        target: Uuid,
+        relation: RelationType,
+        weight: f32,
+    ) -> Self {
+        let namespace_key =
+            MemoryUnit::build_namespace_key(&MemoryDomain::User, None, Some(&user_id), None, None);
+        Self::new_scoped(
+            user_id,
+            source,
+            target,
+            relation,
+            weight,
+            namespace_key,
+            None,
+            None,
+            EdgeKind::Native,
+        )
+    }
+
+    pub fn new_scoped(
+        user_id: String,
+        source: Uuid,
+        target: Uuid,
+        relation: RelationType,
+        weight: f32,
+        namespace_key: String,
+        source_namespace_key: Option<String>,
+        target_namespace_key: Option<String>,
+        edge_kind: EdgeKind,
+    ) -> Self {
         Self {
             source_id: source,
             target_id: target,
             user_id,
+            namespace_key: namespace_key.clone(),
+            source_namespace_key: source_namespace_key.unwrap_or_else(|| namespace_key.clone()),
+            target_namespace_key: target_namespace_key.unwrap_or(namespace_key.clone()),
+            edge_kind,
             relation,
             weight,
             transaction_time: Utc::now(),
@@ -255,28 +366,34 @@ pub struct MemoryUnit {
     pub app_id: String,
     pub stream_id: Uuid,
     pub memory_type: MemoryType,
-    
+    pub domain: MemoryDomain,
+    pub namespace_key: String,
+    #[serde(default)]
+    pub share_policy: SharePolicy,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub projected_from: Vec<Uuid>,
+
     /// Semantic content (compressed/summarized text)
     pub content: String,
-    
+
     /// Vector embedding for retrieval
     #[serde(skip_serializing_if = "Option::is_none")]
     pub embedding: Option<Vec<f32>>,
-    
+
     /// Keywords for text indexing
     pub keywords: Vec<String>,
-    
+
     /// Importance score (0.0 - 1.0) for forgetting mechanism
     pub importance: f32,
-    
+
     /// Memory level (1: L1 Consolidated, 2: L2 Insight, etc.)
     pub level: u8,
-    
+
     pub transaction_time: DateTime<Utc>,
     pub valid_time: Option<DateTime<Utc>>,
     pub last_accessed_at: DateTime<Utc>,
     pub access_count: u64,
-    
+
     /// Links to source Events or other MemoryUnits (Graph edges)
     pub references: Vec<Uuid>,
 
@@ -292,15 +409,47 @@ pub struct MemoryUnit {
 impl MemoryUnit {
     pub fn new(
         org_id: Option<String>,
-        user_id: String, 
+        user_id: String,
         agent_id: Option<String>,
-        app_id: String, 
-        stream_id: Uuid, 
+        app_id: String,
+        stream_id: Uuid,
         memory_type: MemoryType,
-        content: String, 
-        embedding: Option<Vec<f32>>
+        content: String,
+        embedding: Option<Vec<f32>>,
+    ) -> Self {
+        let domain = Self::infer_domain(agent_id.as_deref(), &memory_type);
+        Self::new_with_domain(
+            org_id,
+            user_id,
+            agent_id,
+            app_id,
+            stream_id,
+            memory_type,
+            domain,
+            content,
+            embedding,
+        )
+    }
+
+    pub fn new_with_domain(
+        org_id: Option<String>,
+        user_id: String,
+        agent_id: Option<String>,
+        app_id: String,
+        stream_id: Uuid,
+        memory_type: MemoryType,
+        domain: MemoryDomain,
+        content: String,
+        embedding: Option<Vec<f32>>,
     ) -> Self {
         let now = Utc::now();
+        let namespace_key = Self::build_namespace_key(
+            &domain,
+            org_id.as_deref(),
+            Some(&user_id),
+            Some(&app_id),
+            agent_id.as_deref(),
+        );
         Self {
             id: Uuid::new_v4(),
             org_id,
@@ -309,6 +458,10 @@ impl MemoryUnit {
             app_id,
             stream_id,
             memory_type,
+            domain,
+            namespace_key,
+            share_policy: SharePolicy::default(),
+            projected_from: Vec::new(),
             content,
             embedding,
             keywords: Vec::new(),
@@ -323,6 +476,39 @@ impl MemoryUnit {
             task_metadata: None,
         }
     }
+
+    pub fn infer_domain(agent_id: Option<&str>, memory_type: &MemoryType) -> MemoryDomain {
+        if matches!(memory_type, MemoryType::Procedural) && agent_id.is_some() {
+            MemoryDomain::Agent
+        } else {
+            MemoryDomain::User
+        }
+    }
+
+    pub fn build_namespace_key(
+        domain: &MemoryDomain,
+        org_id: Option<&str>,
+        user_id: Option<&str>,
+        app_id: Option<&str>,
+        agent_id: Option<&str>,
+    ) -> String {
+        match domain {
+            MemoryDomain::Agent => format!(
+                "agent:{}:{}:{}",
+                user_id.unwrap_or("_anonymous"),
+                app_id.unwrap_or("_app"),
+                agent_id.unwrap_or("_agent")
+            ),
+            MemoryDomain::User => format!("user:{}", user_id.unwrap_or("_anonymous")),
+            MemoryDomain::App => match org_id {
+                Some(org_id) => format!("app:{org_id}:{}", app_id.unwrap_or("_app")),
+                None => format!("app:{}", app_id.unwrap_or("_app")),
+            },
+            MemoryDomain::Organization => {
+                format!("org:{}", org_id.unwrap_or("_global"))
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -333,7 +519,14 @@ mod tests {
     fn test_event_serialization() {
         let stream_id = Uuid::new_v4();
         let content = EventContent::Text("Hello World".to_string());
-        let event = Event::new(None, "user1".into(), None, "app1".into(), stream_id, content);
+        let event = Event::new(
+            None,
+            "user1".into(),
+            None,
+            "app1".into(),
+            stream_id,
+            content,
+        );
 
         let json = serde_json::to_string(&event).expect("Failed to serialize");
         let deserialized: Event = serde_json::from_str(&json).expect("Failed to deserialize");
@@ -348,14 +541,47 @@ mod tests {
     fn test_bitemporal_fields() {
         let now = Utc::now();
         let valid_time = now - chrono::Duration::days(7);
-        
-        let mut unit = MemoryUnit::new(None, "u1".into(), None, "a1".into(), Uuid::new_v4(), MemoryType::Factual, "text".into(), None);
+
+        let mut unit = MemoryUnit::new(
+            None,
+            "u1".into(),
+            None,
+            "a1".into(),
+            Uuid::new_v4(),
+            MemoryType::Factual,
+            "text".into(),
+            None,
+        );
         unit.valid_time = Some(valid_time);
-        
+
         assert_eq!(unit.valid_time, Some(valid_time));
 
-        let mut event = Event::new(None, "u1".into(), None, "a1".into(), Uuid::new_v4(), EventContent::Text("test".into()));
+        let mut event = Event::new(
+            None,
+            "u1".into(),
+            None,
+            "a1".into(),
+            Uuid::new_v4(),
+            EventContent::Text("test".into()),
+        );
         event.valid_time = Some(valid_time);
         assert_eq!(event.valid_time, Some(valid_time));
+    }
+
+    #[test]
+    fn test_memory_unit_new_infers_agent_domain() {
+        let unit = MemoryUnit::new(
+            None,
+            "u1".into(),
+            Some("agent1".into()),
+            "a1".into(),
+            Uuid::new_v4(),
+            MemoryType::Procedural,
+            "tool trace".into(),
+            None,
+        );
+
+        assert_eq!(unit.domain, MemoryDomain::Agent);
+        assert_eq!(unit.namespace_key, "agent:u1:a1:agent1");
     }
 }

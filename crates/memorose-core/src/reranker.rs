@@ -1,14 +1,24 @@
-use anyhow::{Result, anyhow};
-use memorose_common::MemoryUnit;
 use crate::storage::kv::KvStore;
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use memorose_common::MemoryUnit;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 #[async_trait]
 pub trait Reranker: Send + Sync {
-    async fn rerank(&self, query: &str, store: &KvStore, candidates: Vec<(MemoryUnit, f32)>) -> Result<Vec<(MemoryUnit, f32)>>;
-    async fn apply_feedback(&self, store: &KvStore, cited_ids: Vec<String>, retrieved_ids: Vec<String>) -> Result<()>;
+    async fn rerank(
+        &self,
+        query: &str,
+        store: &KvStore,
+        candidates: Vec<(MemoryUnit, f32)>,
+    ) -> Result<Vec<(MemoryUnit, f32)>>;
+    async fn apply_feedback(
+        &self,
+        store: &KvStore,
+        cited_ids: Vec<String>,
+        retrieved_ids: Vec<String>,
+    ) -> Result<()>;
 }
 
 #[derive(Clone)]
@@ -22,7 +32,7 @@ impl WeightedReranker {
     async fn get_weights(&self, store: &KvStore) -> Result<RerankerWeights> {
         let key = b"reranker:weights";
         let val = store.get(key)?;
-        
+
         match val {
             Some(bytes) => Ok(serde_json::from_slice(&bytes)?),
             None => Ok(RerankerWeights::default()),
@@ -38,7 +48,9 @@ impl WeightedReranker {
 
     fn calculate_recency(&self, unit: &MemoryUnit) -> f32 {
         let now = chrono::Utc::now();
-        let age_secs = now.signed_duration_since(unit.transaction_time).num_seconds() as f32;
+        let age_secs = now
+            .signed_duration_since(unit.transaction_time)
+            .num_seconds() as f32;
         let half_life = 7.0 * 24.0 * 3600.0;
         (0.5f32).powf(age_secs / half_life)
     }
@@ -46,7 +58,12 @@ impl WeightedReranker {
 
 #[async_trait]
 impl Reranker for WeightedReranker {
-    async fn rerank(&self, _query: &str, store: &KvStore, candidates: Vec<(MemoryUnit, f32)>) -> Result<Vec<(MemoryUnit, f32)>> {
+    async fn rerank(
+        &self,
+        _query: &str,
+        store: &KvStore,
+        candidates: Vec<(MemoryUnit, f32)>,
+    ) -> Result<Vec<(MemoryUnit, f32)>> {
         if candidates.is_empty() {
             return Ok(Vec::new());
         }
@@ -56,10 +73,10 @@ impl Reranker for WeightedReranker {
         let mut reranked = Vec::new();
         for (unit, sim_score) in candidates {
             let recency = self.calculate_recency(&unit);
-            let final_score = sim_score * weights.similarity_weight 
+            let final_score = sim_score * weights.similarity_weight
                 + unit.importance * weights.importance_weight
                 + recency * weights.recency_weight;
-                
+
             reranked.push((unit, final_score));
         }
 
@@ -68,14 +85,19 @@ impl Reranker for WeightedReranker {
         Ok(reranked)
     }
 
-    async fn apply_feedback(&self, store: &KvStore, cited_ids: Vec<String>, retrieved_ids: Vec<String>) -> Result<()> {
+    async fn apply_feedback(
+        &self,
+        store: &KvStore,
+        cited_ids: Vec<String>,
+        retrieved_ids: Vec<String>,
+    ) -> Result<()> {
         let mut weights = self.get_weights(store).await?;
 
         for id in retrieved_ids {
             let is_cited = cited_ids.contains(&id);
             let reward = if is_cited { 1.0 } else { -1.0 };
             let learning_rate = 0.01;
-            
+
             if is_cited {
                 weights.similarity_weight += learning_rate * reward;
             } else {
@@ -143,40 +165,48 @@ impl HttpReranker {
     pub fn new(endpoint: String) -> Self {
         Self {
             endpoint,
-            client: Client::builder().timeout(std::time::Duration::from_secs(10)).build().unwrap_or_default(),
+            client: Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap_or_default(),
         }
     }
 }
 
 #[async_trait]
 impl Reranker for HttpReranker {
-    async fn rerank(&self, query: &str, _store: &KvStore, candidates: Vec<(MemoryUnit, f32)>) -> Result<Vec<(MemoryUnit, f32)>> {
+    async fn rerank(
+        &self,
+        query: &str,
+        _store: &KvStore,
+        candidates: Vec<(MemoryUnit, f32)>,
+    ) -> Result<Vec<(MemoryUnit, f32)>> {
         if candidates.is_empty() {
             return Ok(Vec::new());
         }
 
-        let http_candidates: Vec<HttpCandidate> = candidates.iter().map(|(u, s)| HttpCandidate {
-            id: u.id.to_string(),
-            text: u.content.clone(),
-            base_score: *s,
-        }).collect();
+        let http_candidates: Vec<HttpCandidate> = candidates
+            .iter()
+            .map(|(u, s)| HttpCandidate {
+                id: u.id.to_string(),
+                text: u.content.clone(),
+                base_score: *s,
+            })
+            .collect();
 
         let req = HttpRerankRequest {
             query: query.to_string(),
             candidates: http_candidates,
         };
 
-        let res = self.client.post(&self.endpoint)
-            .json(&req)
-            .send()
-            .await?;
+        let res = self.client.post(&self.endpoint).json(&req).send().await?;
 
         if !res.status().is_success() {
             return Err(anyhow!("HTTP Reranker failed with status {}", res.status()));
         }
 
         let resp_data: HttpRerankResponse = res.json().await?;
-        
+
         let mut score_map = std::collections::HashMap::new();
         for r in resp_data.results {
             score_map.insert(r.id, r.score);
@@ -193,7 +223,12 @@ impl Reranker for HttpReranker {
         Ok(reranked)
     }
 
-    async fn apply_feedback(&self, _store: &KvStore, _cited_ids: Vec<String>, _retrieved_ids: Vec<String>) -> Result<()> {
+    async fn apply_feedback(
+        &self,
+        _store: &KvStore,
+        _cited_ids: Vec<String>,
+        _retrieved_ids: Vec<String>,
+    ) -> Result<()> {
         // We could send a feedback webhook here if the external reranker supports online learning.
         // For now, no-op.
         Ok(())

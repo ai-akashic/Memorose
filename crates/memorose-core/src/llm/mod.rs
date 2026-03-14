@@ -6,9 +6,9 @@ pub use openai::OpenAIClient;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use memorose_common::config::{LLMConfig, LLMProvider};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use memorose_common::config::{LLMConfig, LLMProvider};
 
 /// Represents embedding input that can be text or multimodal content.
 #[derive(Debug, Clone)]
@@ -29,12 +29,14 @@ impl EmbedInput {
     pub fn as_text(&self) -> String {
         match self {
             EmbedInput::Text(t) => t.clone(),
-            EmbedInput::Multimodal { parts } => {
-                parts.iter().filter_map(|p| match p {
+            EmbedInput::Multimodal { parts } => parts
+                .iter()
+                .filter_map(|p| match p {
                     EmbedPart::Text(t) => Some(t.clone()),
                     _ => None,
-                }).collect::<Vec<_>>().join(" ")
-            }
+                })
+                .collect::<Vec<_>>()
+                .join(" "),
         }
     }
 
@@ -42,7 +44,9 @@ impl EmbedInput {
     pub fn has_multimodal_parts(&self) -> bool {
         match self {
             EmbedInput::Text(_) => false,
-            EmbedInput::Multimodal { parts } => parts.iter().any(|p| matches!(p, EmbedPart::InlineData { .. })),
+            EmbedInput::Multimodal { parts } => parts
+                .iter()
+                .any(|p| matches!(p, EmbedPart::InlineData { .. })),
         }
     }
 }
@@ -55,7 +59,9 @@ pub fn create_llm_client(config: &LLMConfig) -> Option<Arc<dyn LLMClient>> {
                 api_key,
                 config.model.clone(),
                 config.embedding_model.clone(),
-                config.get_base_url().unwrap_or_else(|| "https://generativelanguage.googleapis.com".to_string()),
+                config
+                    .get_base_url()
+                    .unwrap_or_else(|| "https://generativelanguage.googleapis.com".to_string()),
                 config.embedding_output_dim,
                 config.embedding_task_type.clone(),
             )))
@@ -101,7 +107,10 @@ pub trait LLMClient: Send + Sync {
             total_usage.completion_tokens += res.usage.completion_tokens;
             total_usage.total_tokens += res.usage.total_tokens;
         }
-        Ok(LLMResponse { data: results, usage: total_usage })
+        Ok(LLMResponse {
+            data: results,
+            usage: total_usage,
+        })
     }
 
     /// Embed a single input that may be text or multimodal content.
@@ -112,7 +121,10 @@ pub trait LLMClient: Send + Sync {
 
     /// Batch embed multiple inputs that may be text or multimodal.
     /// Default implementation extracts text and calls embed_batch().
-    async fn embed_content_batch(&self, inputs: Vec<EmbedInput>) -> Result<LLMResponse<Vec<Vec<f32>>>> {
+    async fn embed_content_batch(
+        &self,
+        inputs: Vec<EmbedInput>,
+    ) -> Result<LLMResponse<Vec<Vec<f32>>>> {
         let texts: Vec<String> = inputs.iter().map(|i| i.as_text()).collect();
         self.embed_batch(texts).await
     }

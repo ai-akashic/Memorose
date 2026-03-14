@@ -1,8 +1,8 @@
+use memorose_common::Event;
 use openraft::BasicNode;
 use serde::{Deserialize, Serialize};
-use std::io::Cursor;
-use memorose_common::Event;
 use std::fmt;
+use std::io::Cursor;
 
 /// The application data request type which the `Raft` node can receive.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -22,7 +22,9 @@ pub struct ClientResponse {
 }
 
 /// The implementation of the `RaftTypeConfig` trait for Memorose.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, PartialOrd, Ord, Serialize, Deserialize, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, PartialOrd, Ord, Serialize, Deserialize, Hash,
+)]
 pub struct MemoroseTypeConfig;
 
 impl fmt::Display for MemoroseTypeConfig {

@@ -2,9 +2,9 @@
 
 import { useState, useCallback, useEffect, useMemo } from "react";
 import dynamic from "next/dynamic";
-import { useMemories, useGraph, useAgents, useTaskTree } from "@/lib/hooks";
-import { useUserFilter } from "../layout";
+import { useAgents, useGraph, useMemories, useStoredString, useTaskTree } from "@/lib/hooks";
 import { api } from "@/lib/api";
+import { useOrgScope } from "@/lib/org-scope";
 import { truncate } from "@/lib/utils";
 import type { MemoryUnit, SearchResult } from "@/lib/types";
 import { TaskTreeViewer } from "@/components/TaskTreeViewer";
@@ -155,8 +155,8 @@ const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), {
   ),
 });
 
-function KnowledgeGraph({ userId }: { userId?: string }) {
-  const { data, isLoading } = useGraph(200, userId);
+function KnowledgeGraph({ userId, orgId }: { userId?: string; orgId?: string }) {
+  const { data, isLoading } = useGraph(200, userId, orgId);
 
   const graphData = useMemo(() => {
     if (!data) return { nodes: [], links: [] };
@@ -275,7 +275,13 @@ function KnowledgeGraph({ userId }: { userId?: string }) {
   );
 }
 
-function SearchPlayground({ globalUserId }: { globalUserId?: string }) {
+function SearchPlayground({
+  globalUserId,
+  orgId,
+}: {
+  globalUserId?: string;
+  orgId?: string;
+}) {
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState("hybrid");
   const [searchUserId, setSearchUserId] = useState(globalUserId || "");
@@ -283,6 +289,7 @@ function SearchPlayground({ globalUserId }: { globalUserId?: string }) {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [queryTime, setQueryTime] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   useEffect(() => {
     setSearchUserId(globalUserId || "");
@@ -291,19 +298,30 @@ function SearchPlayground({ globalUserId }: { globalUserId?: string }) {
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault();
     if (!query.trim()) return;
+    if (!searchUserId.trim()) {
+      setSearchError("Search requires a user_id because shared retrieval depends on that user's share policy.");
+      setResults([]);
+      setQueryTime(null);
+      return;
+    }
+
     setLoading(true);
+    setSearchError(null);
     try {
       const res = await api.search({
         query,
         mode,
         limit: 10,
-        user_id: searchUserId || undefined,
+        user_id: searchUserId.trim(),
         app_id: appId || undefined,
+        org_id: orgId || undefined,
       });
       setResults(res.results);
       setQueryTime(res.query_time_ms);
-    } catch {
+    } catch (error) {
       setResults([]);
+      setQueryTime(null);
+      setSearchError(error instanceof Error ? error.message : "Search failed");
     } finally {
       setLoading(false);
     }
@@ -342,7 +360,7 @@ function SearchPlayground({ globalUserId }: { globalUserId?: string }) {
             type="text"
             value={searchUserId}
             onChange={(e) => setSearchUserId(e.target.value)}
-            placeholder="user_id (optional)"
+            placeholder="user_id (required)"
             className="flex-1 h-8 font-mono bg-card border-border focus:border-primary/40 text-[11px] font-medium uppercase tracking-widest text-muted-foreground"
           />
           <Input
@@ -353,6 +371,11 @@ function SearchPlayground({ globalUserId }: { globalUserId?: string }) {
             className="flex-1 h-8 font-mono bg-card border-border focus:border-primary/40 text-[11px] font-medium uppercase tracking-widest text-muted-foreground"
           />
         </div>
+        {searchError && (
+          <p className="text-[11px] font-medium uppercase tracking-widest text-destructive">
+            {searchError}
+          </p>
+        )}
       </form>
 
       {queryTime !== null && (
@@ -423,7 +446,7 @@ function MemoryContent({ content }: { content: string }) {
   );
 }
 
-function MemoryListTab({ userId }: { userId?: string }) {
+function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
   const [levelFilter, setLevelFilter] = useState<string>("all");
   const [agentId, setAgentId] = useState<string>("all");
   const [page, setPage] = useState(1);
@@ -439,6 +462,7 @@ function MemoryListTab({ userId }: { userId?: string }) {
     page,
     limit: 20,
     sort,
+    org_id: orgId,
     user_id: userId,
     agent_id: parsedAgentId,
   });
@@ -633,7 +657,7 @@ function TasksTab({ userId }: { userId?: string }) {
   if (!userId || userId === "all") {
     return (
       <div className="flex flex-col items-center justify-center p-8 text-center text-muted-foreground border rounded-lg bg-muted/5 border-dashed mt-4">
-        <p>Please select a specific user from the top navigation to view their task trees.</p>
+        <p>Please set a specific user scope above to view task trees.</p>
       </div>
     );
   }
@@ -649,16 +673,40 @@ function TasksTab({ userId }: { userId?: string }) {
 }
 
 export default function MemoriesPage() {
-  const { userId } = useUserFilter();
+  const [userIdInput, setUserIdInput] = useStoredString("memorose-dashboard-memories-user");
+  const { orgId } = useOrgScope();
+  const userId = userIdInput.trim();
+  const scopedOrgId = orgId.trim();
 
   return (
     <div className="space-y-6 h-full flex flex-col relative">
       <div className="absolute top-0 right-0 w-[500px] h-[250px] blob-bg opacity-20 pointer-events-none -z-10 mix-blend-screen" />
-      <div className="flex items-center gap-3">
-        <div className="w-1 h-6 bg-primary/40 rounded-full" />
-        <h1 className="text-sm font-bold tracking-[0.3em] uppercase text-muted-foreground/60">
-          Explorer
-        </h1>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-1 h-6 bg-primary/40 rounded-full" />
+          <div>
+            <h1 className="text-sm font-bold tracking-[0.3em] uppercase text-muted-foreground/60">
+              Explorer
+            </h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Use a page-local user scope for list, graph, search, and task exploration.
+            </p>
+            {scopedOrgId && (
+              <p className="mt-1 text-xs font-mono text-muted-foreground">
+                org scope: {scopedOrgId}
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="flex w-full max-w-xl flex-col gap-2 sm:flex-row sm:items-center">
+          <Input
+            value={userIdInput}
+            onChange={(e) => setUserIdInput(e.target.value)}
+            placeholder="Set explorer user_id"
+            className="h-10 font-mono bg-card border-border"
+          />
+        </div>
       </div>
 
       <Tabs defaultValue="list" className="flex-1 flex flex-col min-h-0">
@@ -678,13 +726,13 @@ export default function MemoriesPage() {
         </TabsList>
 
         <TabsContent value="list" className="flex-1 mt-4">
-          <MemoryListTab userId={userId || undefined} />
+          <MemoryListTab userId={userId || undefined} orgId={scopedOrgId || undefined} />
         </TabsContent>
         <TabsContent value="graph" className="flex-1 mt-4">
-          <KnowledgeGraph userId={userId || undefined} />
+          <KnowledgeGraph userId={userId || undefined} orgId={scopedOrgId || undefined} />
         </TabsContent>
         <TabsContent value="search" className="flex-1 mt-4">
-          <SearchPlayground globalUserId={userId || undefined} />
+          <SearchPlayground globalUserId={userId || undefined} orgId={scopedOrgId || undefined} />
         </TabsContent>
         <TabsContent value="tasks" className="flex-1 mt-0">
           <TasksTab userId={userId || undefined} />

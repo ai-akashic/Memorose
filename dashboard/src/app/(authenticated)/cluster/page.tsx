@@ -1,11 +1,11 @@
 "use client";
 
 import { useClusterStatus, useStats, usePendingCount } from "@/lib/hooks";
-import { useUserFilter } from "../layout";
 import { isShardedCluster } from "@/lib/types";
 import type { ClusterStatusSingle, ClusterStatusSharded, ShardStatus } from "@/lib/types";
 import { formatNumber, formatDuration } from "@/lib/utils";
 import { api } from "@/lib/api";
+import { useOrgScope } from "@/lib/org-scope";
 import {
   Activity,
   Database,
@@ -362,9 +362,10 @@ function ShardedTopology({ cluster }: { cluster: ClusterStatusSharded }) {
 
 
 export default function ClusterPage() {
-  const { userId } = useUserFilter();
+  const { orgId } = useOrgScope();
+  const scopedOrgId = orgId.trim();
   const { data: cluster, isLoading: clusterLoading, mutate: mutateCluster } = useClusterStatus();
-  const { data: stats, isLoading: statsLoading } = useStats(userId || undefined);
+  const { data: stats, isLoading: statsLoading } = useStats(undefined, scopedOrgId || undefined);
   const { data: pendingData } = usePendingCount();
 
   async function handleRemoveNode(nodeId: number) {
@@ -406,6 +407,11 @@ export default function ClusterPage() {
           <h1 className="text-3xl font-bold tracking-tight">
             Cluster Overview
           </h1>
+          {scopedOrgId && (
+            <p className="mt-2 font-mono text-xs text-muted-foreground">
+              Memory counters scoped to org: {scopedOrgId}
+            </p>
+          )}
           {sharded && (
             <p className="text-muted-foreground mt-2">
               Managing {(cluster as ClusterStatusSharded).shard_count} shards across distributed nodes

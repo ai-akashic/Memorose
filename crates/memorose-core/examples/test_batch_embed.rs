@@ -3,8 +3,9 @@ use memorose_core::{GeminiClient, LLMClient};
 
 #[tokio::main]
 async fn main() {
-    let api_key = std::env::var("GOOGLE_API_KEY")
-        .expect("GOOGLE_API_KEY not set. Run with: GOOGLE_API_KEY=... cargo run --example test_batch_embed");
+    let api_key = std::env::var("GOOGLE_API_KEY").expect(
+        "GOOGLE_API_KEY not set. Run with: GOOGLE_API_KEY=... cargo run --example test_batch_embed",
+    );
     let client = GeminiClient::new(
         api_key,
         "gemini-3.1-flash-lite-preview".to_string(),
@@ -36,7 +37,10 @@ async fn main() {
             println!("   - Time: {:?}", batch_time);
             println!("   - Count: {} embeddings", embeddings.len());
             println!("   - Dimensions: {}", embeddings[0].len());
-            println!("   - First embedding (first 5 values): {:?}\n", &embeddings[0][..5]);
+            println!(
+                "   - First embedding (first 5 values): {:?}\n",
+                &embeddings[0][..5]
+            );
         }
         Err(e) => {
             println!("❌ Batch embedding failed: {}", e);

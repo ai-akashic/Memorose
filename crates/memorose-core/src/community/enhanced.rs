@@ -10,12 +10,12 @@
 // - 增量式更新
 // - 模块度评估
 
-use std::collections::{HashMap, HashSet};
-use uuid::Uuid;
+use anyhow::Result;
 use memorose_common::GraphEdge;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-use anyhow::Result;
+use std::collections::{HashMap, HashSet};
+use uuid::Uuid;
 
 /// 社区检测算法类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,7 +34,7 @@ pub struct DetectionConfig {
     pub algorithm: Algorithm,
     pub max_iterations: usize,
     pub min_community_size: usize,
-    pub resolution: f32,  // Louvain 的分辨率参数
+    pub resolution: f32, // Louvain 的分辨率参数
 }
 
 impl Default for DetectionConfig {
@@ -92,7 +92,11 @@ impl EnhancedCommunityDetector {
     }
 
     /// 标签传播算法（支持加权）
-    fn label_propagation(&self, edges: &[GraphEdge], weighted: bool) -> Result<HashMap<Uuid, Uuid>> {
+    fn label_propagation(
+        &self,
+        edges: &[GraphEdge],
+        weighted: bool,
+    ) -> Result<HashMap<Uuid, Uuid>> {
         let mut communities: HashMap<Uuid, Uuid> = HashMap::new();
         let mut adjacency: HashMap<Uuid, Vec<(Uuid, f32)>> = HashMap::new();
         let mut all_nodes: HashSet<Uuid> = HashSet::new();
@@ -100,8 +104,14 @@ impl EnhancedCommunityDetector {
         // 构建邻接表
         for edge in edges {
             let weight = if weighted { edge.weight } else { 1.0 };
-            adjacency.entry(edge.source_id).or_default().push((edge.target_id, weight));
-            adjacency.entry(edge.target_id).or_default().push((edge.source_id, weight));
+            adjacency
+                .entry(edge.source_id)
+                .or_default()
+                .push((edge.target_id, weight));
+            adjacency
+                .entry(edge.target_id)
+                .or_default()
+                .push((edge.source_id, weight));
             all_nodes.insert(edge.source_id);
             all_nodes.insert(edge.target_id);
         }
@@ -129,8 +139,10 @@ impl EnhancedCommunityDetector {
                     }
 
                     // 找到权重最大的标签
-                    if let Some((best_label, _)) = label_weights.iter()
-                        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap()) {
+                    if let Some((best_label, _)) = label_weights
+                        .iter()
+                        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                    {
                         if let Some(current_label) = communities.get(&node) {
                             if current_label != best_label {
                                 communities.insert(node, *best_label);
@@ -228,9 +240,9 @@ struct LouvainGraph {
     nodes: Vec<Uuid>,
     #[allow(dead_code)]
     node_to_idx: HashMap<Uuid, usize>,
-    communities: Vec<usize>,  // 每个节点的社区 ID
-    edges: Vec<(usize, usize, f32)>,  // (source_idx, target_idx, weight)
-    degrees: Vec<f64>,  // 每个节点的度
+    communities: Vec<usize>,         // 每个节点的社区 ID
+    edges: Vec<(usize, usize, f32)>, // (source_idx, target_idx, weight)
+    degrees: Vec<f64>,               // 每个节点的度
     total_weight: f64,
 }
 
@@ -243,7 +255,8 @@ impl LouvainGraph {
         }
 
         let nodes: Vec<Uuid> = nodes_set.into_iter().collect();
-        let node_to_idx: HashMap<Uuid, usize> = nodes.iter()
+        let node_to_idx: HashMap<Uuid, usize> = nodes
+            .iter()
             .enumerate()
             .map(|(idx, &node)| (node, idx))
             .collect();
@@ -319,11 +332,20 @@ impl LouvainGraph {
         improved
     }
 
-    fn modularity_gain(&self, node_idx: usize, target_comm: usize, edge_weight: f64, m2: f64, resolution: f32) -> f64 {
+    fn modularity_gain(
+        &self,
+        node_idx: usize,
+        target_comm: usize,
+        edge_weight: f64,
+        m2: f64,
+        resolution: f32,
+    ) -> f64 {
         let node_degree = self.degrees[node_idx];
 
         // 计算目标社区的总度
-        let comm_degree: f64 = self.communities.iter()
+        let comm_degree: f64 = self
+            .communities
+            .iter()
             .enumerate()
             .filter(|(_, &c)| c == target_comm)
             .map(|(idx, _)| self.degrees[idx])
@@ -354,13 +376,15 @@ impl LouvainGraph {
 
         // 创建新的节点列表（每个社区一个节点）
         let new_nodes: Vec<Uuid> = comm_list.iter().map(|_| Uuid::new_v4()).collect();
-        let new_node_to_idx: HashMap<Uuid, usize> = new_nodes.iter()
+        let new_node_to_idx: HashMap<Uuid, usize> = new_nodes
+            .iter()
             .enumerate()
             .map(|(idx, &node)| (node, idx))
             .collect();
 
         // 映射：旧社区 ID -> 新节点索引
-        let comm_to_new_idx: HashMap<usize, usize> = comm_list.iter()
+        let comm_to_new_idx: HashMap<usize, usize> = comm_list
+            .iter()
             .enumerate()
             .map(|(idx, &comm)| (comm, idx))
             .collect();
@@ -373,12 +397,16 @@ impl LouvainGraph {
             let new_src = comm_to_new_idx[&src_comm];
             let new_tgt = comm_to_new_idx[&tgt_comm];
 
-            if new_src != new_tgt {  // 忽略自环
-                *edge_weights.entry((new_src.min(new_tgt), new_src.max(new_tgt))).or_default() += weight;
+            if new_src != new_tgt {
+                // 忽略自环
+                *edge_weights
+                    .entry((new_src.min(new_tgt), new_src.max(new_tgt)))
+                    .or_default() += weight;
             }
         }
 
-        let new_edges: Vec<(usize, usize, f32)> = edge_weights.into_iter()
+        let new_edges: Vec<(usize, usize, f32)> = edge_weights
+            .into_iter()
             .map(|((src, tgt), weight)| (src, tgt, weight))
             .collect();
 
@@ -429,8 +457,20 @@ mod tests {
     #[test]
     fn test_weighted_lpa() {
         let edges = vec![
-            GraphEdge::new("user1".to_string(), Uuid::new_v4(), Uuid::new_v4(), RelationType::RelatedTo, 0.9),
-            GraphEdge::new("user1".to_string(), Uuid::new_v4(), Uuid::new_v4(), RelationType::RelatedTo, 0.1),
+            GraphEdge::new(
+                "user1".to_string(),
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                RelationType::RelatedTo,
+                0.9,
+            ),
+            GraphEdge::new(
+                "user1".to_string(),
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                RelationType::RelatedTo,
+                0.1,
+            ),
         ];
 
         let config = DetectionConfig {
@@ -452,9 +492,27 @@ mod tests {
         let node_d = Uuid::new_v4();
 
         let edges = vec![
-            GraphEdge::new("user1".to_string(), node_a, node_b, RelationType::RelatedTo, 0.9),
-            GraphEdge::new("user1".to_string(), node_b, node_c, RelationType::RelatedTo, 0.8),
-            GraphEdge::new("user1".to_string(), node_c, node_d, RelationType::RelatedTo, 0.1),
+            GraphEdge::new(
+                "user1".to_string(),
+                node_a,
+                node_b,
+                RelationType::RelatedTo,
+                0.9,
+            ),
+            GraphEdge::new(
+                "user1".to_string(),
+                node_b,
+                node_c,
+                RelationType::RelatedTo,
+                0.8,
+            ),
+            GraphEdge::new(
+                "user1".to_string(),
+                node_c,
+                node_d,
+                RelationType::RelatedTo,
+                0.1,
+            ),
         ];
 
         let config = DetectionConfig {
@@ -467,7 +525,9 @@ mod tests {
         let result = detector.detect(&edges).unwrap();
 
         assert!(result.num_communities >= 1);
-        println!("Louvain found {} communities with modularity {}",
-            result.num_communities, result.modularity);
+        println!(
+            "Louvain found {} communities with modularity {}",
+            result.num_communities, result.modularity
+        );
     }
 }

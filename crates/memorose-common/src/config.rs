@@ -1,6 +1,6 @@
+use config::{Config, ConfigError, Environment, File};
 use serde::{Deserialize, Serialize};
 use std::env;
-use config::{Config, ConfigError, File, Environment};
 
 // --- Constants for Default Configuration ---
 pub const DEFAULT_STORAGE_COMMIT_INTERVAL_MS: u64 = 5000;
@@ -112,8 +112,12 @@ pub struct WorkerConfig {
     pub tick_interval_ms: u64,
 }
 
-fn default_shard_count() -> u32 { 1 }
-fn default_physical_node_id() -> u32 { 1 }
+fn default_shard_count() -> u32 {
+    1
+}
+fn default_physical_node_id() -> u32 {
+    1
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShardingConfig {
@@ -260,55 +264,110 @@ impl Default for AppConfig {
 impl AppConfig {
     pub fn load() -> Result<Self, ConfigError> {
         let node_id = env::var("NODE_ID").unwrap_or_else(|_| "1".to_string());
-        
+
         let s = Config::builder()
             // Default settings
             .set_default("storage.root_dir", format!("./data/node-{}", node_id))?
-            .set_default("storage.index_commit_interval_ms", DEFAULT_STORAGE_COMMIT_INTERVAL_MS)?
+            .set_default(
+                "storage.index_commit_interval_ms",
+                DEFAULT_STORAGE_COMMIT_INTERVAL_MS,
+            )?
             .set_default("llm.provider", "gemini")?
             .set_default("llm.model", "")?
             .set_default("llm.embedding_model", "")?
             .set_default("raft.node_id", node_id)?
             .set_default("raft.raft_addr", "127.0.0.1:5001")?
-            .set_default("raft.heartbeat_interval_ms", DEFAULT_RAFT_HEARTBEAT_INTERVAL_MS)?
-            .set_default("raft.election_timeout_min_ms", DEFAULT_RAFT_ELECTION_TIMEOUT_MIN_MS)?
-            .set_default("raft.election_timeout_max_ms", DEFAULT_RAFT_ELECTION_TIMEOUT_MAX_MS)?
+            .set_default(
+                "raft.heartbeat_interval_ms",
+                DEFAULT_RAFT_HEARTBEAT_INTERVAL_MS,
+            )?
+            .set_default(
+                "raft.election_timeout_min_ms",
+                DEFAULT_RAFT_ELECTION_TIMEOUT_MIN_MS,
+            )?
+            .set_default(
+                "raft.election_timeout_max_ms",
+                DEFAULT_RAFT_ELECTION_TIMEOUT_MAX_MS,
+            )?
             .set_default("raft.snapshot_logs", DEFAULT_RAFT_SNAPSHOT_LOGS)?
-            .set_default("worker.llm_concurrency", DEFAULT_WORKER_LLM_CONCURRENCY as i64)?
-            .set_default("worker.decay_interval_secs", DEFAULT_WORKER_DECAY_INTERVAL_SECS)?
+            .set_default(
+                "worker.llm_concurrency",
+                DEFAULT_WORKER_LLM_CONCURRENCY as i64,
+            )?
+            .set_default(
+                "worker.decay_interval_secs",
+                DEFAULT_WORKER_DECAY_INTERVAL_SECS,
+            )?
             .set_default("worker.decay_factor", DEFAULT_WORKER_DECAY_FACTOR as f64)?
-            .set_default("worker.prune_threshold", DEFAULT_WORKER_PRUNE_THRESHOLD as f64)?
-            .set_default("worker.consolidation_interval_ms", DEFAULT_WORKER_CONSOLIDATION_INTERVAL_MS)?
-            .set_default("worker.consolidation_batch_size", DEFAULT_WORKER_CONSOLIDATION_BATCH_SIZE as i64)?
-            .set_default("worker.consolidation_max_retries", DEFAULT_WORKER_CONSOLIDATION_MAX_RETRIES)?
-            .set_default("worker.compaction_interval_secs", DEFAULT_WORKER_COMPACTION_INTERVAL_SECS)?
-            .set_default("worker.community_interval_ms", DEFAULT_WORKER_COMMUNITY_INTERVAL_MS)?
-            .set_default("worker.community_min_members", DEFAULT_WORKER_COMMUNITY_MIN_MEMBERS as i64)?
-            .set_default("worker.community_max_users_per_cycle", DEFAULT_WORKER_COMMUNITY_MAX_USERS_PER_CYCLE as i64)?
-            .set_default("worker.community_max_groups_per_user", DEFAULT_WORKER_COMMUNITY_MAX_GROUPS_PER_USER as i64)?
-            .set_default("worker.community_trigger_l1_step", DEFAULT_COMMUNITY_TRIGGER_L1_STEP as i64)?
-            .set_default("worker.insight_interval_ms", DEFAULT_WORKER_INSIGHT_INTERVAL_MS)?
-            .set_default("worker.insight_recent_l1_limit", DEFAULT_WORKER_INSIGHT_RECENT_L1_LIMIT as i64)?
+            .set_default(
+                "worker.prune_threshold",
+                DEFAULT_WORKER_PRUNE_THRESHOLD as f64,
+            )?
+            .set_default(
+                "worker.consolidation_interval_ms",
+                DEFAULT_WORKER_CONSOLIDATION_INTERVAL_MS,
+            )?
+            .set_default(
+                "worker.consolidation_batch_size",
+                DEFAULT_WORKER_CONSOLIDATION_BATCH_SIZE as i64,
+            )?
+            .set_default(
+                "worker.consolidation_max_retries",
+                DEFAULT_WORKER_CONSOLIDATION_MAX_RETRIES,
+            )?
+            .set_default(
+                "worker.compaction_interval_secs",
+                DEFAULT_WORKER_COMPACTION_INTERVAL_SECS,
+            )?
+            .set_default(
+                "worker.community_interval_ms",
+                DEFAULT_WORKER_COMMUNITY_INTERVAL_MS,
+            )?
+            .set_default(
+                "worker.community_min_members",
+                DEFAULT_WORKER_COMMUNITY_MIN_MEMBERS as i64,
+            )?
+            .set_default(
+                "worker.community_max_users_per_cycle",
+                DEFAULT_WORKER_COMMUNITY_MAX_USERS_PER_CYCLE as i64,
+            )?
+            .set_default(
+                "worker.community_max_groups_per_user",
+                DEFAULT_WORKER_COMMUNITY_MAX_GROUPS_PER_USER as i64,
+            )?
+            .set_default(
+                "worker.community_trigger_l1_step",
+                DEFAULT_COMMUNITY_TRIGGER_L1_STEP as i64,
+            )?
+            .set_default(
+                "worker.insight_interval_ms",
+                DEFAULT_WORKER_INSIGHT_INTERVAL_MS,
+            )?
+            .set_default(
+                "worker.insight_recent_l1_limit",
+                DEFAULT_WORKER_INSIGHT_RECENT_L1_LIMIT as i64,
+            )?
             .set_default("worker.enable_auto_planner", true)?
             .set_default("worker.enable_task_reflection", true)?
-            .set_default("worker.auto_link_similarity_threshold", DEFAULT_AUTO_LINK_SIMILARITY_THRESHOLD as f64)?
+            .set_default(
+                "worker.auto_link_similarity_threshold",
+                DEFAULT_AUTO_LINK_SIMILARITY_THRESHOLD as f64,
+            )?
             .set_default("worker.tick_interval_ms", DEFAULT_WORKER_TICK_INTERVAL_MS)?
-
-
             // File: config.toml
             .add_source(File::with_name("config").required(false))
-            
             // Environment: MEMOROSE_LLM__PROVIDER=openai -> llm.provider=openai
             .add_source(Environment::with_prefix("MEMOROSE").separator("__"))
-            
             // Legacy ENV overrides (for backward compatibility during migration)
             .set_override_option("llm.openai_api_key", env::var("OPENAI_API_KEY").ok())?
             .set_override_option("llm.google_api_key", env::var("GOOGLE_API_KEY").ok())?
             .set_override_option("llm.model", env::var("LLM_MODEL").ok())?
             .set_override_option("llm.embedding_model", env::var("EMBEDDING_MODEL").ok())?
-            .set_override_option("raft.node_id", env::var("NODE_ID").ok().and_then(|v| v.parse::<u64>().ok()))?
+            .set_override_option(
+                "raft.node_id",
+                env::var("NODE_ID").ok().and_then(|v| v.parse::<u64>().ok()),
+            )?
             .set_override_option("raft.raft_addr", env::var("RAFT_ADDR").ok())?
-            
             .build()?;
 
         s.try_deserialize().and_then(|config: AppConfig| {
@@ -349,25 +408,31 @@ impl AppConfig {
     pub fn get_base_url(&self) -> Option<String> {
         match self.llm.provider {
             LLMProvider::OpenAI => None,
-            LLMProvider::Gemini => Some("https://generativelanguage.googleapis.com/v1beta/openai/".to_string()),
+            LLMProvider::Gemini => {
+                Some("https://generativelanguage.googleapis.com/v1beta/openai/".to_string())
+            }
         }
     }
 
     /// Returns true if sharding is enabled with more than 1 shard.
     pub fn is_sharded(&self) -> bool {
-        self.sharding.as_ref().map_or(false, |s| s.enabled && s.shard_count > 1)
+        self.sharding
+            .as_ref()
+            .map_or(false, |s| s.enabled && s.shard_count > 1)
     }
 
     /// Returns the number of shards (1 if not sharded).
     pub fn shard_count(&self) -> u32 {
-        self.sharding.as_ref()
+        self.sharding
+            .as_ref()
             .filter(|s| s.enabled)
             .map_or(1, |s| s.shard_count.max(1))
     }
 
     /// Returns the physical node ID, falling back to raft.node_id.
     pub fn physical_node_id(&self) -> u32 {
-        self.sharding.as_ref()
+        self.sharding
+            .as_ref()
             .filter(|s| s.enabled)
             .map_or(self.raft.node_id as u32, |s| s.physical_node_id)
     }

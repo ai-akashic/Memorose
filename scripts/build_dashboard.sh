@@ -4,7 +4,7 @@
 # build_dashboard.sh - Build Memorose Dashboard
 #
 # Description:
-#   Builds the Next.js dashboard and copies static files to the server directory
+#   Builds the Next.js dashboard for standalone/server runtime
 #
 # Usage:
 #   ./scripts/build_dashboard.sh [OPTIONS]
@@ -32,8 +32,6 @@ readonly NC='\033[0m' # No Color
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 readonly DASHBOARD_DIR="${ROOT_DIR}/dashboard"
-readonly STATIC_DIR="${ROOT_DIR}/crates/memorose-server/static/dashboard"
-
 # Options
 SKIP_INSTALL=false
 CLEAN_BUILD=false
@@ -112,8 +110,8 @@ build_dashboard() {
         log_info "Skipping dependency installation"
     fi
 
-    # Build static export
-    log_info "Building static export..."
+    # Build standalone Next.js app
+    log_info "Building dashboard application..."
     if pnpm build; then
         log_success "Build complete"
     else
@@ -122,46 +120,9 @@ build_dashboard() {
     fi
 
     # Verify build output
-    if [[ ! -d "out" ]]; then
-        log_error "Build output directory 'out' not found"
+    if [[ ! -f ".next/BUILD_ID" ]]; then
+        log_error "Build output '.next/BUILD_ID' not found"
         exit 1
-    fi
-}
-
-copy_static_files() {
-    log_info "Copying static files to server directory..."
-
-    # Remove old static directory
-    if [[ -d "${STATIC_DIR}" ]]; then
-        rm -rf "${STATIC_DIR}"
-    fi
-
-    # Create static directory
-    mkdir -p "${STATIC_DIR}"
-
-    # Copy build output
-    cp -r "${DASHBOARD_DIR}/out/"* "${STATIC_DIR}/"
-
-    log_success "Static files copied to: ${STATIC_DIR}"
-}
-
-create_redirect() {
-    # Ensure root index.html exists (redirects to login)
-    if [[ ! -f "${STATIC_DIR}/index.html" ]]; then
-        log_info "Creating root redirect..."
-        cat > "${STATIC_DIR}/index.html" <<'EOF'
-<!DOCTYPE html>
-<html>
-<head>
-    <meta http-equiv="refresh" content="0;url=/dashboard/login/">
-    <title>Redirecting...</title>
-</head>
-<body>
-    <p>Redirecting to dashboard...</p>
-</body>
-</html>
-EOF
-        log_success "Created root redirect index.html"
     fi
 }
 
@@ -193,15 +154,13 @@ main() {
 
     check_requirements
     build_dashboard
-    copy_static_files
-    create_redirect
 
     echo ""
     log_success "Dashboard build complete!"
     echo ""
-    echo "  Static files: ${STATIC_DIR}"
-    echo "  Start server:  cargo run -p memorose-server"
-    echo "  Dashboard URL: http://localhost:3000/dashboard"
+    echo "  Build output: ${DASHBOARD_DIR}/.next"
+    echo "  Start app:     cd ${DASHBOARD_DIR} && pnpm start --port 3100"
+    echo "  Dashboard URL: http://localhost:3100/dashboard"
     echo ""
 }
 

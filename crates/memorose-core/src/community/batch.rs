@@ -5,13 +5,13 @@
 // - 流式处理，不需要一次性加载所有边
 // - 支持增量更新
 
-use std::collections::{HashMap, HashSet};
-use uuid::Uuid;
-use memorose_common::GraphEdge;
-use anyhow::Result;
+use super::enhanced::{CommunityResult, DetectionConfig, EnhancedCommunityDetector};
 use crate::graph::BatchExecutor;
 use crate::storage::graph::GraphStore;
-use super::enhanced::{EnhancedCommunityDetector, DetectionConfig, CommunityResult};
+use anyhow::Result;
+use memorose_common::GraphEdge;
+use std::collections::{HashMap, HashSet};
+use uuid::Uuid;
 
 /// 批量优化的社区检测器
 pub struct BatchCommunityDetector {
@@ -51,7 +51,8 @@ impl BatchCommunityDetector {
         node_ids: &[Uuid],
     ) -> Result<CommunityResult> {
         // 批量获取所有边
-        let edges_map = self.batch_executor
+        let edges_map = self
+            .batch_executor
             .batch_get_outgoing_edges(user_id, node_ids)
             .await?;
 
@@ -93,7 +94,8 @@ impl BatchCommunityDetector {
 
         // 分批加载边
         for chunk in node_ids.chunks(BATCH_SIZE) {
-            let edges_map = self.batch_executor
+            let edges_map = self
+                .batch_executor
                 .batch_get_outgoing_edges(user_id, chunk)
                 .await?;
 
@@ -164,12 +166,10 @@ impl BatchCommunityDetector {
         // Phase 1: 快速 LPA
         let mut phase1_config = self.config.clone();
         phase1_config.algorithm = super::enhanced::Algorithm::LabelPropagation;
-        phase1_config.max_iterations = 10;  // 快速收敛
+        phase1_config.max_iterations = 10; // 快速收敛
 
-        let phase1_detector = BatchCommunityDetector::new(
-            self.batch_executor.clone_graph_store(),
-            phase1_config,
-        );
+        let phase1_detector =
+            BatchCommunityDetector::new(self.batch_executor.clone_graph_store(), phase1_config);
 
         let phase1_result = phase1_detector
             .detect_communities_direct(user_id, node_ids)
@@ -195,10 +195,8 @@ impl BatchCommunityDetector {
             let mut phase2_config = self.config.clone();
             phase2_config.algorithm = super::enhanced::Algorithm::Louvain;
 
-            let phase2_detector = BatchCommunityDetector::new(
-                self.batch_executor.clone_graph_store(),
-                phase2_config,
-            );
+            let phase2_detector =
+                BatchCommunityDetector::new(self.batch_executor.clone_graph_store(), phase2_config);
 
             let subgraph_result = phase2_detector
                 .detect_communities_direct(user_id, members)
@@ -209,9 +207,9 @@ impl BatchCommunityDetector {
                 for (node, sub_comm) in &subgraph_result.node_to_community {
                     // 创建全局唯一的社区 ID（组合父社区和子社区）
                     let global_comm = if sub_comm == comm_id {
-                        *comm_id  // 保持原社区 ID
+                        *comm_id // 保持原社区 ID
                     } else {
-                        Uuid::new_v4()  // 新的子社区 ID
+                        Uuid::new_v4() // 新的子社区 ID
                     };
                     final_communities.insert(*node, global_comm);
                 }
@@ -236,7 +234,7 @@ impl BatchCommunityDetector {
         Ok(CommunityResult {
             node_to_community: final_communities,
             community_to_nodes: community_groups.clone(),
-            modularity: improved_modularity,  // TODO: 重新计算准确的模块度
+            modularity: improved_modularity, // TODO: 重新计算准确的模块度
             num_communities: community_groups.len(),
         })
     }

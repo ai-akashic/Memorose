@@ -1,20 +1,20 @@
-pub mod engine;
-pub mod storage;
 pub mod arbitrator;
-pub mod reranker;
-pub mod llm;
-pub mod worker;
 pub mod community;
-pub mod raft;
+pub mod engine;
+pub mod graph;
 pub mod ingest;
-pub mod graph;  // 新增：图查询优化模块
+pub mod llm;
+pub mod raft;
+pub mod reranker;
+pub mod storage;
+pub mod worker; // 新增：图查询优化模块
 
-pub use engine::MemoroseEngine;
-pub use worker::BackgroundWorker;
 pub use arbitrator::Arbitrator;
 pub use community::CommunityDetector;
-pub use llm::{LLMClient, GeminiClient};
+pub use engine::MemoroseEngine;
+pub use llm::{GeminiClient, LLMClient};
 pub use reranker::Reranker;
+pub use worker::BackgroundWorker;
 
 // Re-export common types for convenience
-pub use memorose_common::{Event, EventContent, MemoryUnit, GraphEdge, RelationType};
+pub use memorose_common::{Event, EventContent, GraphEdge, MemoryUnit, RelationType};

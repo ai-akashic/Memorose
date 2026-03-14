@@ -1,13 +1,16 @@
 "use client";
 
 import { useStats, useClusterStatus } from "@/lib/hooks";
-import { useUserFilter } from "../layout";
 import { formatNumber } from "@/lib/utils";
 import {
   Activity,
+  Bot,
   Database,
   GitBranch,
   Layers,
+  Package,
+  Share2,
+  User,
 } from "lucide-react";
 import {
   AreaChart,
@@ -22,6 +25,7 @@ import {
 } from "recharts";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useOrgScope } from "@/lib/org-scope";
 import { RainbowWaterfall } from "@/components/RainbowWaterfall";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -146,13 +150,19 @@ function RelationDistribution({ graphData, className = "" }: { graphData: GraphD
   );
 }
 
-function ImportanceHistogram({ className = "" }: { className?: string }) {
+function ImportanceHistogram({
+  orgId,
+  className = "",
+}: {
+  orgId?: string;
+  className?: string;
+}) {
   const [histData, setHistData] = useState<{ range: string; count: number }[]>([]);
 
   useEffect(() => {
     async function fetchData() {
       try {
-        const res = await api.memories({ limit: 100, sort: "importance" });
+        const res = await api.memories({ limit: 100, sort: "importance", org_id: orgId });
         const buckets = Array.from({ length: 10 }, (_, i) => ({
           range: `${(i / 10).toFixed(1)}`,
           count: 0,
@@ -167,7 +177,7 @@ function ImportanceHistogram({ className = "" }: { className?: string }) {
       }
     }
     fetchData();
-  }, []);
+  }, [orgId]);
 
   return (
     <Card className={`glass-card flex flex-col border-white/[0.04] ${className}`}>
@@ -235,23 +245,54 @@ function WorkerStatus({ config, className = "" }: { config: NonNullable<ReturnTy
   );
 }
 
+function BreakdownCard({
+  title,
+  rows,
+  className = "",
+}: {
+  title: string;
+  rows: Array<{ label: string; value: number; tone?: string }>;
+  className?: string;
+}) {
+  return (
+    <Card className={`glass-card border-white/[0.04] ${className}`}>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+          {title}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {rows.map((row) => (
+          <div key={row.label} className="flex items-center justify-between gap-4">
+            <span className="text-sm text-muted-foreground">{row.label}</span>
+            <span className={`font-mono text-sm ${row.tone ?? "text-foreground/80"}`}>
+              {formatNumber(row.value)}
+            </span>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function MetricsPage() {
-  const { userId } = useUserFilter();
-  const { data: stats, isLoading: statsLoading } = useStats(userId || undefined);
+  const { orgId } = useOrgScope();
+  const scopedOrgId = orgId.trim();
+  const { data: stats, isLoading: statsLoading } = useStats(undefined, scopedOrgId || undefined);
   const { data: cluster } = useClusterStatus();
   const [graphData, setGraphData] = useState<GraphData | null>(null);
 
   useEffect(() => {
     async function loadGraph() {
       try {
-        const data = await api.graph(500, userId || undefined);
+        const data = await api.graph(500, undefined, scopedOrgId || undefined);
         setGraphData(data);
       } catch {
         // ignore
       }
     }
     loadGraph();
-  }, [userId]);
+  }, [scopedOrgId]);
 
   if (statsLoading) {
     return (
@@ -278,9 +319,16 @@ export default function MetricsPage() {
         >
           <div className="flex items-center gap-3">
             <div className="w-1 h-6 bg-primary/40 rounded-full" />
-            <h1 className="text-sm font-bold tracking-[0.3em] uppercase text-muted-foreground/60">
-              Telemetry <span className="text-muted-foreground/20 ml-2">v1.0.4</span>
-            </h1>
+            <div>
+              <h1 className="text-sm font-bold tracking-[0.3em] uppercase text-muted-foreground/60">
+                Telemetry <span className="text-muted-foreground/20 ml-2">v1.0.4</span>
+              </h1>
+              {scopedOrgId && (
+                <p className="mt-1 text-xs font-mono text-muted-foreground">
+                  org scope: {scopedOrgId}
+                </p>
+              )}
+            </div>
           </div>
         </motion.div>
 
@@ -293,7 +341,9 @@ export default function MetricsPage() {
           {/* Top Row KPIs */}
           <StatCard label="Ingested" value={stats?.total_events ?? 0} icon={Activity} delay={0.1} />
           <StatCard label="Pending" value={stats?.pending_events ?? 0} icon={Activity} color="text-warning" delay={0.15} />
-          <StatCard label="Clusters" value={stats?.total_memory_units ?? 0} icon={Database} color="text-success" delay={0.2} />
+          <StatCard label="Local Memory" value={stats?.memory_by_scope.local ?? 0} icon={Database} color="text-success" delay={0.2} />
+          <StatCard label="Shared Memory" value={stats?.memory_by_scope.shared ?? 0} icon={Share2} color="text-warning" delay={0.25} />
+          <StatCard label="Total Memory" value={stats?.total_memory_units ?? 0} icon={Layers} color="text-primary" delay={0.3} />
           <StatCard label="Edges" value={stats?.total_edges ?? 0} icon={GitBranch} color="text-primary" delay={0.25} />
 
           {/* Pipeline Flow - Large Block */}
@@ -309,7 +359,7 @@ export default function MetricsPage() {
           </Card>
 
           {/* Importance Distribution - Large Center Block */}
-          <ImportanceHistogram className="md:col-span-2 md:row-span-2" />
+          <ImportanceHistogram orgId={scopedOrgId || undefined} className="md:col-span-2 md:row-span-2" />
 
           {/* Relation Dist - Large Block */}
           <RelationDistribution graphData={graphData} className="md:col-span-2 md:row-span-2" />
@@ -320,12 +370,44 @@ export default function MetricsPage() {
           ) : (
             <div className="md:col-span-1 md:row-span-2 glass-card rounded-xl opacity-10 animate-pulse" />
           )}
-          
-          <div className="md:col-span-1 md:row-span-2 flex flex-col gap-3">
-            <StatCard label="Health" value="99.9%" icon={Activity} color="text-success" className="h-full flex-1" delay={0.3} />
-            <StatCard label="Region" value="Global" icon={Database} className="h-full flex-1" delay={0.35} />
-          </div>
+
+          <BreakdownCard
+            title="Domain Mix"
+            className="md:col-span-1 md:row-span-2"
+            rows={[
+              { label: "Agent", value: stats?.memory_by_domain.agent ?? 0, tone: "text-primary" },
+              { label: "User", value: stats?.memory_by_domain.user ?? 0, tone: "text-success" },
+              { label: "App", value: stats?.memory_by_domain.app ?? 0, tone: "text-warning" },
+              {
+                label: "Organization",
+                value: stats?.memory_by_domain.organization ?? 0,
+                tone: "text-foreground/80",
+              },
+            ]}
+          />
+
+          <BreakdownCard
+            title="Level By Scope"
+            className="md:col-span-1 md:row-span-2"
+            rows={[
+              { label: "Local L1", value: stats?.memory_by_level_and_scope.local.l1 ?? 0, tone: "text-primary" },
+              { label: "Local L2", value: stats?.memory_by_level_and_scope.local.l2 ?? 0, tone: "text-success" },
+              { label: "Shared L1", value: stats?.memory_by_level_and_scope.shared.l1 ?? 0, tone: "text-warning" },
+              {
+                label: "Shared L2",
+                value: stats?.memory_by_level_and_scope.shared.l2 ?? 0,
+                tone: "text-foreground/80",
+              },
+            ]}
+          />
         </motion.div>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+          <StatCard label="Agent Domain" value={stats?.memory_by_domain.agent ?? 0} icon={Bot} delay={0.35} />
+          <StatCard label="User Domain" value={stats?.memory_by_domain.user ?? 0} icon={User} color="text-success" delay={0.4} />
+          <StatCard label="App Domain" value={stats?.memory_by_domain.app ?? 0} icon={Package} color="text-warning" delay={0.45} />
+          <StatCard label="Org Domain" value={stats?.memory_by_domain.organization ?? 0} icon={Database} delay={0.5} />
+        </div>
       </div>
     </div>
   );

@@ -2,9 +2,9 @@
 mod tests {
     use crate::llm::gemini::GeminiClient;
     use crate::llm::LLMClient;
+    use serde_json::json;
     use wiremock::matchers::{method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
-    use serde_json::json;
 
     const TEST_MODEL: &str = "test-model";
     const TEST_EMBEDDING_MODEL: &str = "test-embedding-model";
@@ -12,7 +12,7 @@ mod tests {
     #[tokio::test]
     async fn test_generate_success() {
         let mock_server = MockServer::start().await;
-        
+
         let expected_response = json!({
             "candidates": [{
                 "content": {
@@ -22,7 +22,10 @@ mod tests {
         });
 
         Mock::given(method("POST"))
-            .and(path(format!("/v1beta/models/{}:generateContent", TEST_MODEL)))
+            .and(path(format!(
+                "/v1beta/models/{}:generateContent",
+                TEST_MODEL
+            )))
             .and(query_param("key", "test-key"))
             .respond_with(ResponseTemplate::new(200).set_body_json(expected_response))
             .mount(&mock_server)
@@ -78,7 +81,7 @@ mod tests {
     #[tokio::test]
     async fn test_embed_success() {
         let mock_server = MockServer::start().await;
-        
+
         let expected_response = json!({
             "embedding": {
                 "values": [0.1, 0.2, 0.3]
@@ -86,7 +89,10 @@ mod tests {
         });
 
         Mock::given(method("POST"))
-            .and(path(format!("/v1beta/models/{}:embedContent", TEST_EMBEDDING_MODEL)))
+            .and(path(format!(
+                "/v1beta/models/{}:embedContent",
+                TEST_EMBEDDING_MODEL
+            )))
             .and(query_param("key", "test-key"))
             .respond_with(ResponseTemplate::new(200).set_body_json(expected_response))
             .mount(&mock_server)
@@ -120,7 +126,10 @@ mod tests {
         });
 
         Mock::given(method("POST"))
-            .and(path(format!("/v1beta/models/{}:batchEmbedContents", TEST_EMBEDDING_MODEL)))
+            .and(path(format!(
+                "/v1beta/models/{}:batchEmbedContents",
+                TEST_EMBEDDING_MODEL
+            )))
             .and(query_param("key", "test-key"))
             .respond_with(ResponseTemplate::new(200).set_body_json(expected_response))
             .mount(&mock_server)
@@ -157,7 +166,10 @@ mod tests {
         });
 
         Mock::given(method("POST"))
-            .and(path(format!("/v1beta/models/{}:batchEmbedContents", TEST_EMBEDDING_MODEL)))
+            .and(path(format!(
+                "/v1beta/models/{}:batchEmbedContents",
+                TEST_EMBEDDING_MODEL
+            )))
             .and(query_param("key", "test-key"))
             .respond_with(ResponseTemplate::new(200).set_body_json(mismatch_response))
             .mount(&mock_server)
@@ -183,7 +195,7 @@ mod tests {
     #[tokio::test]
     async fn test_describe_image_invalid_url() {
         let mock_server = MockServer::start().await;
-        
+
         Mock::given(method("GET"))
             .and(path("/image.jpg"))
             .respond_with(ResponseTemplate::new(404))

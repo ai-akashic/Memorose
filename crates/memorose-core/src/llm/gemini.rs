@@ -1,9 +1,9 @@
-use anyhow::{Result, anyhow};
+use super::{EmbedInput, EmbedPart, LLMClient};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use base64::{engine::general_purpose, Engine as _};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use super::{LLMClient, EmbedInput, EmbedPart};
-use base64::{Engine as _, engine::general_purpose};
 
 pub struct GeminiClient {
     client: Client,
@@ -17,10 +17,24 @@ pub struct GeminiClient {
 
 impl GeminiClient {
     pub fn new(api_key: String, model: String, embedding_model: String) -> Self {
-        Self::with_base_url(api_key, model, embedding_model, "https://generativelanguage.googleapis.com".to_string(), None, None)
+        Self::with_base_url(
+            api_key,
+            model,
+            embedding_model,
+            "https://generativelanguage.googleapis.com".to_string(),
+            None,
+            None,
+        )
     }
 
-    pub fn with_base_url(api_key: String, model: String, embedding_model: String, base_url: String, output_dimensionality: Option<i32>, task_type: Option<String>) -> Self {
+    pub fn with_base_url(
+        api_key: String,
+        model: String,
+        embedding_model: String,
+        base_url: String,
+        output_dimensionality: Option<i32>,
+        task_type: Option<String>,
+    ) -> Self {
         let api_key = api_key.trim().to_string();
         tracing::debug!(
             "GeminiClient initialized: api_key_len={}, model={}, embedding_model={}, base_url={}, output_dim={:?}, task_type={:?}",
@@ -62,8 +76,13 @@ struct Content {
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(untagged)]
 enum Part {
-    Text { text: String },
-    Inline { #[serde(rename = "inline_data")] inline_data: InlineData },
+    Text {
+        text: String,
+    },
+    Inline {
+        #[serde(rename = "inline_data")]
+        inline_data: InlineData,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -104,7 +123,10 @@ struct ApiError {
 struct EmbedRequest {
     model: String,
     content: EmbedContent,
-    #[serde(rename = "outputDimensionality", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "outputDimensionality",
+        skip_serializing_if = "Option::is_none"
+    )]
     output_dimensionality: Option<i32>,
     #[serde(rename = "taskType", skip_serializing_if = "Option::is_none")]
     task_type: Option<String>,
@@ -160,7 +182,9 @@ impl LLMClient for GeminiClient {
         let request = EmbedRequest {
             model: model_name,
             content: EmbedContent {
-                parts: vec![Part::Text { text: text.to_string() }],
+                parts: vec![Part::Text {
+                    text: text.to_string(),
+                }],
             },
             output_dimensionality: self.output_dimensionality,
             task_type: self.task_type.clone(),
@@ -175,8 +199,13 @@ impl LLMClient for GeminiClient {
             return Err(anyhow!("Gemini Embedding API error ({}): {}", status, body));
         }
 
-        let parsed: EmbedResponse = serde_json::from_str(&body)
-            .map_err(|e| anyhow!("Failed to parse Gemini embedding response: {} - body: {}", e, body))?;
+        let parsed: EmbedResponse = serde_json::from_str(&body).map_err(|e| {
+            anyhow!(
+                "Failed to parse Gemini embedding response: {} - body: {}",
+                e,
+                body
+            )
+        })?;
 
         if let Some(err) = parsed.error {
             return Err(anyhow!("Gemini Embedding API error: {}", err.message));
@@ -192,12 +221,18 @@ impl LLMClient for GeminiClient {
             l2_normalize(&mut data);
         }
 
-        Ok(super::LLMResponse { data, usage: Default::default() })
+        Ok(super::LLMResponse {
+            data,
+            usage: Default::default(),
+        })
     }
 
     async fn embed_batch(&self, texts: Vec<String>) -> Result<super::LLMResponse<Vec<Vec<f32>>>> {
         if texts.is_empty() {
-            return Ok(super::LLMResponse { data: vec![], usage: Default::default() });
+            return Ok(super::LLMResponse {
+                data: vec![],
+                usage: Default::default(),
+            });
         }
 
         let clean_model = self.embedding_model.trim_start_matches("models/");
@@ -280,10 +315,17 @@ impl LLMClient for GeminiClient {
             }));
         }
 
-        Ok(super::LLMResponse { data: all_embeddings, usage: Default::default() })
+        Ok(super::LLMResponse {
+            data: all_embeddings,
+            usage: Default::default(),
+        })
     }
 
-    async fn compress(&self, text: &str, is_agent: bool) -> Result<super::LLMResponse<super::CompressionOutput>> {
+    async fn compress(
+        &self,
+        text: &str,
+        is_agent: bool,
+    ) -> Result<super::LLMResponse<super::CompressionOutput>> {
         let system_prompt = if is_agent {
             // PROCEDURAL (Agent) PROMPT
             "You are an expert at extracting and summarizing Agent execution trajectories and experiences. \
@@ -313,19 +355,29 @@ impl LLMClient for GeminiClient {
             Output ONLY valid JSON: \
             {\"content\": \"compressed factual summary\", \"valid_at\": \"ISO8601 timestamp or null\"}"
         };
-        
+
         let response = self.call_generate(Some(system_prompt), text).await?;
-        
-        let clean_json = response.data.trim()
+
+        let clean_json = response
+            .data
+            .trim()
             .trim_start_matches("```json")
             .trim_start_matches("```")
             .trim_end_matches("```")
             .trim();
 
-        let parsed: super::CompressionOutput = serde_json::from_str(clean_json)
-            .map_err(|e| anyhow!("Failed to parse compression JSON: {} - body: {}", e, clean_json))?;
+        let parsed: super::CompressionOutput = serde_json::from_str(clean_json).map_err(|e| {
+            anyhow!(
+                "Failed to parse compression JSON: {} - body: {}",
+                e,
+                clean_json
+            )
+        })?;
 
-        Ok(super::LLMResponse { data: parsed, usage: response.usage })
+        Ok(super::LLMResponse {
+            data: parsed,
+            usage: response.usage,
+        })
     }
 
     async fn summarize_group(&self, texts: Vec<String>) -> Result<super::LLMResponse<String>> {
@@ -334,71 +386,102 @@ impl LLMClient for GeminiClient {
         self.generate(&prompt).await
     }
 
-    async fn describe_image(&self, image_url_or_base64: &str) -> Result<super::LLMResponse<String>> {
+    async fn describe_image(
+        &self,
+        image_url_or_base64: &str,
+    ) -> Result<super::LLMResponse<String>> {
         let (mime_type, data) = if image_url_or_base64.starts_with("http") {
-             let resp = self.client.get(image_url_or_base64).send().await?;
-             let headers = resp.headers();
-             let mime = headers.get("content-type")
-                 .and_then(|v| v.to_str().ok())
-                 .unwrap_or("image/jpeg")
-                 .to_string();
-             let bytes = resp.bytes().await?;
-             (mime, general_purpose::STANDARD.encode(&bytes))
+            let resp = self.client.get(image_url_or_base64).send().await?;
+            let headers = resp.headers();
+            let mime = headers
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("image/jpeg")
+                .to_string();
+            let bytes = resp.bytes().await?;
+            (mime, general_purpose::STANDARD.encode(&bytes))
         } else {
-             // Assume it's base64, default to jpeg if unknown
-             ("image/jpeg".to_string(), image_url_or_base64.to_string())
+            // Assume it's base64, default to jpeg if unknown
+            ("image/jpeg".to_string(), image_url_or_base64.to_string())
         };
 
-        let prompt = "Describe this image in detail, focusing on objects, actions, and text visible.";
-        
-        self.call_generate_parts(None, vec![
-             Part::Text { text: prompt.to_string() },
-             Part::Inline { inline_data: InlineData { mime_type, data } }
-        ]).await
+        let prompt =
+            "Describe this image in detail, focusing on objects, actions, and text visible.";
+
+        self.call_generate_parts(
+            None,
+            vec![
+                Part::Text {
+                    text: prompt.to_string(),
+                },
+                Part::Inline {
+                    inline_data: InlineData { mime_type, data },
+                },
+            ],
+        )
+        .await
     }
 
     async fn transcribe(&self, audio_url_or_base64: &str) -> Result<super::LLMResponse<String>> {
         let (mime_type, data) = if audio_url_or_base64.starts_with("http") {
-             let resp = self.client.get(audio_url_or_base64).send().await?;
-             let headers = resp.headers();
-             let mime = headers.get("content-type")
-                 .and_then(|v| v.to_str().ok())
-                 .unwrap_or("audio/mp3")
-                 .to_string();
-             let bytes = resp.bytes().await?;
-             (mime, general_purpose::STANDARD.encode(&bytes))
+            let resp = self.client.get(audio_url_or_base64).send().await?;
+            let headers = resp.headers();
+            let mime = headers
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("audio/mp3")
+                .to_string();
+            let bytes = resp.bytes().await?;
+            (mime, general_purpose::STANDARD.encode(&bytes))
         } else {
-             ("audio/mp3".to_string(), audio_url_or_base64.to_string())
+            ("audio/mp3".to_string(), audio_url_or_base64.to_string())
         };
 
         let prompt = "Transcribe the following audio verbatim. Identify speakers if possible.";
 
-        self.call_generate_parts(None, vec![
-             Part::Text { text: prompt.to_string() },
-             Part::Inline { inline_data: InlineData { mime_type, data } }
-        ]).await
+        self.call_generate_parts(
+            None,
+            vec![
+                Part::Text {
+                    text: prompt.to_string(),
+                },
+                Part::Inline {
+                    inline_data: InlineData { mime_type, data },
+                },
+            ],
+        )
+        .await
     }
 
     async fn describe_video(&self, video_url: &str) -> Result<super::LLMResponse<String>> {
         let (mime_type, data) = if video_url.starts_with("http") {
-             let resp = self.client.get(video_url).send().await?;
-             let headers = resp.headers();
-             let mime = headers.get("content-type")
-                 .and_then(|v| v.to_str().ok())
-                 .unwrap_or("video/mp4")
-                 .to_string();
-             let bytes = resp.bytes().await?;
-             (mime, general_purpose::STANDARD.encode(&bytes))
+            let resp = self.client.get(video_url).send().await?;
+            let headers = resp.headers();
+            let mime = headers
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("video/mp4")
+                .to_string();
+            let bytes = resp.bytes().await?;
+            (mime, general_purpose::STANDARD.encode(&bytes))
         } else {
-             ("video/mp4".to_string(), video_url.to_string())
+            ("video/mp4".to_string(), video_url.to_string())
         };
 
         let prompt = "Describe this video in detail: what happens, key scenes, visible text, people, actions, and any spoken dialogue.";
 
-        self.call_generate_parts(None, vec![
-             Part::Text { text: prompt.to_string() },
-             Part::Inline { inline_data: InlineData { mime_type, data } }
-        ]).await
+        self.call_generate_parts(
+            None,
+            vec![
+                Part::Text {
+                    text: prompt.to_string(),
+                },
+                Part::Inline {
+                    inline_data: InlineData { mime_type, data },
+                },
+            ],
+        )
+        .await
     }
 
     async fn embed_content(&self, input: EmbedInput) -> Result<super::LLMResponse<Vec<f32>>> {
@@ -428,8 +511,13 @@ impl LLMClient for GeminiClient {
             return Err(anyhow!("Gemini Embedding API error ({}): {}", status, body));
         }
 
-        let parsed: EmbedResponse = serde_json::from_str(&body)
-            .map_err(|e| anyhow!("Failed to parse Gemini embedding response: {} - body: {}", e, body))?;
+        let parsed: EmbedResponse = serde_json::from_str(&body).map_err(|e| {
+            anyhow!(
+                "Failed to parse Gemini embedding response: {} - body: {}",
+                e,
+                body
+            )
+        })?;
 
         if let Some(err) = parsed.error {
             return Err(anyhow!("Gemini Embedding API error: {}", err.message));
@@ -444,12 +532,21 @@ impl LLMClient for GeminiClient {
             l2_normalize(&mut data);
         }
 
-        Ok(super::LLMResponse { data, usage: Default::default() })
+        Ok(super::LLMResponse {
+            data,
+            usage: Default::default(),
+        })
     }
 
-    async fn embed_content_batch(&self, inputs: Vec<EmbedInput>) -> Result<super::LLMResponse<Vec<Vec<f32>>>> {
+    async fn embed_content_batch(
+        &self,
+        inputs: Vec<EmbedInput>,
+    ) -> Result<super::LLMResponse<Vec<Vec<f32>>>> {
         if inputs.is_empty() {
-            return Ok(super::LLMResponse { data: vec![], usage: Default::default() });
+            return Ok(super::LLMResponse {
+                data: vec![],
+                usage: Default::default(),
+            });
         }
 
         let clean_model = self.embedding_model.trim_start_matches("models/");
@@ -483,11 +580,19 @@ impl LLMClient for GeminiClient {
             let body = response.text().await?;
 
             if !status.is_success() {
-                return Err(anyhow!("Gemini Batch Embedding API error ({}): {}", status, body));
+                return Err(anyhow!(
+                    "Gemini Batch Embedding API error ({}): {}",
+                    status,
+                    body
+                ));
             }
 
             let parsed: BatchEmbedResponse = serde_json::from_str(&body).map_err(|e| {
-                anyhow!("Failed to parse Gemini batch embedding response: {} - body: {}", e, body)
+                anyhow!(
+                    "Failed to parse Gemini batch embedding response: {} - body: {}",
+                    e,
+                    body
+                )
             })?;
 
             if let Some(err) = parsed.error {
@@ -515,21 +620,38 @@ impl LLMClient for GeminiClient {
             }));
         }
 
-        Ok(super::LLMResponse { data: all_embeddings, usage: Default::default() })
+        Ok(super::LLMResponse {
+            data: all_embeddings,
+            usage: Default::default(),
+        })
     }
 }
 
 impl GeminiClient {
-    async fn call_generate(&self, system_prompt: Option<&str>, user_prompt: &str) -> Result<super::LLMResponse<String>> {
-        self.call_generate_parts(system_prompt, vec![Part::Text { text: user_prompt.to_string() }]).await
+    async fn call_generate(
+        &self,
+        system_prompt: Option<&str>,
+        user_prompt: &str,
+    ) -> Result<super::LLMResponse<String>> {
+        self.call_generate_parts(
+            system_prompt,
+            vec![Part::Text {
+                text: user_prompt.to_string(),
+            }],
+        )
+        .await
     }
 
-    async fn call_generate_parts(&self, system_prompt: Option<&str>, parts: Vec<Part>) -> Result<super::LLMResponse<String>> {
+    async fn call_generate_parts(
+        &self,
+        system_prompt: Option<&str>,
+        parts: Vec<Part>,
+    ) -> Result<super::LLMResponse<String>> {
         let clean_model = self.model.trim_start_matches("models/");
         let url = format!(
             "{}/v1beta/models/{}:generateContent?key={}",
-            self.base_url.trim_end_matches('/'), 
-            clean_model, 
+            self.base_url.trim_end_matches('/'),
+            clean_model,
             self.api_key.trim()
         );
 
@@ -540,13 +662,19 @@ impl GeminiClient {
             }],
             system_instruction: system_prompt.map(|s| Content {
                 role: None,
-                parts: vec![Part::Text { text: s.to_string() }],
+                parts: vec![Part::Text {
+                    text: s.to_string(),
+                }],
             }),
         };
 
-        tracing::debug!("Gemini generate request to: {} (key masked)", url.replace(&self.api_key, "***"));
-        
-        let response = self.client
+        tracing::debug!(
+            "Gemini generate request to: {} (key masked)",
+            url.replace(&self.api_key, "***")
+        );
+
+        let response = self
+            .client
             .post(&url)
             .header("Content-Type", "application/json")
             .json(&request)
@@ -555,9 +683,13 @@ impl GeminiClient {
 
         let status = response.status();
         let body = response.text().await?;
-        
+
         if !status.is_success() {
-            tracing::error!("Gemini API failed: status={}, api_key_empty={}", status, self.api_key.is_empty());
+            tracing::error!(
+                "Gemini API failed: status={}, api_key_empty={}",
+                status,
+                self.api_key.is_empty()
+            );
             return Err(anyhow!("Gemini API error ({}): {}", status, body));
         }
 
@@ -568,7 +700,8 @@ impl GeminiClient {
             return Err(anyhow!("Gemini API error: {}", err.message));
         }
 
-        let text = parsed.candidates
+        let text = parsed
+            .candidates
             .and_then(|c| c.into_iter().next())
             .and_then(|c| c.content.parts.into_iter().next())
             .map(|p| match p {
@@ -577,11 +710,14 @@ impl GeminiClient {
             })
             .ok_or_else(|| anyhow!("No content in Gemini response"))?;
 
-        let usage = parsed.usage_metadata.map(|m| memorose_common::TokenUsage {
-            prompt_tokens: m.prompt_token_count.unwrap_or(0),
-            completion_tokens: m.candidates_token_count.unwrap_or(0),
-            total_tokens: m.total_token_count.unwrap_or(0),
-        }).unwrap_or_default();
+        let usage = parsed
+            .usage_metadata
+            .map(|m| memorose_common::TokenUsage {
+                prompt_tokens: m.prompt_token_count.unwrap_or(0),
+                completion_tokens: m.candidates_token_count.unwrap_or(0),
+                total_tokens: m.total_token_count.unwrap_or(0),
+            })
+            .unwrap_or_default();
 
         Ok(super::LLMResponse { data: text, usage })
     }
@@ -601,14 +737,15 @@ pub fn l2_normalize(v: &mut [f32]) {
 fn embed_input_to_parts(input: EmbedInput) -> Vec<Part> {
     match input {
         EmbedInput::Text(text) => vec![Part::Text { text }],
-        EmbedInput::Multimodal { parts } => {
-            parts.into_iter().map(|p| match p {
+        EmbedInput::Multimodal { parts } => parts
+            .into_iter()
+            .map(|p| match p {
                 EmbedPart::Text(text) => Part::Text { text },
                 EmbedPart::InlineData { mime_type, data } => Part::Inline {
                     inline_data: InlineData { mime_type, data },
                 },
-            }).collect()
-        }
+            })
+            .collect(),
     }
 }
 

@@ -1,5 +1,5 @@
-use async_trait::async_trait;
 use anyhow::Result;
+use async_trait::async_trait;
 use std::path::PathBuf;
 use tokio::fs;
 use uuid::Uuid;
@@ -8,7 +8,7 @@ use uuid::Uuid;
 pub trait ObjectStore: Send + Sync {
     /// Uploads raw bytes and returns a storage key
     async fn put(&self, data: &[u8], mime_type: &str) -> Result<String>;
-    
+
     /// Generates a public accessible URL (Pre-signed URL for S3, or Static URL for Local)
     async fn get_access_url(&self, storage_key: &str) -> Result<String>;
 }
@@ -52,9 +52,10 @@ impl ObjectStore for LocalFileSystemStore {
 
     async fn get_access_url(&self, storage_key: &str) -> Result<String> {
         // storage_key expected format: local://filename.ext
-        let filename = storage_key.strip_prefix("local://")
+        let filename = storage_key
+            .strip_prefix("local://")
             .ok_or_else(|| anyhow::anyhow!("Invalid storage key format"))?;
-        
+
         Ok(format!("{}/{}", self.base_url, filename))
     }
 }

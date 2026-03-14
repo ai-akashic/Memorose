@@ -2,9 +2,9 @@
 mod tests {
     use crate::llm::openai::OpenAIClient;
     use crate::llm::LLMClient;
-    use wiremock::matchers::{method, path, header};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
     use serde_json::json;
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     const TEST_MODEL: &str = "test-model";
     const TEST_EMBEDDING_MODEL: &str = "test-embedding-model";
@@ -13,7 +13,7 @@ mod tests {
     #[tokio::test]
     async fn test_generate_success() {
         let mock_server = MockServer::start().await;
-        
+
         let expected_response = json!({
             "id": "chatcmpl-123",
             "object": "chat.completion",
@@ -31,7 +31,10 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
-            .and(header("Authorization", format!("Bearer {}", TEST_API_KEY).as_str()))
+            .and(header(
+                "Authorization",
+                format!("Bearer {}", TEST_API_KEY).as_str(),
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(expected_response))
             .mount(&mock_server)
             .await;
@@ -54,14 +57,16 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
-            .respond_with(ResponseTemplate::new(401).set_body_string(r#"{
+            .respond_with(ResponseTemplate::new(401).set_body_string(
+                r#"{
   "error": {
     "message": "Invalid Authentication",
     "type": "server_error",
     "param": null,
     "code": null
   }
-}"#))
+}"#,
+            ))
             .mount(&mock_server)
             .await;
 
@@ -100,7 +105,10 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/embeddings"))
-            .and(header("Authorization", format!("Bearer {}", TEST_API_KEY).as_str()))
+            .and(header(
+                "Authorization",
+                format!("Bearer {}", TEST_API_KEY).as_str(),
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(expected_response))
             .mount(&mock_server)
             .await;

@@ -1,24 +1,34 @@
-use anyhow::{Result, Context};
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use memorose_common::{GraphEdge, RelationType};
-use uuid::Uuid;
-use lancedb::Connection;
-use lancedb::query::{ExecutableQuery, QueryBase};
-use arrow_array::{RecordBatch, StringArray, Float32Array, TimestampMicrosecondArray, RecordBatchIterator};
-use arrow_schema::{Schema, Field, DataType, TimeUnit};
-use futures::TryStreamExt;
+use anyhow::{Context, Result};
+use arrow_array::{
+    Float32Array, RecordBatch, RecordBatchIterator, StringArray, TimestampMicrosecondArray,
+};
+use arrow_schema::{DataType, Field, Schema, TimeUnit};
 use chrono::Utc;
+use futures::TryStreamExt;
+use lancedb::query::{ExecutableQuery, QueryBase};
+use lancedb::Connection;
+use memorose_common::{EdgeKind, GraphEdge, RelationType};
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Mutex;
+use uuid::Uuid;
 
 fn create_graph_schema() -> Arc<Schema> {
     Arc::new(Schema::new(vec![
         Field::new("user_id", DataType::Utf8, false),
+        Field::new("namespace_key", DataType::Utf8, false),
+        Field::new("source_namespace_key", DataType::Utf8, false),
+        Field::new("target_namespace_key", DataType::Utf8, false),
         Field::new("source_id", DataType::Utf8, false),
         Field::new("target_id", DataType::Utf8, false),
+        Field::new("edge_kind", DataType::Utf8, false),
         Field::new("relation", DataType::Utf8, false),
         Field::new("weight", DataType::Float32, false),
-        Field::new("transaction_time", DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())), false),
+        Field::new(
+            "transaction_time",
+            DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
+            false,
+        ),
     ]))
 }
 
@@ -82,13 +92,43 @@ impl GraphStore {
 
     async fn init(&self) -> Result<()> {
         let tables = self.db.table_names().execute().await?;
-        if !tables.contains(&self.table_name) {
-            let schema = create_graph_schema();
-            let batch = RecordBatch::new_empty(schema.clone());
-            let reader = RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema);
-
-            self.db.create_table(&self.table_name, reader).execute().await?;
+        if tables.contains(&self.table_name) {
+            let table = self.db.open_table(&self.table_name).execute().await?;
+            let schema = table.schema().await?;
+            let required_columns = [
+                "user_id",
+                "namespace_key",
+                "source_namespace_key",
+                "target_namespace_key",
+                "source_id",
+                "target_id",
+                "edge_kind",
+                "relation",
+                "weight",
+                "transaction_time",
+            ];
+            let has_required_columns = required_columns
+                .iter()
+                .all(|name| schema.fields().iter().any(|field| field.name() == *name));
+            if !has_required_columns {
+                tracing::warn!(
+                    "Graph table '{}' missing scoped edge columns, recreating...",
+                    self.table_name
+                );
+                self.db.drop_table(&self.table_name).await?;
+            } else {
+                return Ok(());
+            }
         }
+
+        let schema = create_graph_schema();
+        let batch = RecordBatch::new_empty(schema.clone());
+        let reader = RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema);
+
+        self.db
+            .create_table(&self.table_name, reader)
+            .execute()
+            .await?;
         Ok(())
     }
 
@@ -126,18 +166,41 @@ impl GraphStore {
         let schema = create_graph_schema();
 
         let user_ids: Vec<String> = edges.iter().map(|e| e.user_id.clone()).collect();
+        let namespace_keys: Vec<String> = edges.iter().map(|e| e.namespace_key.clone()).collect();
+        let source_namespace_keys: Vec<String> = edges
+            .iter()
+            .map(|e| e.source_namespace_key.clone())
+            .collect();
+        let target_namespace_keys: Vec<String> = edges
+            .iter()
+            .map(|e| e.target_namespace_key.clone())
+            .collect();
         let source_ids: Vec<String> = edges.iter().map(|e| e.source_id.to_string()).collect();
         let target_ids: Vec<String> = edges.iter().map(|e| e.target_id.to_string()).collect();
-        let relations: Vec<String> = edges.iter().map(|e| e.relation.as_str().to_string()).collect();
+        let edge_kinds: Vec<String> = edges
+            .iter()
+            .map(|e| e.edge_kind.as_str().to_string())
+            .collect();
+        let relations: Vec<String> = edges
+            .iter()
+            .map(|e| e.relation.as_str().to_string())
+            .collect();
         let weights: Vec<f32> = edges.iter().map(|e| e.weight).collect();
-        let times: Vec<i64> = edges.iter().map(|e| e.transaction_time.timestamp_micros()).collect();
+        let times: Vec<i64> = edges
+            .iter()
+            .map(|e| e.transaction_time.timestamp_micros())
+            .collect();
 
         let batch = RecordBatch::try_new(
             schema.clone(),
             vec![
                 Arc::new(StringArray::from(user_ids)),
+                Arc::new(StringArray::from(namespace_keys)),
+                Arc::new(StringArray::from(source_namespace_keys)),
+                Arc::new(StringArray::from(target_namespace_keys)),
                 Arc::new(StringArray::from(source_ids)),
                 Arc::new(StringArray::from(target_ids)),
+                Arc::new(StringArray::from(edge_kinds)),
                 Arc::new(StringArray::from(relations)),
                 Arc::new(Float32Array::from(weights)),
                 Arc::new(TimestampMicrosecondArray::from(times).with_timezone("UTC")),
@@ -150,7 +213,8 @@ impl GraphStore {
             let table = db.open_table(table_name).execute().await?;
             table.add(reader).execute().await?;
             Ok::<_, anyhow::Error>(())
-        }.await;
+        }
+        .await;
 
         // On failure, put the edges back into the buffer so they are retried on the next flush.
         if let Err(e) = write_result {
@@ -164,10 +228,17 @@ impl GraphStore {
         Ok(())
     }
 
-    pub async fn reinforce_edge(&self, user_id: &str, source_id: Uuid, target_id: Uuid, delta: f32) -> Result<()> {
+    pub async fn reinforce_edge(
+        &self,
+        user_id: &str,
+        source_id: Uuid,
+        target_id: Uuid,
+        delta: f32,
+    ) -> Result<()> {
         // Try to find existing edge
         let existing_edges = self.get_outgoing_edges(user_id, source_id).await?;
-        let existing_edge = existing_edges.iter()
+        let existing_edge = existing_edges
+            .iter()
             .find(|e| e.target_id == target_id && e.relation == RelationType::RelatedTo);
 
         let new_weight = if let Some(edge) = existing_edge {
@@ -181,9 +252,12 @@ impl GraphStore {
         // appends a new row, causing unbounded storage growth.
         if existing_edge.is_some() {
             let escaped_user = user_id.replace('\'', "''");
+            let escaped_namespace = existing_edge
+                .map(|edge| edge.namespace_key.replace('\'', "''"))
+                .unwrap_or_default();
             let filter = format!(
-                "user_id = '{}' AND source_id = '{}' AND target_id = '{}' AND relation = 'RelatedTo'",
-                escaped_user, source_id, target_id
+                "user_id = '{}' AND namespace_key = '{}' AND source_id = '{}' AND target_id = '{}' AND relation = 'RelatedTo'",
+                escaped_user, escaped_namespace, source_id, target_id
             );
             let table = self.db.open_table(&self.table_name).execute().await?;
             table.delete(&filter).await?;
@@ -191,51 +265,97 @@ impl GraphStore {
             // Also purge from the in-memory write buffer so a pending flush doesn't
             // re-insert the old weight on top of the new row.
             let mut buf = self.buffer.lock().await;
-            buf.retain(|e| !(
-                e.user_id == user_id
-                && e.source_id == source_id
-                && e.target_id == target_id
-                && e.relation == RelationType::RelatedTo
-            ));
+            buf.retain(|e| {
+                !(e.user_id == user_id
+                    && e.namespace_key
+                        == existing_edge
+                            .map(|edge| edge.namespace_key.clone())
+                            .unwrap_or_default()
+                    && e.source_id == source_id
+                    && e.target_id == target_id
+                    && e.relation == RelationType::RelatedTo)
+            });
         }
 
-        let edge = GraphEdge::new(user_id.to_string(), source_id, target_id, RelationType::RelatedTo, new_weight);
+        let edge = if let Some(existing_edge) = existing_edge {
+            GraphEdge::new_scoped(
+                user_id.to_string(),
+                source_id,
+                target_id,
+                RelationType::RelatedTo,
+                new_weight,
+                existing_edge.namespace_key.clone(),
+                Some(existing_edge.source_namespace_key.clone()),
+                Some(existing_edge.target_namespace_key.clone()),
+                existing_edge.edge_kind.clone(),
+            )
+        } else {
+            GraphEdge::new(
+                user_id.to_string(),
+                source_id,
+                target_id,
+                RelationType::RelatedTo,
+                new_weight,
+            )
+        };
         self.add_edge(&edge).await
     }
 
-    pub async fn get_outgoing_edges(&self, user_id: &str, source_id: Uuid) -> Result<Vec<GraphEdge>> {
+    pub async fn get_outgoing_edges(
+        &self,
+        user_id: &str,
+        source_id: Uuid,
+    ) -> Result<Vec<GraphEdge>> {
         let mut edges = {
             let buf = self.buffer.lock().await;
             buf.iter()
-               .filter(|e| e.user_id == user_id && e.source_id == source_id)
-               .cloned()
-               .collect::<Vec<_>>()
+                .filter(|e| e.user_id == user_id && e.source_id == source_id)
+                .cloned()
+                .collect::<Vec<_>>()
         };
 
         let table = self.db.open_table(&self.table_name).execute().await?;
         let escaped_user_id = user_id.replace("'", "''");
-        let batches: Vec<RecordBatch> = table.query()
-            .only_if(format!("user_id = '{}' AND source_id = '{}'", escaped_user_id, source_id))
-            .execute().await?.try_collect().await?;
+        let batches: Vec<RecordBatch> = table
+            .query()
+            .only_if(format!(
+                "user_id = '{}' AND source_id = '{}'",
+                escaped_user_id, source_id
+            ))
+            .execute()
+            .await?
+            .try_collect()
+            .await?;
 
         edges.extend(self.batches_to_edges(batches)?);
         Ok(Self::dedup_edges(edges))
     }
 
-    pub async fn get_incoming_edges(&self, user_id: &str, target_id: Uuid) -> Result<Vec<GraphEdge>> {
+    pub async fn get_incoming_edges(
+        &self,
+        user_id: &str,
+        target_id: Uuid,
+    ) -> Result<Vec<GraphEdge>> {
         let mut edges = {
             let buf = self.buffer.lock().await;
             buf.iter()
-               .filter(|e| e.user_id == user_id && e.target_id == target_id)
-               .cloned()
-               .collect::<Vec<_>>()
+                .filter(|e| e.user_id == user_id && e.target_id == target_id)
+                .cloned()
+                .collect::<Vec<_>>()
         };
 
         let table = self.db.open_table(&self.table_name).execute().await?;
         let escaped_user_id = user_id.replace("'", "''");
-        let batches: Vec<RecordBatch> = table.query()
-            .only_if(format!("user_id = '{}' AND target_id = '{}'", escaped_user_id, target_id))
-            .execute().await?.try_collect().await?;
+        let batches: Vec<RecordBatch> = table
+            .query()
+            .only_if(format!(
+                "user_id = '{}' AND target_id = '{}'",
+                escaped_user_id, target_id
+            ))
+            .execute()
+            .await?
+            .try_collect()
+            .await?;
 
         edges.extend(self.batches_to_edges(batches)?);
         Ok(Self::dedup_edges(edges))
@@ -245,16 +365,20 @@ impl GraphStore {
         let mut edges = {
             let buf = self.buffer.lock().await;
             buf.iter()
-               .filter(|e| e.user_id == user_id)
-               .cloned()
-               .collect::<Vec<_>>()
+                .filter(|e| e.user_id == user_id)
+                .cloned()
+                .collect::<Vec<_>>()
         };
 
         let table = self.db.open_table(&self.table_name).execute().await?;
         let escaped_user_id = user_id.replace("'", "''");
-        let batches: Vec<RecordBatch> = table.query()
+        let batches: Vec<RecordBatch> = table
+            .query()
             .only_if(format!("user_id = '{}'", escaped_user_id))
-            .execute().await?.try_collect().await?;
+            .execute()
+            .await?
+            .try_collect()
+            .await?;
 
         edges.extend(self.batches_to_edges(batches)?);
         Ok(Self::dedup_edges(edges))
@@ -267,11 +391,7 @@ impl GraphStore {
         };
 
         let table = self.db.open_table(&self.table_name).execute().await?;
-        let batches: Vec<RecordBatch> = table.query()
-            .execute()
-            .await?
-            .try_collect()
-            .await?;
+        let batches: Vec<RecordBatch> = table.query().execute().await?.try_collect().await?;
 
         edges.extend(self.batches_to_edges(batches)?);
         Ok(Self::dedup_edges(edges))
@@ -295,7 +415,8 @@ impl GraphStore {
             let buf = self.buffer.lock().await;
             for edge in buf.iter() {
                 if edge.user_id == user_id && source_ids.contains(&edge.source_id) {
-                    result.entry(edge.source_id)
+                    result
+                        .entry(edge.source_id)
                         .or_insert_with(Vec::new)
                         .push(edge.clone());
                 }
@@ -303,7 +424,8 @@ impl GraphStore {
         }
 
         // 构建 SQL IN 子句
-        let source_ids_str = source_ids.iter()
+        let source_ids_str = source_ids
+            .iter()
             .map(|id| format!("'{}'", id))
             .collect::<Vec<_>>()
             .join(", ");
@@ -311,13 +433,13 @@ impl GraphStore {
         let escaped_user_id = user_id.replace("'", "''");
         let filter = format!(
             "user_id = '{}' AND source_id IN ({})",
-            escaped_user_id,
-            source_ids_str
+            escaped_user_id, source_ids_str
         );
 
         // 单次批量查询
         let table = self.db.open_table(&self.table_name).execute().await?;
-        let batches: Vec<RecordBatch> = table.query()
+        let batches: Vec<RecordBatch> = table
+            .query()
             .only_if(filter)
             .execute()
             .await?
@@ -327,7 +449,8 @@ impl GraphStore {
         // 分组
         let db_edges = self.batches_to_edges(batches)?;
         for edge in db_edges {
-            result.entry(edge.source_id)
+            result
+                .entry(edge.source_id)
                 .or_insert_with(Vec::new)
                 .push(edge);
         }
@@ -358,7 +481,8 @@ impl GraphStore {
             let buf = self.buffer.lock().await;
             for edge in buf.iter() {
                 if edge.user_id == user_id && target_ids.contains(&edge.target_id) {
-                    result.entry(edge.target_id)
+                    result
+                        .entry(edge.target_id)
                         .or_insert_with(Vec::new)
                         .push(edge.clone());
                 }
@@ -366,7 +490,8 @@ impl GraphStore {
         }
 
         // 构建 SQL IN 子句
-        let target_ids_str = target_ids.iter()
+        let target_ids_str = target_ids
+            .iter()
             .map(|id| format!("'{}'", id))
             .collect::<Vec<_>>()
             .join(", ");
@@ -374,13 +499,13 @@ impl GraphStore {
         let escaped_user_id = user_id.replace("'", "''");
         let filter = format!(
             "user_id = '{}' AND target_id IN ({})",
-            escaped_user_id,
-            target_ids_str
+            escaped_user_id, target_ids_str
         );
 
         // 单次批量查询
         let table = self.db.open_table(&self.table_name).execute().await?;
-        let batches: Vec<RecordBatch> = table.query()
+        let batches: Vec<RecordBatch> = table
+            .query()
             .only_if(filter)
             .execute()
             .await?
@@ -390,7 +515,8 @@ impl GraphStore {
         // 分组
         let db_edges = self.batches_to_edges(batches)?;
         for edge in db_edges {
-            result.entry(edge.target_id)
+            result
+                .entry(edge.target_id)
                 .or_insert_with(Vec::new)
                 .push(edge);
         }
@@ -406,19 +532,27 @@ impl GraphStore {
     fn dedup_edges(edges: Vec<GraphEdge>) -> Vec<GraphEdge> {
         use std::collections::HashMap;
 
-        let mut map: HashMap<(String, Uuid, Uuid, &'static str), GraphEdge> = HashMap::new();
+        let mut map: HashMap<
+            (String, String, String, String, Uuid, Uuid, String, String),
+            GraphEdge,
+        > = HashMap::new();
         for edge in edges {
             let key = (
                 edge.user_id.clone(),
+                edge.namespace_key.clone(),
+                edge.source_namespace_key.clone(),
+                edge.target_namespace_key.clone(),
                 edge.source_id,
                 edge.target_id,
-                edge.relation.as_str(),
+                edge.relation.as_str().to_string(),
+                edge.edge_kind.as_str().to_string(),
             );
 
             match map.get_mut(&key) {
                 Some(existing) => {
                     if edge.transaction_time > existing.transaction_time
-                        || (edge.transaction_time == existing.transaction_time && edge.weight > existing.weight)
+                        || (edge.transaction_time == existing.transaction_time
+                            && edge.weight > existing.weight)
                     {
                         *existing = edge;
                     }
@@ -435,17 +569,75 @@ impl GraphStore {
     fn batches_to_edges(&self, batches: Vec<RecordBatch>) -> Result<Vec<GraphEdge>> {
         let mut edges = Vec::new();
         for batch in batches {
-            let user_col = batch.column(0).as_any().downcast_ref::<StringArray>().context("col 0")?;
-            let source_col = batch.column(1).as_any().downcast_ref::<StringArray>().context("col 1")?;
-            let target_col = batch.column(2).as_any().downcast_ref::<StringArray>().context("col 2")?;
-            let rel_col = batch.column(3).as_any().downcast_ref::<StringArray>().context("col 3")?;
-            let weight_col = batch.column(4).as_any().downcast_ref::<Float32Array>().context("col 4")?;
-            let time_col = batch.column(5).as_any().downcast_ref::<TimestampMicrosecondArray>().context("col 5")?;
+            let user_col = batch
+                .column_by_name("user_id")
+                .context("user_id column missing")?
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .context("user_id")?;
+            let namespace_col = batch
+                .column_by_name("namespace_key")
+                .context("namespace_key column missing")?
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .context("namespace_key")?;
+            let source_namespace_col = batch
+                .column_by_name("source_namespace_key")
+                .context("source_namespace_key column missing")?
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .context("source_namespace_key")?;
+            let target_namespace_col = batch
+                .column_by_name("target_namespace_key")
+                .context("target_namespace_key column missing")?
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .context("target_namespace_key")?;
+            let source_col = batch
+                .column_by_name("source_id")
+                .context("source_id column missing")?
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .context("source_id")?;
+            let target_col = batch
+                .column_by_name("target_id")
+                .context("target_id column missing")?
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .context("target_id")?;
+            let edge_kind_col = batch
+                .column_by_name("edge_kind")
+                .context("edge_kind column missing")?
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .context("edge_kind")?;
+            let rel_col = batch
+                .column_by_name("relation")
+                .context("relation column missing")?
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .context("relation")?;
+            let weight_col = batch
+                .column_by_name("weight")
+                .context("weight column missing")?
+                .as_any()
+                .downcast_ref::<Float32Array>()
+                .context("weight")?;
+            let time_col = batch
+                .column_by_name("transaction_time")
+                .context("transaction_time column missing")?
+                .as_any()
+                .downcast_ref::<TimestampMicrosecondArray>()
+                .context("transaction_time")?;
 
             for i in 0..batch.num_rows() {
                 let user_id = user_col.value(i).to_string();
+                let namespace_key = namespace_col.value(i).to_string();
+                let source_namespace_key = source_namespace_col.value(i).to_string();
+                let target_namespace_key = target_namespace_col.value(i).to_string();
                 let source = Uuid::parse_str(source_col.value(i)).unwrap_or_default();
                 let target = Uuid::parse_str(target_col.value(i)).unwrap_or_default();
+                let edge_kind = EdgeKind::from_str(edge_kind_col.value(i));
                 let rel_str = rel_col.value(i);
                 let relation = match rel_str {
                     "Next" => RelationType::Next,
@@ -477,8 +669,12 @@ impl GraphStore {
 
                 edges.push(GraphEdge {
                     user_id,
+                    namespace_key,
+                    source_namespace_key,
+                    target_namespace_key,
                     source_id: source,
                     target_id: target,
+                    edge_kind,
                     relation,
                     weight: weight_col.value(i),
                     transaction_time: timestamp,

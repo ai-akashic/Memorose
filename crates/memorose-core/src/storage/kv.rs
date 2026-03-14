@@ -1,7 +1,7 @@
-use rocksdb::{Options, DB};
-use std::sync::Arc;
-use std::path::Path;
 use anyhow::Result;
+use rocksdb::{Options, DB};
+use std::path::Path;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct KvStore {
@@ -14,9 +14,7 @@ impl KvStore {
         opts.create_if_missing(true);
         // Optimize for L0/WAL behavior if needed, but defaults are fine for now
         let db = DB::open(&opts, path)?;
-        Ok(Self {
-            db: Arc::new(db),
-        })
+        Ok(Self { db: Arc::new(db) })
     }
 
     pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
@@ -58,8 +56,10 @@ impl KvStore {
         // Use an explicit seek iterator instead of prefix_iterator: prefix_iterator
         // requires a configured SliceTransform prefix extractor; without one its
         // behaviour is undefined and bloom filters are bypassed.
-        use rocksdb::{IteratorMode, Direction};
-        let iter = self.db.iterator(IteratorMode::From(prefix, Direction::Forward));
+        use rocksdb::{Direction, IteratorMode};
+        let iter = self
+            .db
+            .iterator(IteratorMode::From(prefix, Direction::Forward));
         let mut results = Vec::new();
         for item in iter {
             let (k, v) = item?;
@@ -74,8 +74,10 @@ impl KvStore {
     /// Count the number of keys with the given prefix without loading values.
     /// Avoids the deserialization cost of `scan` when only the count is needed.
     pub fn count_prefix(&self, prefix: &[u8]) -> Result<usize> {
-        use rocksdb::{IteratorMode, Direction};
-        let iter = self.db.iterator(IteratorMode::From(prefix, Direction::Forward));
+        use rocksdb::{Direction, IteratorMode};
+        let iter = self
+            .db
+            .iterator(IteratorMode::From(prefix, Direction::Forward));
         let mut count = 0;
         for item in iter {
             let (k, _) = item?;
@@ -89,9 +91,15 @@ impl KvStore {
 
     /// Scan keys in the range [start_key, end_key_exclusive) using a RocksDB seek.
     /// This is O(result_size) instead of O(total_keys_with_prefix).
-    pub fn scan_range(&self, start_key: &[u8], end_key_exclusive: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
-        use rocksdb::{IteratorMode, Direction};
-        let iter = self.db.iterator(IteratorMode::From(start_key, Direction::Forward));
+    pub fn scan_range(
+        &self,
+        start_key: &[u8],
+        end_key_exclusive: &[u8],
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        use rocksdb::{Direction, IteratorMode};
+        let iter = self
+            .db
+            .iterator(IteratorMode::From(start_key, Direction::Forward));
         let mut results = Vec::new();
         for item in iter {
             let (k, v) = item?;
@@ -149,7 +157,7 @@ mod tests {
         // Scan prefix 'b:'
         let b_results = kv.scan(b"b:")?;
         assert_eq!(b_results.len(), 1);
-        
+
         Ok(())
     }
 }

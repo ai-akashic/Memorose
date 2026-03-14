@@ -1,11 +1,11 @@
 // 更新的性能测试 - 验证批量查询优化
 
-use memorose_core::MemoroseEngine;
-use memorose_common::{MemoryUnit, GraphEdge, RelationType};
-use uuid::Uuid;
-use std::time::Instant;
 use anyhow::Result;
+use memorose_common::{GraphEdge, MemoryUnit, RelationType};
+use memorose_core::MemoroseEngine;
 use std::path::PathBuf;
+use std::time::Instant;
+use uuid::Uuid;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -16,7 +16,9 @@ async fn main() -> Result<()> {
 
     // 初始化引擎
     let data_dir = PathBuf::from("./data_perf_test_v2");
-    if data_dir.exists() { std::fs::remove_dir_all(&data_dir)?; }
+    if data_dir.exists() {
+        std::fs::remove_dir_all(&data_dir)?;
+    }
     let engine = MemoroseEngine::new_with_default_threshold(&data_dir, 1000, true, true).await?;
 
     let user_id = "perf_test_user";
@@ -67,7 +69,8 @@ async fn build_test_graph(
     for i in 0..num_nodes {
         let content = format!("Node {}", i);
         let embedding = vec![i as f32 / num_nodes as f32; 384];
-        let unit = MemoryUnit::new(None, 
+        let unit = MemoryUnit::new(
+            None,
             user_id.to_string(),
             None,
             app_id.to_string(),
@@ -105,7 +108,7 @@ async fn test_batch_query_improved(
     user_id: &str,
     nodes: &[Uuid],
 ) -> Result<()> {
-    let query_nodes = &nodes[0..50];  // 查询前 50 个节点
+    let query_nodes = &nodes[0..50]; // 查询前 50 个节点
 
     // ❌ 传统方式：逐个查询
     let start = Instant::now();
@@ -170,21 +173,19 @@ async fn test_cache_performance(
     Ok(())
 }
 
-async fn test_multi_hop(
-    engine: &MemoroseEngine,
-    user_id: &str,
-    nodes: &[Uuid],
-) -> Result<()> {
+async fn test_multi_hop(engine: &MemoroseEngine, user_id: &str, nodes: &[Uuid]) -> Result<()> {
     let start_node = nodes[0];
 
     // 使用批量优化的多跳遍历
     let start = Instant::now();
-    let related_nodes = engine.multi_hop_traverse(
-        user_id,
-        vec![start_node],
-        3,  // 3 跳
-        Some(0.5),  // 最小权重
-    ).await?;
+    let related_nodes = engine
+        .multi_hop_traverse(
+            user_id,
+            vec![start_node],
+            3,         // 3 跳
+            Some(0.5), // 最小权重
+        )
+        .await?;
     let duration = start.elapsed();
 
     println!("  ✅ Batch-optimized 3-hop traversal:");

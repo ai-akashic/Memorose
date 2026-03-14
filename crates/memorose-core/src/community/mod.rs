@@ -6,14 +6,9 @@
 // - Batch-optimized for large graphs
 
 mod basic;
-mod enhanced;
 mod batch;
+mod enhanced;
 
-pub use basic::CommunityDetector;  // 保持向后兼容
-pub use enhanced::{
-    EnhancedCommunityDetector,
-    Algorithm,
-    DetectionConfig,
-    CommunityResult,
-};
+pub use basic::CommunityDetector; // 保持向后兼容
 pub use batch::BatchCommunityDetector;
+pub use enhanced::{Algorithm, CommunityResult, DetectionConfig, EnhancedCommunityDetector};

@@ -1,14 +1,16 @@
-use memorose_core::{MemoroseEngine, GraphEdge, RelationType};
-use memorose_common::MemoryUnit;
-use uuid::Uuid;
 use anyhow::Result;
-use std::path::PathBuf;
+use memorose_common::MemoryUnit;
+use memorose_core::{GraphEdge, MemoroseEngine, RelationType};
 use std::fs;
+use std::path::PathBuf;
+use uuid::Uuid;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let data_dir = PathBuf::from("./data_example_graph");
-    if data_dir.exists() { fs::remove_dir_all(&data_dir)?; }    
+    if data_dir.exists() {
+        fs::remove_dir_all(&data_dir)?;
+    }
     let engine = MemoroseEngine::new_with_default_threshold(&data_dir, 1000, true, true).await?;
     let stream_id = Uuid::new_v4();
     let user_id = "example_user".to_string();
@@ -31,12 +33,23 @@ async fn main() -> Result<()> {
     println!("\n🏗️  Building Nodes...");
     for (content, vec_data) in nodes {
         let mut embedding = vec![0.0; 384];
-        for (i, val) in vec_data.iter().enumerate() { embedding[i] = *val; }        
-        let unit = MemoryUnit::new(None, user_id.clone(), None, app_id.clone(), stream_id, memorose_common::MemoryType::Factual, content.to_string(), Some(embedding));
+        for (i, val) in vec_data.iter().enumerate() {
+            embedding[i] = *val;
+        }
+        let unit = MemoryUnit::new(
+            None,
+            user_id.clone(),
+            None,
+            app_id.clone(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            content.to_string(),
+            Some(embedding),
+        );
         units.push(unit.clone());
         engine.store_memory_unit(unit).await?;
     }
-    
+
     // 2. Create Edges (Relationships)
     // Rust -> Systems Programming (RelatedTo)
     // Rust -> Memory Safety (DerivedFrom - conceptually)
@@ -76,11 +89,17 @@ async fn main() -> Result<()> {
     // Let's see if we can use it.
     use memorose_core::CommunityDetector;
     let all_edges = graph.get_all_edges_for_user("example_user").await?;
-    
+
     let communities = CommunityDetector::detect_communities(&all_edges);
     println!("\n🏘️  Community Detection:");
-    println!("   Found {} communities/clusters.", communities.values().collect::<std::collections::HashSet<_>>().len());
-    
+    println!(
+        "   Found {} communities/clusters.",
+        communities
+            .values()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+    );
+
     for (node_id, comm_id) in &communities {
         let unit = units.iter().find(|u| u.id == *node_id).unwrap();
         println!("   - [{}] is in Cluster {}", unit.content, comm_id);
@@ -89,7 +108,7 @@ async fn main() -> Result<()> {
     println!("\n📊 Performance Metrics:");
     println!("   - Graph Storage: Adjacency List in RocksDB");
     println!("   - Traversal: O(k) where k is degree of node");
-    
+
     println!("\n💡 Potential Use Cases:");
     println!("   - Knowledge Graph RAG (GraphRAG)");
     println!("   - Concept Drift Detection");

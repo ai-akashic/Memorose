@@ -61,8 +61,8 @@ impl DashboardAuth {
 
         // Use create_new(true) for an atomic create -- prevents TOCTOU race between
         // check and write when multiple processes start simultaneously.
-        let initial_password = std::env::var("DASHBOARD_ADMIN_PASSWORD")
-            .unwrap_or_else(|_| "admin".to_string());
+        let initial_password =
+            std::env::var("DASHBOARD_ADMIN_PASSWORD").unwrap_or_else(|_| "admin".to_string());
         let must_change = initial_password == "admin";
         let password_hash = hash(&initial_password, DEFAULT_COST)?;
         let auth_data = AuthData {

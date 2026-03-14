@@ -1,11 +1,11 @@
+use crate::llm::{EmbedInput, EmbedPart, LLMClient};
 use crate::MemoroseEngine;
-use crate::llm::{LLMClient, EmbedInput, EmbedPart};
-use memorose_common::{MemoryUnit, config::AppConfig, Asset};
-use tokio::time::Duration;
-use tokio::sync::mpsc;
 use anyhow::Result;
+use memorose_common::{config::AppConfig, Asset, MemoryUnit};
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::mpsc;
+use tokio::time::Duration;
 
 pub struct BackgroundWorker {
     engine: MemoroseEngine,
@@ -30,7 +30,7 @@ impl BackgroundWorker {
 
     pub fn with_config(engine: MemoroseEngine, config: AppConfig) -> Self {
         let llm_client = crate::llm::create_llm_client(&config.llm);
-        
+
         if llm_client.is_none() {
             tracing::warn!("BackgroundWorker starting without API Key. Summary and Insight features will be disabled/degraded.");
         }
@@ -149,7 +149,9 @@ impl BackgroundWorker {
                 task.status = memorose_common::TaskStatus::InProgress;
                 let _ = self.engine.store_l3_task(&task).await;
 
-                let mut summary = String::from("Task automatically completed by backend worker without LLM interaction.");
+                let mut summary = String::from(
+                    "Task automatically completed by backend worker without LLM interaction.",
+                );
 
                 // If we have an LLM client, generate an insight for the milestone
                 if let Some(client) = &self.llm_client {
@@ -169,10 +171,15 @@ impl BackgroundWorker {
                 let event = memorose_common::Event::new(
                     task.org_id.clone(),
                     user_id.clone(),
-                    task.agent_id.clone().or_else(|| Some("system_worker".to_string())),
+                    task.agent_id
+                        .clone()
+                        .or_else(|| Some("system_worker".to_string())),
                     task.app_id.clone(),
                     uuid::Uuid::new_v4(),
-                    memorose_common::EventContent::Text(format!("Completed Milestone '{}': {}", task.title, summary)),
+                    memorose_common::EventContent::Text(format!(
+                        "Completed Milestone '{}': {}",
+                        task.title, summary
+                    )),
                 );
                 let _ = self.engine.ingest_event(event).await;
             }
@@ -192,18 +199,26 @@ impl BackgroundWorker {
 
             // Scan active_user markers to find users needing decay
             let skv = self.engine.system_kv();
-            let active_pairs = tokio::task::spawn_blocking(move || {
-                skv.scan(b"active_user:")
-            }).await??;
+            let active_pairs =
+                tokio::task::spawn_blocking(move || skv.scan(b"active_user:")).await??;
 
             for (key, _) in active_pairs {
                 let key_str = String::from_utf8(key)?;
                 if let Some(user_id) = key_str.strip_prefix("active_user:") {
-                    self.engine.decay_importance(user_id, self.config.decay_factor).await?;
+                    self.engine
+                        .decay_importance(user_id, self.config.decay_factor)
+                        .await?;
 
-                    let pruned = self.engine.prune_memories(user_id, self.config.prune_threshold).await?;
+                    let pruned = self
+                        .engine
+                        .prune_memories(user_id, self.config.prune_threshold)
+                        .await?;
                     if pruned > 0 {
-                        tracing::info!("Pruned {} low-importance memories for user {}", pruned, user_id);
+                        tracing::info!(
+                            "Pruned {} low-importance memories for user {}",
+                            pruned,
+                            user_id
+                        );
                     }
                 }
             }
@@ -230,11 +245,12 @@ impl BackgroundWorker {
     /// Generates a semantic fingerprint by stripping numbers, punctuation, and converting to lowercase.
     /// This allows us to catch highly similar structural logs (e.g. "Tool failed at 12:01" vs "Tool failed at 12:02").
     fn generate_semantic_fingerprint(text: &str) -> u64 {
-        let normalized: String = text.chars()
+        let normalized: String = text
+            .chars()
             .filter(|c| c.is_alphabetic() || c.is_whitespace())
             .map(|c| c.to_ascii_lowercase())
             .collect();
-            
+
         // Reduce multiple whitespaces to single space for stable hashing
         let collapsed: String = normalized.split_whitespace().collect::<Vec<_>>().join(" ");
 
@@ -244,13 +260,20 @@ impl BackgroundWorker {
         hasher.finish()
     }
 
-    async fn extract_text_and_embed_input(event: &memorose_common::Event, llm: Option<&dyn crate::llm::LLMClient>) -> (String, EmbedInput) {
+    async fn extract_text_and_embed_input(
+        event: &memorose_common::Event,
+        llm: Option<&dyn crate::llm::LLMClient>,
+    ) -> (String, EmbedInput) {
         match &event.content {
             memorose_common::EventContent::Text(t) => (t.clone(), EmbedInput::Text(t.clone())),
             memorose_common::EventContent::Image(url) => {
                 // For native multimodal embedding, try to fetch bytes for inline embedding
                 let text_description = if let Some(client) = llm {
-                    client.describe_image(url).await.map(|r| r.data).unwrap_or_else(|_| format!("Image at {}", url))
+                    client
+                        .describe_image(url)
+                        .await
+                        .map(|r| r.data)
+                        .unwrap_or_else(|_| format!("Image at {}", url))
                 } else {
                     format!("Image at {}", url)
                 };
@@ -259,7 +282,9 @@ impl BackgroundWorker {
                     // URL-based: fetch the bytes for inline embedding
                     match reqwest::get(url).await {
                         Ok(resp) => {
-                            let mime = resp.headers().get("content-type")
+                            let mime = resp
+                                .headers()
+                                .get("content-type")
                                 .and_then(|v| v.to_str().ok())
                                 .unwrap_or("image/jpeg")
                                 .to_string();
@@ -267,7 +292,10 @@ impl BackgroundWorker {
                                 Ok(bytes) => EmbedInput::Multimodal {
                                     parts: vec![EmbedPart::InlineData {
                                         mime_type: mime,
-                                        data: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes),
+                                        data: base64::Engine::encode(
+                                            &base64::engine::general_purpose::STANDARD,
+                                            &bytes,
+                                        ),
                                     }],
                                 },
                                 Err(_) => EmbedInput::Text(text_description.clone()),
@@ -289,7 +317,11 @@ impl BackgroundWorker {
             }
             memorose_common::EventContent::Audio(url) => {
                 let text_description = if let Some(client) = llm {
-                    client.transcribe(url).await.map(|r| r.data).unwrap_or_else(|_| format!("Audio at {}", url))
+                    client
+                        .transcribe(url)
+                        .await
+                        .map(|r| r.data)
+                        .unwrap_or_else(|_| format!("Audio at {}", url))
                 } else {
                     format!("Audio at {}", url)
                 };
@@ -297,7 +329,9 @@ impl BackgroundWorker {
                 let embed_input = if url.starts_with("http") {
                     match reqwest::get(url).await {
                         Ok(resp) => {
-                            let mime = resp.headers().get("content-type")
+                            let mime = resp
+                                .headers()
+                                .get("content-type")
                                 .and_then(|v| v.to_str().ok())
                                 .unwrap_or("audio/mp3")
                                 .to_string();
@@ -305,7 +339,10 @@ impl BackgroundWorker {
                                 Ok(bytes) => EmbedInput::Multimodal {
                                     parts: vec![EmbedPart::InlineData {
                                         mime_type: mime,
-                                        data: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes),
+                                        data: base64::Engine::encode(
+                                            &base64::engine::general_purpose::STANDARD,
+                                            &bytes,
+                                        ),
                                     }],
                                 },
                                 Err(_) => EmbedInput::Text(text_description.clone()),
@@ -326,7 +363,11 @@ impl BackgroundWorker {
             }
             memorose_common::EventContent::Video(url) => {
                 let text_description = if let Some(client) = llm {
-                    client.describe_video(url).await.map(|r| r.data).unwrap_or_else(|_| format!("Video at {}", url))
+                    client
+                        .describe_video(url)
+                        .await
+                        .map(|r| r.data)
+                        .unwrap_or_else(|_| format!("Video at {}", url))
                 } else {
                     format!("Video at {}", url)
                 };
@@ -334,7 +375,9 @@ impl BackgroundWorker {
                 let embed_input = if url.starts_with("http") {
                     match reqwest::get(url).await {
                         Ok(resp) => {
-                            let mime = resp.headers().get("content-type")
+                            let mime = resp
+                                .headers()
+                                .get("content-type")
                                 .and_then(|v| v.to_str().ok())
                                 .unwrap_or("video/mp4")
                                 .to_string();
@@ -342,7 +385,10 @@ impl BackgroundWorker {
                                 Ok(bytes) => EmbedInput::Multimodal {
                                     parts: vec![EmbedPart::InlineData {
                                         mime_type: mime,
-                                        data: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes),
+                                        data: base64::Engine::encode(
+                                            &base64::engine::general_purpose::STANDARD,
+                                            &bytes,
+                                        ),
                                     }],
                                 },
                                 Err(_) => EmbedInput::Text(text_description.clone()),
@@ -370,7 +416,9 @@ impl BackgroundWorker {
 
     fn extract_assets_from_event(event: &memorose_common::Event) -> Vec<memorose_common::Asset> {
         match &event.content {
-            memorose_common::EventContent::Text(_) | memorose_common::EventContent::Json(_) => vec![],
+            memorose_common::EventContent::Text(_) | memorose_common::EventContent::Json(_) => {
+                vec![]
+            }
             memorose_common::EventContent::Image(url) => vec![memorose_common::Asset {
                 storage_key: url.clone(),
                 original_name: "image".to_string(),
@@ -393,7 +441,11 @@ impl BackgroundWorker {
     }
 
     async fn run_consolidation_cycle(&self) -> Result<bool> {
-        let consolidation_interval = Duration::from_millis(self.config.consolidation_interval_ms.max(self.config.tick_interval_ms));
+        let consolidation_interval = Duration::from_millis(
+            self.config
+                .consolidation_interval_ms
+                .max(self.config.tick_interval_ms),
+        );
         let should_run = {
             let last = self.last_consolidation.lock().await;
             last.elapsed() > consolidation_interval
@@ -417,11 +469,17 @@ impl BackgroundWorker {
         let mut failed_events = Vec::new();
 
         for event in events {
-            let retry_count = self.engine.get_retry_count(&event.id.to_string()).await.unwrap_or(0);
+            let retry_count = self
+                .engine
+                .get_retry_count(&event.id.to_string())
+                .await
+                .unwrap_or(0);
             if retry_count >= max_retries {
                 tracing::warn!(
                     "Event {} exceeded max retries ({}/{}), moving to failed queue",
-                    event.id, retry_count, max_retries
+                    event.id,
+                    retry_count,
+                    max_retries
                 );
                 failed_events.push(event);
             } else {
@@ -431,10 +489,14 @@ impl BackgroundWorker {
 
         // Mark failed
         for event in failed_events {
-            if let Err(e) = self.engine.mark_event_failed(
-                &event.id.to_string(),
-                &format!("Exceeded max retries ({})", max_retries)
-            ).await {
+            if let Err(e) = self
+                .engine
+                .mark_event_failed(
+                    &event.id.to_string(),
+                    &format!("Exceeded max retries ({})", max_retries),
+                )
+                .await
+            {
                 tracing::error!("Failed to mark event {} as failed: {:?}", event.id, e);
             }
         }
@@ -443,24 +505,36 @@ impl BackgroundWorker {
             return Ok(false);
         }
 
+        valid_events.sort_by(|a, b| a.transaction_time.cmp(&b.transaction_time));
+
         // 1.5 Batching / Prompt Packing (Group contiguous events)
         let mut packed_batches: Vec<Vec<memorose_common::Event>> = Vec::new();
         let mut current_batch: Vec<memorose_common::Event> = Vec::new();
-        let mut current_key: Option<(String, Option<String>)> = None;
+        let mut current_key: Option<(String, String, uuid::Uuid, Option<String>)> = None;
 
         for event in valid_events {
-            let is_agent = event.metadata.get("role").and_then(|v| v.as_str()) == Some("assistant") 
+            let is_agent = event.metadata.get("role").and_then(|v| v.as_str()) == Some("assistant")
                 || event.metadata.get("agent_id").is_some();
             let agent_id = if is_agent {
-                event.metadata.get("agent_id").and_then(|v| v.as_str()).map(|s| s.to_string())
+                event
+                    .metadata
+                    .get("agent_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
                     .or(Some("default_agent".to_string())) // Fallback to group all raw assistant messages together
             } else {
                 None
             };
-            
-            let key = (event.user_id.clone(), agent_id);
-            
-            if Some(&key) != current_key.as_ref() || current_batch.len() >= 10 { // Max 10 events per packed prompt
+
+            let key = (
+                event.user_id.clone(),
+                event.app_id.clone(),
+                event.stream_id,
+                agent_id,
+            );
+
+            if Some(&key) != current_key.as_ref() || current_batch.len() >= 10 {
+                // Max 10 events per packed prompt
                 if !current_batch.is_empty() {
                     packed_batches.push(std::mem::take(&mut current_batch));
                 }
@@ -487,15 +561,18 @@ impl BackgroundWorker {
         // Spawn Producer — keep the handle so we can detect panics after the consumer drains.
         let producer_handle = tokio::spawn(async move {
             let mut join_set = tokio::task::JoinSet::new();
-            
+
             for mut events in packed_batches {
-                if events.is_empty() { continue; }
+                if events.is_empty() {
+                    continue;
+                }
                 let llm = llm_client_clone.clone();
                 let engine = engine_clone.clone();
-                
+
                 // For a packed batch, we will extract the common identifiers from the first event
                 let first_event = events.remove(0);
-                let (first_text, first_embed_input) = Self::extract_text_and_embed_input(&first_event, llm.as_deref()).await;
+                let (first_text, first_embed_input) =
+                    Self::extract_text_and_embed_input(&first_event, llm.as_deref()).await;
                 let mut combined_text = format!("Message 1: {}", first_text);
                 // Track the first multimodal embed input for the batch
                 let embed_input = if first_embed_input.has_multimodal_parts() {
@@ -519,7 +596,8 @@ impl BackgroundWorker {
 
                 // Append the rest
                 for (i, evt) in events.into_iter().enumerate() {
-                    let (evt_text, _evt_embed_input) = Self::extract_text_and_embed_input(&evt, llm.as_deref()).await;
+                    let (evt_text, _evt_embed_input) =
+                        Self::extract_text_and_embed_input(&evt, llm.as_deref()).await;
                     combined_text.push_str(&format!("\nMessage {}: {}", i + 2, evt_text));
                     event_ids.push(evt.id);
                     assets.extend(Self::extract_assets_from_event(&evt));
@@ -528,14 +606,14 @@ impl BackgroundWorker {
                 // Limit concurrency
                 if join_set.len() >= concurrency_limit {
                     if let Some(res) = join_set.join_next().await {
-                         match res {
-                             Ok(data) => {
-                                 if tx.send(data).await.is_err() {
-                                     tracing::error!("Compression pipeline: consumer channel closed; dropping batch");
-                                 }
-                             }
-                             Err(e) => tracing::error!("Compression task panicked: {:?}", e),
-                         }
+                        match res {
+                            Ok(data) => {
+                                if tx.send(data).await.is_err() {
+                                    tracing::error!("Compression pipeline: consumer channel closed; dropping batch");
+                                }
+                            }
+                            Err(e) => tracing::error!("Compression task panicked: {:?}", e),
+                        }
                     }
                 }
 
@@ -543,7 +621,7 @@ impl BackgroundWorker {
                     // Semantic Deduplication Check
                     let fingerprint = Self::generate_semantic_fingerprint(&combined_text);
                     let dedup_key = format!("dedup:{}:{}", user_id, fingerprint);
-                    
+
                     let is_duplicate = if let Ok(Some(last_seen_bytes)) = engine.system_kv().get(dedup_key.as_bytes()) {
                         if let Some(last_seen) = String::from_utf8(last_seen_bytes).ok().and_then(|s| s.parse::<i64>().ok()) {
                             let now = chrono::Utc::now().timestamp();
@@ -575,10 +653,10 @@ impl BackgroundWorker {
                             },
                             None => (combined_text, None),
                         };
-                        
+
                         // Save fingerprint
                         let _ = engine.system_kv().put(dedup_key.as_bytes(), chrono::Utc::now().timestamp().to_string().as_bytes());
-                        
+
                         (compressed, valid)
                     };
 
@@ -591,7 +669,9 @@ impl BackgroundWorker {
                 match res {
                     Ok(data) => {
                         if tx.send(data).await.is_err() {
-                            tracing::error!("Compression pipeline: consumer channel closed; dropping batch");
+                            tracing::error!(
+                                "Compression pipeline: consumer channel closed; dropping batch"
+                            );
                         }
                     }
                     Err(e) => tracing::error!("Compression task panicked: {:?}", e),
@@ -651,15 +731,29 @@ impl BackgroundWorker {
     /// Helper for pipeline batch processing
     async fn process_pipeline_batch(
         &self,
-        batch: Vec<(Vec<uuid::Uuid>, String, String, uuid::Uuid, String, Option<String>, Vec<Asset>, serde_json::Value, Option<EmbedInput>)>
+        batch: Vec<(
+            Vec<uuid::Uuid>,
+            String,
+            String,
+            uuid::Uuid,
+            String,
+            Option<String>,
+            Vec<Asset>,
+            serde_json::Value,
+            Option<EmbedInput>,
+        )>,
     ) -> Result<Vec<String>> {
-        if batch.is_empty() { return Ok(Vec::new()); }
+        if batch.is_empty() {
+            return Ok(Vec::new());
+        }
 
         // Phase 2: Batch Embed
         let mut inputs_to_embed = Vec::new();
         let mut needs_embedding = Vec::new();
 
-        for (idx, (event_ids, _, _, _, summary, _, _, metadata, embed_input)) in batch.iter().enumerate() {
+        for (idx, (event_ids, _, _, _, summary, _, _, metadata, embed_input)) in
+            batch.iter().enumerate()
+        {
             match Self::parse_metadata_embedding(metadata) {
                 Some(Some(_)) => continue,
                 Some(None) | None => {}
@@ -669,7 +763,9 @@ impl BackgroundWorker {
                 continue;
             }
             // Use multimodal embed input if available, otherwise fall back to text
-            let input = embed_input.clone().unwrap_or_else(|| EmbedInput::Text(summary.clone()));
+            let input = embed_input
+                .clone()
+                .unwrap_or_else(|| EmbedInput::Text(summary.clone()));
             inputs_to_embed.push(input);
             needs_embedding.push(idx);
         }
@@ -682,7 +778,13 @@ impl BackgroundWorker {
                         // Fallback to individual embed_content calls
                         let mut embs = Vec::with_capacity(inputs_to_embed.len());
                         for input in inputs_to_embed {
-                            embs.push(client.embed_content(input).await.map(|r| r.data).unwrap_or_default());
+                            embs.push(
+                                client
+                                    .embed_content(input)
+                                    .await
+                                    .map(|r| r.data)
+                                    .unwrap_or_default(),
+                            );
                         }
                         embs
                     }
@@ -705,33 +807,55 @@ impl BackgroundWorker {
         let mut units_to_store = Vec::new();
         let mut processed_ids = Vec::new();
 
-        for (idx, (event_ids, user_id, app_id, stream_id, summary, valid_at, assets, metadata, _embed_input)) in batch.into_iter().enumerate() {
+        for (
+            idx,
+            (
+                event_ids,
+                user_id,
+                app_id,
+                stream_id,
+                summary,
+                valid_at,
+                assets,
+                metadata,
+                _embed_input,
+            ),
+        ) in batch.into_iter().enumerate()
+        {
             let embedding = match Self::parse_metadata_embedding(&metadata) {
                 Some(Some(vec)) => Some(vec),
                 Some(None) | None => embeddings_by_idx.remove(&idx),
             };
 
-            let is_agent = metadata.get("role").and_then(|v| v.as_str()) == Some("assistant") 
+            let is_agent = metadata.get("role").and_then(|v| v.as_str()) == Some("assistant")
                 || metadata.get("agent_id").is_some();
-            
-            let agent_id = metadata.get("agent_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-            
+
+            let agent_id = metadata
+                .get("agent_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
             let memory_type = if is_agent {
                 memorose_common::MemoryType::Procedural
             } else {
                 memorose_common::MemoryType::Factual
             };
 
-            let mut unit = MemoryUnit::new(None, 
-                user_id, 
+            let mut unit = MemoryUnit::new(
+                None,
+                user_id,
                 agent_id,
-                app_id, 
-                stream_id, 
+                app_id,
+                stream_id,
                 memory_type,
-                summary, 
-                embedding
+                summary,
+                embedding,
             );
-            unit.valid_time = valid_at.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc)));
+            unit.valid_time = valid_at.and_then(|s| {
+                chrono::DateTime::parse_from_rfc3339(&s)
+                    .ok()
+                    .map(|d| d.with_timezone(&chrono::Utc))
+            });
             unit.assets = assets;
 
             // Link to all source events
@@ -743,18 +867,25 @@ impl BackgroundWorker {
             if let Some(level) = metadata.get("target_level").and_then(|v| v.as_u64()) {
                 unit.level = level as u8;
                 if let Some(pid_str) = metadata.get("parent_id").and_then(|v| v.as_str()) {
-                    if let Ok(pid) = uuid::Uuid::parse_str(pid_str) { unit.references.push(pid); }
+                    if let Ok(pid) = uuid::Uuid::parse_str(pid_str) {
+                        unit.references.push(pid);
+                    }
                 }
                 if level >= 1 {
                     let status = match metadata.get("task_status").and_then(|v| v.as_str()) {
                         Some("Completed") => memorose_common::TaskStatus::Completed,
                         Some("Active") => memorose_common::TaskStatus::InProgress,
-                        Some("Failed") => memorose_common::TaskStatus::Failed("Metadata indicated failure".to_string()),
+                        Some("Failed") => memorose_common::TaskStatus::Failed(
+                            "Metadata indicated failure".to_string(),
+                        ),
                         _ => memorose_common::TaskStatus::Pending,
                     };
                     unit.task_metadata = Some(memorose_common::TaskMetadata {
                         status,
-                        progress: metadata.get("task_progress").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+                        progress: metadata
+                            .get("task_progress")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.0) as f32,
                     });
                 }
             }
@@ -766,7 +897,9 @@ impl BackgroundWorker {
         }
 
         if !units_to_store.is_empty() {
-            self.engine.store_memory_units(units_to_store.clone()).await?;
+            self.engine
+                .store_memory_units(units_to_store.clone())
+                .await?;
 
             // Post-storage hooks (Reflection markers, etc.)
             let mut l1_increase_by_user: HashMap<String, usize> = HashMap::new();
@@ -776,15 +909,19 @@ impl BackgroundWorker {
                     *l1_increase_by_user.entry(unit.user_id.clone()).or_insert(0) += 1;
                 }
             }
-            
+
             // Community Trigger
             let community_step = self.config.community_trigger_l1_step.max(1);
             for (user_id, delta) in l1_increase_by_user {
-                 if let Ok((before, after)) = self.engine.bump_l1_count_and_get_range(&user_id, delta).await {
-                     if before / community_step < after / community_step && after >= community_step {
-                         let _ = self.engine.set_needs_community(&user_id);
-                     }
-                 }
+                if let Ok((before, after)) = self
+                    .engine
+                    .bump_l1_count_and_get_range(&user_id, delta)
+                    .await
+                {
+                    if before / community_step < after / community_step && after >= community_step {
+                        let _ = self.engine.set_needs_community(&user_id);
+                    }
+                }
             }
 
             // Task Reflection
@@ -793,16 +930,23 @@ impl BackgroundWorker {
                 for unit in &units_to_store {
                     if let Some(ref meta) = unit.task_metadata {
                         if meta.status == memorose_common::TaskStatus::Completed {
-                             // This part is complex to clone inside loop, maybe skip for pipeline simplification or re-implement
-                             // For now, let's keep it minimal or trigger async?
-                             // Re-implementing simplified version:
-                             if let Ok(incoming) = self.engine.graph().get_incoming_edges(&unit.user_id, unit.id).await {
-                                 for edge in incoming {
-                                     if edge.relation == memorose_common::RelationType::IsSubTaskOf {
-                                         let _ = self.update_parent_progress(&unit.user_id, edge.source_id).await;
-                                     }
-                                 }
-                             }
+                            // This part is complex to clone inside loop, maybe skip for pipeline simplification or re-implement
+                            // For now, let's keep it minimal or trigger async?
+                            // Re-implementing simplified version:
+                            if let Ok(incoming) = self
+                                .engine
+                                .graph()
+                                .get_incoming_edges(&unit.user_id, unit.id)
+                                .await
+                            {
+                                for edge in incoming {
+                                    if edge.relation == memorose_common::RelationType::IsSubTaskOf {
+                                        let _ = self
+                                            .update_parent_progress(&unit.user_id, edge.source_id)
+                                            .await;
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -818,7 +962,11 @@ impl BackgroundWorker {
     }
 
     async fn run_community_cycle(&self) -> Result<()> {
-        let community_interval = Duration::from_millis(self.config.community_interval_ms.max(self.config.tick_interval_ms));
+        let community_interval = Duration::from_millis(
+            self.config
+                .community_interval_ms
+                .max(self.config.tick_interval_ms),
+        );
         let should_run = {
             let last = self.last_community.lock().await;
             last.elapsed() > community_interval
@@ -854,13 +1002,12 @@ impl BackgroundWorker {
                         user_id,
                         created
                     );
+                    self.engine.clear_community_marker(&user_id)?;
                 }
                 Err(e) => {
                     tracing::warn!("Community processing failed for user {}: {:?}", user_id, e);
                 }
             }
-
-            self.engine.clear_community_marker(&user_id)?;
         }
         *self.last_community.lock().await = std::time::Instant::now();
         Ok(())
@@ -868,10 +1015,14 @@ impl BackgroundWorker {
 
     async fn run_insight_cycle(&self) -> Result<()> {
         if self.llm_client.is_none() {
-            return Ok(())
+            return Ok(());
         }
 
-        let insight_interval = Duration::from_millis(self.config.insight_interval_ms.max(self.config.tick_interval_ms));
+        let insight_interval = Duration::from_millis(
+            self.config
+                .insight_interval_ms
+                .max(self.config.tick_interval_ms),
+        );
         let should_run = {
             let last = self.last_insight.lock().await;
             last.elapsed() > insight_interval
@@ -895,8 +1046,12 @@ impl BackgroundWorker {
                 .await
             {
                 Ok(l1s) => l1s,
-                Err(_) => {
-                    engine.clear_reflection_marker(&user_id)?;
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to load recent L1 units for reflection (user {}): {:?}",
+                        user_id,
+                        e
+                    );
                     continue;
                 }
             };
@@ -908,20 +1063,38 @@ impl BackgroundWorker {
             }
 
             if !unique_streams.is_empty() {
-                tracing::info!("Found {} active streams for reflection (user {})", unique_streams.len(), user_id);
+                tracing::info!(
+                    "Found {} active streams for reflection (user {})",
+                    unique_streams.len(),
+                    user_id
+                );
+                let mut all_succeeded = true;
                 for stream_id in unique_streams {
                     match engine.reflect_on_session(&user_id, stream_id).await {
                         Ok(_) => {
-                            tracing::debug!("Reflection completed for stream {} (user {})", stream_id, user_id);
+                            tracing::debug!(
+                                "Reflection completed for stream {} (user {})",
+                                stream_id,
+                                user_id
+                            );
                         }
                         Err(e) => {
-                            tracing::warn!("Reflection failed for stream {} (user {}): {:?}", stream_id, user_id, e);
+                            all_succeeded = false;
+                            tracing::warn!(
+                                "Reflection failed for stream {} (user {}): {:?}",
+                                stream_id,
+                                user_id,
+                                e
+                            );
                         }
                     }
                 }
+                if all_succeeded {
+                    engine.clear_reflection_marker(&user_id)?;
+                }
+            } else {
+                engine.clear_reflection_marker(&user_id)?;
             }
-
-            engine.clear_reflection_marker(&user_id)?;
         }
 
         *self.last_insight.lock().await = std::time::Instant::now();
@@ -931,13 +1104,22 @@ impl BackgroundWorker {
     pub async fn update_parent_progress(&self, user_id: &str, parent_id: uuid::Uuid) -> Result<()> {
         // Atomic locking per task to prevent race conditions during Read-Modify-Write.
         let lock = {
-            self.engine.task_locks.entry(parent_id).or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))).value().clone()
+            self.engine
+                .task_locks
+                .entry(parent_id)
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+                .value()
+                .clone()
         };
 
         {
             let _guard = lock.lock().await;
 
-            let incoming = self.engine.graph().get_incoming_edges(user_id, parent_id).await?;
+            let incoming = self
+                .engine
+                .graph()
+                .get_incoming_edges(user_id, parent_id)
+                .await?;
 
             let mut total = 0;
             let mut completed = 0;
@@ -945,7 +1127,9 @@ impl BackgroundWorker {
             for edge in incoming {
                 if edge.relation == memorose_common::RelationType::IsSubTaskOf {
                     total += 1;
-                    if let Some(child) = self.engine.get_memory_unit(user_id, edge.source_id).await? {
+                    if let Some(child) =
+                        self.engine.get_memory_unit(user_id, edge.source_id).await?
+                    {
                         if let Some(ref meta) = child.task_metadata {
                             if meta.status == memorose_common::TaskStatus::Completed {
                                 completed += 1;
@@ -958,19 +1142,23 @@ impl BackgroundWorker {
             if total > 0 {
                 let progress = completed as f32 / total as f32;
                 if let Some(mut parent) = self.engine.get_memory_unit(user_id, parent_id).await? {
-                     let mut meta = parent.task_metadata.clone().unwrap_or(memorose_common::TaskMetadata {
-                         status: memorose_common::TaskStatus::InProgress,
-                         progress: 0.0,
-                     });
+                    let mut meta =
+                        parent
+                            .task_metadata
+                            .clone()
+                            .unwrap_or(memorose_common::TaskMetadata {
+                                status: memorose_common::TaskStatus::InProgress,
+                                progress: 0.0,
+                            });
 
-                     if (meta.progress - progress).abs() > 0.001 {
-                         meta.progress = progress;
-                         if progress >= 1.0 {
-                             meta.status = memorose_common::TaskStatus::Completed;
-                         }
-                         parent.task_metadata = Some(meta);
-                         self.engine.store_memory_unit(parent).await?;
-                     }
+                    if (meta.progress - progress).abs() > 0.001 {
+                        meta.progress = progress;
+                        if progress >= 1.0 {
+                            meta.status = memorose_common::TaskStatus::Completed;
+                        }
+                        parent.task_metadata = Some(meta);
+                        self.engine.store_memory_unit(parent).await?;
+                    }
                 }
             }
             // _guard dropped here
@@ -989,10 +1177,10 @@ impl BackgroundWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
     use crate::llm::CompressionOutput;
     use async_trait::async_trait;
     use memorose_common::{Event, EventContent};
+    use tempfile::tempdir;
     use uuid::Uuid;
 
     const TEST_USER: &str = "test_user";
@@ -1004,36 +1192,91 @@ mod tests {
 
     #[async_trait]
     impl crate::llm::LLMClient for MockLLM {
-        async fn generate(&self, _prompt: &str) -> Result<crate::llm::LLMResponse<String>> { Ok(crate::llm::LLMResponse::default()) }
-        async fn embed(&self, _text: &str) -> Result<crate::llm::LLMResponse<Vec<f32>>> { Ok(crate::llm::LLMResponse { data: vec![0.0; 384], usage: Default::default() }) }
-        async fn compress(&self, text: &str, _is_agent: bool) -> Result<crate::llm::LLMResponse<CompressionOutput>> {
+        async fn generate(&self, _prompt: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse::default())
+        }
+        async fn embed(&self, _text: &str) -> Result<crate::llm::LLMResponse<Vec<f32>>> {
+            Ok(crate::llm::LLMResponse {
+                data: vec![0.0; 384],
+                usage: Default::default(),
+            })
+        }
+        async fn compress(
+            &self,
+            text: &str,
+            _is_agent: bool,
+        ) -> Result<crate::llm::LLMResponse<CompressionOutput>> {
             if self.fail_compress {
                 return Err(anyhow::anyhow!("LLM Error"));
             }
-            Ok(crate::llm::LLMResponse { data: CompressionOutput { content: text.to_string(), valid_at: None }, usage: Default::default() })
+            Ok(crate::llm::LLMResponse {
+                data: CompressionOutput {
+                    content: text.to_string(),
+                    valid_at: None,
+                },
+                usage: Default::default(),
+            })
         }
-        async fn summarize_group(&self, _texts: Vec<String>) -> Result<crate::llm::LLMResponse<String>> { Ok(crate::llm::LLMResponse { data: "summary".into(), usage: Default::default() }) }
-        async fn describe_image(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> { Ok(crate::llm::LLMResponse { data: "image".into(), usage: Default::default() }) }
-        async fn describe_video(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> { Ok(crate::llm::LLMResponse { data: "video".into(), usage: Default::default() }) }
-        async fn transcribe(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> { Ok(crate::llm::LLMResponse { data: "audio".into(), usage: Default::default() }) }
+        async fn summarize_group(
+            &self,
+            _texts: Vec<String>,
+        ) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "summary".into(),
+                usage: Default::default(),
+            })
+        }
+        async fn describe_image(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "image".into(),
+                usage: Default::default(),
+            })
+        }
+        async fn describe_video(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "video".into(),
+                usage: Default::default(),
+            })
+        }
+        async fn transcribe(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "audio".into(),
+                usage: Default::default(),
+            })
+        }
     }
 
     #[tokio::test]
     async fn test_consolidation_with_llm_failure() -> Result<()> {
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
 
         let mut worker = BackgroundWorker::new(engine.clone());
-        worker.llm_client = Some(Arc::new(MockLLM { fail_compress: true }));
+        worker.llm_client = Some(Arc::new(MockLLM {
+            fail_compress: true,
+        }));
+        *worker.last_consolidation.lock().await =
+            std::time::Instant::now() - Duration::from_secs(1);
 
-        let event = Event::new(None, TEST_USER.into(), None, TEST_APP.into(), Uuid::new_v4(), EventContent::Text("Hello".into()));
+        let event = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            TEST_APP.into(),
+            Uuid::new_v4(),
+            EventContent::Text("Hello".into()),
+        );
         engine.ingest_event_directly(event.clone()).await?;
 
         let processed = worker.run_consolidation_cycle().await?;
         assert!(processed);
 
         let pending = engine.fetch_pending_events().await?;
-        assert!(pending.is_empty(), "Event should be marked processed even if LLM failed (fallback mode)");
+        assert!(
+            pending.is_empty(),
+            "Event should be marked processed even if LLM failed (fallback mode)"
+        );
 
         Ok(())
     }
@@ -1041,12 +1284,24 @@ mod tests {
     #[tokio::test]
     async fn test_consolidation_cycle_success() -> Result<()> {
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
 
         let mut worker = BackgroundWorker::new(engine.clone());
-        worker.llm_client = Some(Arc::new(MockLLM { fail_compress: false }));
+        worker.llm_client = Some(Arc::new(MockLLM {
+            fail_compress: false,
+        }));
+        *worker.last_consolidation.lock().await =
+            std::time::Instant::now() - Duration::from_secs(1);
 
-        let event = Event::new(None, TEST_USER.into(), None, TEST_APP.into(), Uuid::new_v4(), EventContent::Text("Success".into()));
+        let event = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            TEST_APP.into(),
+            Uuid::new_v4(),
+            EventContent::Text("Success".into()),
+        );
         engine.ingest_event_directly(event.clone()).await?;
 
         worker.run_consolidation_cycle().await?;
@@ -1054,6 +1309,56 @@ mod tests {
         let l1s = engine.fetch_recent_l1_units(TEST_USER, 10).await?;
         assert_eq!(l1s.len(), 1);
         assert_eq!(l1s[0].content, "Message 1: Success");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_consolidation_respects_app_and_stream_boundaries() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.llm_client = Some(Arc::new(MockLLM {
+            fail_compress: false,
+        }));
+        *worker.last_consolidation.lock().await =
+            std::time::Instant::now() - Duration::from_secs(1);
+
+        let stream_a = Uuid::new_v4();
+        let stream_b = Uuid::new_v4();
+
+        let event_a = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            "app_a".into(),
+            stream_a,
+            EventContent::Text("First app event".into()),
+        );
+        let event_b = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            "app_b".into(),
+            stream_b,
+            EventContent::Text("Second app event".into()),
+        );
+
+        engine.ingest_event_directly(event_a).await?;
+        engine.ingest_event_directly(event_b).await?;
+
+        worker.run_consolidation_cycle().await?;
+
+        let l1s = engine.fetch_recent_l1_units(TEST_USER, 10).await?;
+        assert_eq!(l1s.len(), 2);
+        assert!(l1s
+            .iter()
+            .any(|u| u.app_id == "app_a" && u.stream_id == stream_a));
+        assert!(l1s
+            .iter()
+            .any(|u| u.app_id == "app_b" && u.stream_id == stream_b));
 
         Ok(())
     }

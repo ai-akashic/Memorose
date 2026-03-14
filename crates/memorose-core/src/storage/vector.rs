@@ -1,11 +1,13 @@
 use anyhow::Result;
-use lancedb::{connect, Connection};
-use lancedb::query::{QueryBase, ExecutableQuery};
-use arrow_schema::{Schema, Field, DataType, TimeUnit};
-use arrow_array::{RecordBatch, StringArray, Float32Array, FixedSizeListArray, Array, TimestampMicrosecondArray};
-use std::sync::Arc;
-use memorose_common::MemoryUnit;
+use arrow_array::{
+    Array, FixedSizeListArray, Float32Array, RecordBatch, StringArray, TimestampMicrosecondArray,
+};
+use arrow_schema::{DataType, Field, Schema, TimeUnit};
 use futures::StreamExt;
+use lancedb::query::{ExecutableQuery, QueryBase};
+use lancedb::{connect, Connection};
+use memorose_common::MemoryUnit;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct VectorStore {
@@ -22,12 +24,17 @@ impl VectorStore {
     pub async fn ensure_table(&self, table_name: &str) -> Result<()> {
         let tables = self.conn.table_names().execute().await?;
         if tables.contains(&table_name.to_string()) {
-            // Check if existing table has memory_type column; if not, drop and recreate
             let table = self.conn.open_table(table_name).execute().await?;
             let schema = table.schema().await?;
-            let has_memory_type = schema.fields().iter().any(|f| f.name() == "memory_type");
-            if !has_memory_type {
-                tracing::warn!("LanceDB table '{}' missing memory_type column, recreating...", table_name);
+            let required_columns = ["memory_type", "domain", "namespace_key"];
+            let has_required_columns = required_columns
+                .iter()
+                .all(|name| schema.fields().iter().any(|f| f.name() == *name));
+            if !has_required_columns {
+                tracing::warn!(
+                    "LanceDB table '{}' missing scoped memory columns, recreating...",
+                    table_name
+                );
                 self.conn.drop_table(table_name).await?;
             } else {
                 return Ok(());
@@ -42,10 +49,20 @@ impl VectorStore {
             Field::new("app_id", DataType::Utf8, false),
             Field::new("stream_id", DataType::Utf8, false),
             Field::new("memory_type", DataType::Utf8, false),
+            Field::new("domain", DataType::Utf8, false),
+            Field::new("namespace_key", DataType::Utf8, false),
             Field::new("content", DataType::Utf8, false),
             Field::new("level", DataType::UInt8, false),
-            Field::new("transaction_time", DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())), false),
-            Field::new("valid_time", DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())), true),
+            Field::new(
+                "transaction_time",
+                DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
+                false,
+            ),
+            Field::new(
+                "valid_time",
+                DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
+                true,
+            ),
             Field::new(
                 "vector",
                 DataType::FixedSizeList(
@@ -56,7 +73,10 @@ impl VectorStore {
             ),
         ]));
 
-        self.conn.create_empty_table(table_name, schema).execute().await?;
+        self.conn
+            .create_empty_table(table_name, schema)
+            .execute()
+            .await?;
         Ok(())
     }
 
@@ -74,6 +94,8 @@ impl VectorStore {
         let mut app_ids = Vec::new();
         let mut stream_ids = Vec::new();
         let mut memory_types = Vec::new();
+        let mut domains = Vec::new();
+        let mut namespace_keys = Vec::new();
         let mut contents = Vec::new();
         let mut levels = Vec::new();
         let mut transaction_times = Vec::new();
@@ -87,18 +109,20 @@ impl VectorStore {
             agent_ids.push(unit.agent_id.clone());
             app_ids.push(unit.app_id.clone());
             stream_ids.push(unit.stream_id.to_string());
-            
+
             let m_type = match unit.memory_type {
                 memorose_common::MemoryType::Factual => "factual",
                 memorose_common::MemoryType::Procedural => "procedural",
             };
             memory_types.push(m_type.to_string());
-            
+            domains.push(unit.domain.as_str().to_string());
+            namespace_keys.push(unit.namespace_key.clone());
+
             contents.push(unit.content.clone());
             levels.push(unit.level);
             transaction_times.push(unit.transaction_time.timestamp_micros());
             valid_ats.push(unit.valid_time.map(|t| t.timestamp_micros()));
-            
+
             if let Some(emb) = &unit.embedding {
                 if emb.len() != self.dim as usize {
                     let mut e = emb.clone();
@@ -119,19 +143,18 @@ impl VectorStore {
         let app_id_array = Arc::new(StringArray::from(app_ids));
         let stream_id_array = Arc::new(StringArray::from(stream_ids));
         let memory_type_array = Arc::new(StringArray::from(memory_types));
+        let domain_array = Arc::new(StringArray::from(domains));
+        let namespace_key_array = Arc::new(StringArray::from(namespace_keys));
         let content_array = Arc::new(StringArray::from(contents));
         let level_array = Arc::new(arrow_array::UInt8Array::from(levels));
-        let transaction_time_array = Arc::new(TimestampMicrosecondArray::from(transaction_times).with_timezone("UTC"));
-        let valid_time_array = Arc::new(TimestampMicrosecondArray::from(valid_ats).with_timezone("UTC"));
-        
+        let transaction_time_array =
+            Arc::new(TimestampMicrosecondArray::from(transaction_times).with_timezone("UTC"));
+        let valid_time_array =
+            Arc::new(TimestampMicrosecondArray::from(valid_ats).with_timezone("UTC"));
+
         let field = Arc::new(Field::new("item", DataType::Float32, true));
         let values = Arc::new(Float32Array::from(vectors_flat));
-        let vector_array = Arc::new(FixedSizeListArray::new(
-            field,
-            self.dim,
-            values,
-            None,
-        ));
+        let vector_array = Arc::new(FixedSizeListArray::new(field, self.dim, values, None));
 
         let schema = table.schema().await?;
         let batch = RecordBatch::try_new(
@@ -144,19 +167,21 @@ impl VectorStore {
                 app_id_array as Arc<dyn Array>,
                 stream_id_array as Arc<dyn Array>,
                 memory_type_array as Arc<dyn Array>,
+                domain_array as Arc<dyn Array>,
+                namespace_key_array as Arc<dyn Array>,
                 content_array as Arc<dyn Array>,
                 level_array as Arc<dyn Array>,
                 transaction_time_array as Arc<dyn Array>,
                 valid_time_array as Arc<dyn Array>,
                 vector_array as Arc<dyn Array>,
-            ]
+            ],
         )?;
 
         let batch_iter = arrow_array::RecordBatchIterator::new(
-             vec![Ok(batch)].into_iter(),
-             table.schema().await?
+            vec![Ok(batch)].into_iter(),
+            table.schema().await?,
         );
-        
+
         table.add(batch_iter).execute().await?;
 
         Ok(())
@@ -193,33 +218,38 @@ impl VectorStore {
         }
     }
 
-    pub async fn search(&self, table_name: &str, query_vector: &[f32], limit: usize, filter: Option<String>) -> Result<Vec<(String, f32)>> {
-         let table = self.conn.open_table(table_name).execute().await?;
-         
-         let mut q = query_vector.to_vec();
-         q.resize(self.dim as usize, 0.0);
+    pub async fn search(
+        &self,
+        table_name: &str,
+        query_vector: &[f32],
+        limit: usize,
+        filter: Option<String>,
+    ) -> Result<Vec<(String, f32)>> {
+        let table = self.conn.open_table(table_name).execute().await?;
 
-         let mut query = table
-            .query()
-            .nearest_to(q.as_slice())?
-            .limit(limit);
-        
+        let mut q = query_vector.to_vec();
+        q.resize(self.dim as usize, 0.0);
+
+        let mut query = table.query().nearest_to(q.as_slice())?.limit(limit);
+
         if let Some(f) = filter {
             query = query.only_if(f);
         }
 
         let mut stream = query.execute().await?;
-        
+
         let mut results = Vec::new();
         while let Some(batch_res) = stream.next().await {
             let batch: RecordBatch = batch_res?;
-            let id_col = batch.column_by_name("id")
+            let id_col = batch
+                .column_by_name("id")
                 .ok_or_else(|| anyhow::anyhow!("id column not found"))?
                 .as_any()
                 .downcast_ref::<StringArray>()
                 .ok_or_else(|| anyhow::anyhow!("failed to downcast id column"))?;
-            
-            let dist_col = batch.column_by_name("_distance")
+
+            let dist_col = batch
+                .column_by_name("_distance")
                 .ok_or_else(|| anyhow::anyhow!("_distance column not found"))?
                 .as_any()
                 .downcast_ref::<Float32Array>()
@@ -232,7 +262,7 @@ impl VectorStore {
                 results.push((id, score));
             }
         }
-        
+
         Ok(results)
     }
 }
@@ -240,15 +270,15 @@ impl VectorStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
     use tempfile::tempdir;
     use uuid::Uuid;
-    use chrono::Utc;
 
     #[tokio::test]
     async fn test_vector_store() -> Result<()> {
         let temp_dir = tempdir()?;
         let db_path = temp_dir.path().to_str().unwrap();
-        
+
         let store = VectorStore::new(db_path, 384).await?;
         store.ensure_table("memories").await?;
 
@@ -257,13 +287,22 @@ mod tests {
         // Create unit with a specific vector
         let mut embedding = vec![0.0; 384];
         embedding[0] = 1.0; // Mark first dim
-        
-        let unit = MemoryUnit::new(None, "u1".into(), None, "a1".into(), stream_id, memorose_common::MemoryType::Factual, "Vector Test".to_string(), Some(embedding.clone()));
+
+        let unit = MemoryUnit::new(
+            None,
+            "u1".into(),
+            None,
+            "a1".into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Vector Test".to_string(),
+            Some(embedding.clone()),
+        );
         store.add("memories", vec![unit.clone()]).await?;
 
         // Search with exact same vector
         let results = store.search("memories", &embedding, 5, None).await?;
-        
+
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, unit.id.to_string());
         assert!(results[0].1 > 0.99); // Should be very high similarity
@@ -275,7 +314,7 @@ mod tests {
     async fn test_temporal_search() -> Result<()> {
         let temp_dir = tempdir()?;
         let db_path = temp_dir.path().to_str().unwrap();
-        
+
         let store = VectorStore::new(db_path, 384).await?;
         store.ensure_table("memories").await?;
 
@@ -283,12 +322,30 @@ mod tests {
         let embedding = vec![0.0; 384];
 
         // 1. Store OLD memory (valid last year)
-        let mut u1 = MemoryUnit::new(None, "u1".into(), None, "a1".into(), stream_id, memorose_common::MemoryType::Factual, "Old info".into(), Some(embedding.clone()));
+        let mut u1 = MemoryUnit::new(
+            None,
+            "u1".into(),
+            None,
+            "a1".into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Old info".into(),
+            Some(embedding.clone()),
+        );
         u1.valid_time = Some(Utc::now() - chrono::Duration::days(365));
         store.add("memories", vec![u1.clone()]).await?;
 
         // 2. Store NEW memory (valid now)
-        let mut u2 = MemoryUnit::new(None, "u1".into(), None, "a1".into(), stream_id, memorose_common::MemoryType::Factual, "New info".into(), Some(embedding.clone()));
+        let mut u2 = MemoryUnit::new(
+            None,
+            "u1".into(),
+            None,
+            "a1".into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "New info".into(),
+            Some(embedding.clone()),
+        );
         u2.valid_time = Some(Utc::now());
         store.add("memories", vec![u2.clone()]).await?;
 
@@ -296,9 +353,11 @@ mod tests {
         let cutoff = Utc::now() - chrono::Duration::days(7);
         let cutoff_str = cutoff.format("%Y-%m-%d %H:%M:%S").to_string();
         let filter = format!("valid_time > timestamp '{}'", cutoff_str);
-        
-        let results = store.search("memories", &embedding, 5, Some(filter)).await?;
-        
+
+        let results = store
+            .search("memories", &embedding, 5, Some(filter))
+            .await?;
+
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, u2.id.to_string());
 

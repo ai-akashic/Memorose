@@ -1,28 +1,24 @@
 // Query Optimizer - Borrowing lance-graph's query optimization concepts
 // Converts declarative queries into efficient execution plans
 
-use uuid::Uuid;
 use std::collections::HashMap;
+use uuid::Uuid;
 
 /// Query execution plan node
 #[derive(Debug, Clone)]
 pub enum ExecutionPlan {
     /// Scan starting nodes (similar to ScanByLabel in lance-graph)
-    ScanNodes {
-        node_ids: Vec<Uuid>,
-    },
+    ScanNodes { node_ids: Vec<Uuid> },
 
     /// Batch edge expansion (core of optimization)
     BatchExpand {
         input: Box<ExecutionPlan>,
         edge_filter: EdgeFilter,
-        batch_size: usize,  // How many nodes to process per batch
+        batch_size: usize, // How many nodes to process per batch
     },
 
     /// Deduplication (similar to SQL DISTINCT)
-    Distinct {
-        input: Box<ExecutionPlan>,
-    },
+    Distinct { input: Box<ExecutionPlan> },
 
     /// Limit the number of results
     Limit {
@@ -77,7 +73,12 @@ impl QueryOptimizer {
     fn push_down_filters(&self, plan: ExecutionPlan) -> ExecutionPlan {
         match plan {
             ExecutionPlan::Limit { input, count } => {
-                if let ExecutionPlan::BatchExpand { input: inner, edge_filter, batch_size } = *input {
+                if let ExecutionPlan::BatchExpand {
+                    input: inner,
+                    edge_filter,
+                    batch_size,
+                } = *input
+                {
                     // If limit is small, reduce the batch size
                     let optimized_batch = batch_size.min(count * 2);
                     ExecutionPlan::Limit {
@@ -99,11 +100,18 @@ impl QueryOptimizer {
     /// Rule 2: Adjust batch size based on statistics
     fn adjust_batch_sizes(&self, plan: ExecutionPlan) -> ExecutionPlan {
         match plan {
-            ExecutionPlan::BatchExpand { input, edge_filter, batch_size } => {
+            ExecutionPlan::BatchExpand {
+                input,
+                edge_filter,
+                batch_size,
+            } => {
                 // Dynamically adjust based on relation type fanout degree
-                let estimated_fanout = edge_filter.relation_types.iter()
+                let estimated_fanout = edge_filter
+                    .relation_types
+                    .iter()
                     .filter_map(|t| self.stats.avg_fanout.get(t))
-                    .sum::<f32>() / edge_filter.relation_types.len().max(1) as f32;
+                    .sum::<f32>()
+                    / edge_filter.relation_types.len().max(1) as f32;
 
                 let optimal_batch = if estimated_fanout > 100.0 {
                     // High fanout: decrease batch size to prevent memory explosion
@@ -146,7 +154,11 @@ impl PlanExplainer {
             ExecutionPlan::ScanNodes { node_ids } => {
                 format!("{}ScanNodes (count={})", prefix, node_ids.len())
             }
-            ExecutionPlan::BatchExpand { input, edge_filter, batch_size } => {
+            ExecutionPlan::BatchExpand {
+                input,
+                edge_filter,
+                batch_size,
+            } => {
                 let child = Self::explain_recursive(input, indent + 1);
                 format!(
                     "{}BatchExpand (batch_size={}, filter={:?})\n{}",

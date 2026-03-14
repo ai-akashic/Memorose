@@ -1,7 +1,7 @@
-use memorose_common::{MemoryUnit, GraphEdge, RelationType};
-use memorose_common::config::AppConfig;
 use crate::llm::LLMClient;
 use anyhow::Result;
+use memorose_common::config::AppConfig;
+use memorose_common::{GraphEdge, MemoryUnit, RelationType};
 use std::sync::Arc;
 
 /// Approximate character budget for LLM prompts (~25k tokens at ~4 chars/token).
@@ -10,13 +10,20 @@ const MAX_CONTEXT_CHARS: usize = 100_000;
 
 /// Build a memory context string from an iterator of formatted entries,
 /// stopping before exceeding MAX_CONTEXT_CHARS.
-fn build_bounded_context<'a>(entries: impl Iterator<Item = String>, separator: &str) -> (String, usize, usize) {
+fn build_bounded_context<'a>(
+    entries: impl Iterator<Item = String>,
+    separator: &str,
+) -> (String, usize, usize) {
     let mut context = String::new();
     let mut included = 0;
     let mut total = 0;
     for entry in entries {
         total += 1;
-        let needed = if context.is_empty() { entry.len() } else { separator.len() + entry.len() };
+        let needed = if context.is_empty() {
+            entry.len()
+        } else {
+            separator.len() + entry.len()
+        };
         if context.len() + needed > MAX_CONTEXT_CHARS {
             break; // budget exhausted; subsequent entries won't fit either
         }
@@ -49,7 +56,15 @@ pub struct Arbitrator {
 }
 
 impl Arbitrator {
-    pub async fn decompose_goal(&self, org_id: Option<&str>, user_id: &str, agent_id: Option<&str>, app_id: &str, _stream_id: uuid::Uuid, goal: &str) -> Result<Vec<memorose_common::L3Task>> {
+    pub async fn decompose_goal(
+        &self,
+        org_id: Option<&str>,
+        user_id: &str,
+        agent_id: Option<&str>,
+        app_id: &str,
+        _stream_id: uuid::Uuid,
+        goal: &str,
+    ) -> Result<Vec<memorose_common::L3Task>> {
         let client = match &self.llm_client {
             Some(c) => c,
             None => return Ok(Vec::new()),
@@ -65,7 +80,9 @@ impl Arbitrator {
         let combined_prompt = format!("{}\n\nGoal: {}", system_prompt, goal);
         let result = client.generate(&combined_prompt).await?;
 
-        let clean_json = result.data.trim()
+        let clean_json = result
+            .data
+            .trim()
             .trim_start_matches("```json")
             .trim_start_matches("```")
             .trim_end_matches("```")
@@ -85,7 +102,7 @@ impl Arbitrator {
         let mut tasks = Vec::new();
         // Create tasks first to get their UUIDs
         let mut title_to_id = std::collections::HashMap::new();
-        
+
         for m in &milestones {
             let task = memorose_common::L3Task::new(
                 org_id.map(|s| s.to_string()),
@@ -93,7 +110,11 @@ impl Arbitrator {
                 agent_id.map(|s| s.to_string()),
                 app_id.to_string(),
                 m.summary.clone(),
-                if m.description.is_empty() { m.summary.clone() } else { m.description.clone() },
+                if m.description.is_empty() {
+                    m.summary.clone()
+                } else {
+                    m.description.clone()
+                },
             );
             title_to_id.insert(m.summary.clone(), task.task_id);
             tasks.push((task, m.dependencies.clone()));
@@ -115,12 +136,15 @@ impl Arbitrator {
 
     pub fn new() -> Self {
         let config = AppConfig::load().unwrap_or_else(|e| {
-            tracing::warn!("Failed to load config for Arbitrator ({}), using defaults", e);
+            tracing::warn!(
+                "Failed to load config for Arbitrator ({}), using defaults",
+                e
+            );
             AppConfig::default()
         });
-        
+
         let llm_client = crate::llm::create_llm_client(&config.llm);
-        
+
         if llm_client.is_none() {
             tracing::warn!("Arbitrator initialized without API Key or provider. Conflict resolution will be disabled (Pass-through mode).");
         }
@@ -128,7 +152,9 @@ impl Arbitrator {
     }
 
     pub fn with_client(client: Arc<dyn LLMClient>) -> Self {
-        Self { llm_client: Some(client) }
+        Self {
+            llm_client: Some(client),
+        }
     }
 
     pub fn get_llm_client(&self) -> Option<Arc<dyn LLMClient>> {
@@ -137,7 +163,11 @@ impl Arbitrator {
 
     // ... (existing arbitrate, consolidate, extract_topics, analyze_relations methods)
 
-    pub async fn arbitrate(&self, memories: Vec<MemoryUnit>, query: Option<&str>) -> Result<Vec<MemoryUnit>> {
+    pub async fn arbitrate(
+        &self,
+        memories: Vec<MemoryUnit>,
+        query: Option<&str>,
+    ) -> Result<Vec<MemoryUnit>> {
         // ... (existing implementation)
         let client = match &self.llm_client {
             Some(c) => c,
@@ -150,14 +180,25 @@ impl Arbitrator {
 
         // Prepare prompt with memories, IDs and timestamps
         let (memory_context, included, total) = build_bounded_context(
-            memories.iter().map(|m| format!("ID: {}\nTimestamp: {}\nContent: {}", m.id, m.transaction_time, m.content)),
+            memories.iter().map(|m| {
+                format!(
+                    "ID: {}\nTimestamp: {}\nContent: {}",
+                    m.id, m.transaction_time, m.content
+                )
+            }),
             "\n---\n",
         );
         if included < total {
-            tracing::warn!("Arbitrator: truncated context to {}/{} memories to stay within token budget", included, total);
+            tracing::warn!(
+                "Arbitrator: truncated context to {}/{} memories to stay within token budget",
+                included,
+                total
+            );
         }
 
-        let query_str = query.map(|q| format!("User Query: {}\n", q)).unwrap_or_else(|| "No specific query, just identify latest facts.".to_string());
+        let query_str = query
+            .map(|q| format!("User Query: {}\n", q))
+            .unwrap_or_else(|| "No specific query, just identify latest facts.".to_string());
 
         let system_prompt = "You are a conflict resolution system for an AI memory database. \
             Analyze the following retrieved memories. Identify any factual conflicts. \
@@ -171,26 +212,27 @@ impl Arbitrator {
             If no conflicts exist, keep all memories. \
             Return ONLY the IDs of the memories that should be RETAINED, separated by commas. \
             Do not explain.";
-        
+
         let user_prompt = format!("{}\nMemories:\n{}", query_str, memory_context);
 
         let combined_prompt = format!("{}\n\n{}", system_prompt, user_prompt);
         let result = match client.generate(&combined_prompt).await {
             Ok(r) => r.data,
             Err(e) => {
-                tracing::warn!("Arbitrator LLM call failed: {:?}. Falling back to pass-through.", e);
+                tracing::warn!(
+                    "Arbitrator LLM call failed: {:?}. Falling back to pass-through.",
+                    e
+                );
                 return Ok(memories);
             }
         };
 
         // Parse IDs from result
-        let retained_ids: Vec<String> = result
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .collect();
+        let retained_ids: Vec<String> = result.split(',').map(|s| s.trim().to_string()).collect();
 
         // Filter original memories
-        let filtered: Vec<MemoryUnit> = memories.into_iter()
+        let filtered: Vec<MemoryUnit> = memories
+            .into_iter()
             .filter(|m| retained_ids.contains(&m.id.to_string()))
             .collect();
 
@@ -208,7 +250,8 @@ impl Arbitrator {
             Some(c) => c,
             None => {
                 // Simple concatenation fallback
-                return Ok(memories.iter()
+                return Ok(memories
+                    .iter()
                     .map(|m| m.content.clone())
                     .collect::<Vec<_>>()
                     .join("\n"));
@@ -216,11 +259,17 @@ impl Arbitrator {
         };
 
         let (memory_context, included, total) = build_bounded_context(
-            memories.iter().map(|m| format!("Timestamp: {}\nContent: {}", m.transaction_time, m.content)),
+            memories
+                .iter()
+                .map(|m| format!("Timestamp: {}\nContent: {}", m.transaction_time, m.content)),
             "\n---\n",
         );
         if included < total {
-            tracing::warn!("Consolidate: truncated context to {}/{} memories to stay within token budget", included, total);
+            tracing::warn!(
+                "Consolidate: truncated context to {}/{} memories to stay within token budget",
+                included,
+                total
+            );
         }
 
         let system_prompt = "You are a memory consolidation engine. \
@@ -237,14 +286,24 @@ impl Arbitrator {
             Ok(res) => Ok(res.data),
             Err(e) => {
                 tracing::warn!("Consolidation failed: {:?}. Returning concatenation.", e);
-                Ok(memories.iter().map(|m| m.content.clone()).collect::<Vec<_>>().join("\n"))
+                Ok(memories
+                    .iter()
+                    .map(|m| m.content.clone())
+                    .collect::<Vec<_>>()
+                    .join("\n"))
             }
         }
     }
 
     /// Prospective Reflection: Analyze a set of memories (usually from a single session)
     /// and extract/summarize them into topic-based MemoryUnits (Level 2).
-    pub async fn extract_topics(&self, user_id: &str, app_id: &str, stream_id: uuid::Uuid, memories: Vec<MemoryUnit>) -> Result<Vec<MemoryUnit>> {
+    pub async fn extract_topics(
+        &self,
+        user_id: &str,
+        app_id: &str,
+        stream_id: uuid::Uuid,
+        memories: Vec<MemoryUnit>,
+    ) -> Result<Vec<MemoryUnit>> {
         let client = match &self.llm_client {
             Some(c) => c,
             None => return Ok(Vec::new()),
@@ -255,11 +314,17 @@ impl Arbitrator {
         }
 
         let (memories_str, included, total) = build_bounded_context(
-            memories.iter().map(|m| format!("ID: {}\nContent: {}", m.id, m.content)),
+            memories
+                .iter()
+                .map(|m| format!("ID: {}\nContent: {}", m.id, m.content)),
             "\n---\n",
         );
         if included < total {
-            tracing::warn!("extract_topics: truncated context to {}/{} memories to stay within token budget", included, total);
+            tracing::warn!(
+                "extract_topics: truncated context to {}/{} memories to stay within token budget",
+                included,
+                total
+            );
         }
 
         let system_prompt = "You are a Memory Management System (Prospective Reflection). \
@@ -284,7 +349,8 @@ impl Arbitrator {
             }
         };
 
-        let clean_json = result.trim()
+        let clean_json = result
+            .trim()
             .trim_start_matches("```json")
             .trim_start_matches("```")
             .trim_end_matches("```")
@@ -299,21 +365,26 @@ impl Arbitrator {
         let dtos: Vec<TopicDTO> = match serde_json::from_str(clean_json) {
             Ok(d) => d,
             Err(e) => {
-                tracing::error!("Failed to parse topics JSON: {:?}. Raw response: {}", e, clean_json);
+                tracing::error!(
+                    "Failed to parse topics JSON: {:?}. Raw response: {}",
+                    e,
+                    clean_json
+                );
                 Vec::new()
             }
         };
-        
+
         let mut topic_units = Vec::new();
         for dto in dtos {
-            let mut unit = MemoryUnit::new(None, 
-                user_id.to_string(), 
+            let mut unit = MemoryUnit::new(
+                None,
+                user_id.to_string(),
                 None, // agent_id
-                app_id.to_string(), 
-                stream_id, 
+                app_id.to_string(),
+                stream_id,
                 memorose_common::MemoryType::Factual,
-                dto.summary, 
-                None
+                dto.summary,
+                None,
             );
             unit.level = 2; // Level 2: Topic/Insight
 
@@ -327,14 +398,23 @@ impl Arbitrator {
         }
 
         if !topic_units.is_empty() {
-            tracing::info!("Generated {} L2 topics for user {} stream {}", topic_units.len(), user_id, stream_id);
+            tracing::info!(
+                "Generated {} L2 topics for user {} stream {}",
+                topic_units.len(),
+                user_id,
+                stream_id
+            );
         }
 
         Ok(topic_units)
     }
 
     /// Analyze a new memory against context memories to find semantic relationships (Edge creation).
-    pub async fn analyze_relations(&self, new_memory: &MemoryUnit, context_memories: &[MemoryUnit]) -> Result<Vec<GraphEdge>> {
+    pub async fn analyze_relations(
+        &self,
+        new_memory: &MemoryUnit,
+        context_memories: &[MemoryUnit],
+    ) -> Result<Vec<GraphEdge>> {
         let client = match &self.llm_client {
             Some(c) => c,
             None => return Ok(Vec::new()),
@@ -345,7 +425,9 @@ impl Arbitrator {
         }
 
         let (context_str, included, total) = build_bounded_context(
-            context_memories.iter().map(|m| format!("ID: {}\nContent: {}", m.id, m.content)),
+            context_memories
+                .iter()
+                .map(|m| format!("ID: {}\nContent: {}", m.id, m.content)),
             "\n---\n",
         );
         if included < total {
@@ -361,7 +443,10 @@ impl Arbitrator {
             'RelatedTo': Use when they share the same subject (e.g., 'I am X' and 'I go home'). \
             If no strong relation, return empty list []. Return ONLY JSON.";
 
-        let user_prompt = format!("Context Memories:\n{}\n\nNew Memory:\nContent: {}", context_str, new_memory.content);
+        let user_prompt = format!(
+            "Context Memories:\n{}\n\nNew Memory:\nContent: {}",
+            context_str, new_memory.content
+        );
 
         let combined_prompt = format!("{}\n\n{}", system_prompt, user_prompt);
         let result = match client.generate(&combined_prompt).await {
@@ -371,7 +456,8 @@ impl Arbitrator {
 
         // Parse JSON (Naive parsing for MVP)
         // Clean markdown code blocks if present
-        let clean_json = result.trim()
+        let clean_json = result
+            .trim()
             .trim_start_matches("```json")
             .trim_start_matches("```")
             .trim_end_matches("```")
@@ -385,7 +471,7 @@ impl Arbitrator {
         }
 
         let dtos: Vec<RelationDTO> = serde_json::from_str(clean_json).unwrap_or_default();
-        
+
         let mut edges = Vec::new();
         for dto in dtos {
             if let Ok(target_uuid) = uuid::Uuid::parse_str(&dto.target_id) {
@@ -395,7 +481,13 @@ impl Arbitrator {
                     "EvolvedTo" => RelationType::EvolvedTo,
                     _ => RelationType::RelatedTo,
                 };
-                edges.push(GraphEdge::new(new_memory.user_id.clone(), new_memory.id, target_uuid, rel, dto.weight));
+                edges.push(GraphEdge::new(
+                    new_memory.user_id.clone(),
+                    new_memory.id,
+                    target_uuid,
+                    rel,
+                    dto.weight,
+                ));
             }
         }
 
@@ -406,11 +498,13 @@ impl Arbitrator {
     pub async fn summarize_community(&self, memories: Vec<String>) -> Result<CommunityInsight> {
         let client = match &self.llm_client {
             Some(c) => c,
-            None => return Ok(CommunityInsight { 
-                name: "Unknown Community".to_string(), 
-                summary: "LLM not available".to_string(),
-                keywords: Vec::new(),
-            }),
+            None => {
+                return Ok(CommunityInsight {
+                    name: "Unknown Community".to_string(),
+                    summary: "LLM not available".to_string(),
+                    keywords: Vec::new(),
+                })
+            }
         };
 
         if memories.is_empty() {
@@ -421,7 +515,8 @@ impl Arbitrator {
             });
         }
 
-        let (memory_block, included, total) = build_bounded_context(memories.into_iter(), "\n---\n");
+        let (memory_block, included, total) =
+            build_bounded_context(memories.into_iter(), "\n---\n");
         if included < total {
             tracing::warn!("summarize_community: truncated context to {}/{} memories to stay within token budget", included, total);
         }
@@ -437,14 +532,16 @@ impl Arbitrator {
         let combined_prompt = format!("{}\n\n{}", system_prompt, user_prompt);
         let result = client.generate(&combined_prompt).await?;
 
-        let clean_json = result.data.trim()
+        let clean_json = result
+            .data
+            .trim()
             .trim_start_matches("```json")
             .trim_start_matches("```")
             .trim_end_matches("```")
             .trim();
 
-        let insight: CommunityInsight = serde_json::from_str(clean_json)
-            .unwrap_or_else(|_| CommunityInsight {
+        let insight: CommunityInsight =
+            serde_json::from_str(clean_json).unwrap_or_else(|_| CommunityInsight {
                 name: "Parsing Error".to_string(),
                 summary: result.data,
                 keywords: Vec::new(),
@@ -457,8 +554,8 @@ impl Arbitrator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
-    use crate::llm::{LLMClient, CompressionOutput}; // Import CompressionOutput
+    use crate::llm::{CompressionOutput, LLMClient};
+    use async_trait::async_trait; // Import CompressionOutput
 
     struct MockLLM {
         response: String,
@@ -467,25 +564,65 @@ mod tests {
     #[async_trait]
     impl LLMClient for MockLLM {
         async fn generate(&self, _prompt: &str) -> Result<crate::llm::LLMResponse<String>> {
-            Ok(crate::llm::LLMResponse { data: self.response.clone(), usage: Default::default() })
+            Ok(crate::llm::LLMResponse {
+                data: self.response.clone(),
+                usage: Default::default(),
+            })
         }
         async fn embed(&self, _text: &str) -> Result<crate::llm::LLMResponse<Vec<f32>>> {
-            Ok(crate::llm::LLMResponse { data: vec![0.0; 384], usage: Default::default() })
+            Ok(crate::llm::LLMResponse {
+                data: vec![0.0; 384],
+                usage: Default::default(),
+            })
         }
-        async fn compress(&self, text: &str, _is_agent: bool) -> Result<crate::llm::LLMResponse<CompressionOutput>> {
-            Ok(crate::llm::LLMResponse { data: CompressionOutput { content: text.to_string(), valid_at: None }, usage: Default::default() })
+        async fn compress(
+            &self,
+            text: &str,
+            _is_agent: bool,
+        ) -> Result<crate::llm::LLMResponse<CompressionOutput>> {
+            Ok(crate::llm::LLMResponse {
+                data: CompressionOutput {
+                    content: text.to_string(),
+                    valid_at: None,
+                },
+                usage: Default::default(),
+            })
         }
-        async fn summarize_group(&self, _texts: Vec<String>) -> Result<crate::llm::LLMResponse<String>> {
-            Ok(crate::llm::LLMResponse { data: self.response.clone(), usage: Default::default() })
+        async fn summarize_group(
+            &self,
+            _texts: Vec<String>,
+        ) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: self.response.clone(),
+                usage: Default::default(),
+            })
         }
-        async fn describe_image(&self, _image_url_or_base64: &str) -> Result<crate::llm::LLMResponse<String>> {
-            Ok(crate::llm::LLMResponse { data: "Description of image".to_string(), usage: Default::default() })
+        async fn describe_image(
+            &self,
+            _image_url_or_base64: &str,
+        ) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "Description of image".to_string(),
+                usage: Default::default(),
+            })
         }
-        async fn describe_video(&self, _video_url: &str) -> Result<crate::llm::LLMResponse<String>> {
-            Ok(crate::llm::LLMResponse { data: "Description of video".to_string(), usage: Default::default() })
+        async fn describe_video(
+            &self,
+            _video_url: &str,
+        ) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "Description of video".to_string(),
+                usage: Default::default(),
+            })
         }
-        async fn transcribe(&self, _audio_url_or_base64: &str) -> Result<crate::llm::LLMResponse<String>> {
-            Ok(crate::llm::LLMResponse { data: "Transcription of audio".to_string(), usage: Default::default() })
+        async fn transcribe(
+            &self,
+            _audio_url_or_base64: &str,
+        ) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "Transcription of audio".to_string(),
+                usage: Default::default(),
+            })
         }
     }
 
@@ -498,8 +635,10 @@ mod tests {
             "keywords": ["Rust", "Memory Safety"]
         }
         "#;
-        
-        let client = Arc::new(MockLLM { response: mock_json.to_string() });
+
+        let client = Arc::new(MockLLM {
+            response: mock_json.to_string(),
+        });
         let arbitrator = Arbitrator::with_client(client);
 
         let memories = vec![
@@ -508,7 +647,7 @@ mod tests {
         ];
 
         let insight = arbitrator.summarize_community(memories).await.unwrap();
-        
+
         assert_eq!(insight.name, "Rust Programming");
         assert!(insight.summary.contains("memory safety"));
     }

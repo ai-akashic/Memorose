@@ -1,4 +1,4 @@
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 /// Hash a user_id to a shard index in [0, shard_count).
 pub fn user_id_to_shard(user_id: &str, shard_count: u32) -> u32 {

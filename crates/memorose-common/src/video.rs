@@ -1,14 +1,14 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
-use uuid::Uuid;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use uuid::Uuid;
 
 /// Represents a source video file or stream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VideoSource {
     pub id: Uuid,
-    pub path: String, // URI or file path
-    pub duration: f64, // in seconds
+    pub path: String,                      // URI or file path
+    pub duration: f64,                     // in seconds
     pub metadata: HashMap<String, String>, // e.g., resolution, fps, codec
     pub transaction_time: DateTime<Utc>,
 }
@@ -30,7 +30,7 @@ impl VideoSource {
 pub struct VideoClip {
     pub id: Uuid,
     pub source_id: Uuid,
-    
+
     /// Start time in seconds (inclusive)
     pub start_time: f64,
     /// End time in seconds (exclusive)

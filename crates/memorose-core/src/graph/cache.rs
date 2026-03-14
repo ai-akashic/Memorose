@@ -1,10 +1,10 @@
 // Query Cache - Borrowed from lance-graph's query cache ideas
 // Caches frequently used query results to avoid redundant computations
 
-use uuid::Uuid;
-use std::time::Duration;
-use moka::future::Cache;
 use memorose_common::GraphEdge;
+use moka::future::Cache;
+use std::time::Duration;
+use uuid::Uuid;
 
 /// Cache key types
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -22,10 +22,7 @@ pub enum CacheKey {
         max_hops: usize,
     },
     /// Community detection results cache
-    CommunityDetection {
-        user_id: String,
-        algorithm: String,
-    },
+    CommunityDetection { user_id: String, algorithm: String },
 }
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -57,7 +54,7 @@ pub struct CacheConfig {
 impl Default for CacheConfig {
     fn default() -> Self {
         Self {
-            ttl: Duration::from_secs(300),  // 5 minutes
+            ttl: Duration::from_secs(300), // 5 minutes
             max_entries: 10000,
             enabled: true,
         }
@@ -125,14 +122,14 @@ impl QueryCache {
     /// Invalidate all caches for a specific user (e.g., when the user adds new edges)
     pub async fn invalidate_user(&self, user_id: &str) {
         let uid = user_id.to_string();
-        let _ = self.edge_cache.invalidate_entries_if(move |k: &CacheKey, _v| {
-            Self::key_matches_user(k, &uid)
-        });
+        let _ = self
+            .edge_cache
+            .invalidate_entries_if(move |k: &CacheKey, _v| Self::key_matches_user(k, &uid));
 
         let uid2 = user_id.to_string();
-        let _ = self.node_list_cache.invalidate_entries_if(move |k: &CacheKey, _v| {
-            Self::key_matches_user(k, &uid2)
-        });
+        let _ = self
+            .node_list_cache
+            .invalidate_entries_if(move |k: &CacheKey, _v| Self::key_matches_user(k, &uid2));
 
         tracing::info!("Invalidated cache for user: {}", user_id);
     }
@@ -200,7 +197,7 @@ mod tests {
     #[tokio::test]
     async fn test_cache_expiration() {
         let mut config = CacheConfig::default();
-        config.ttl = Duration::from_millis(100);  // 100ms TTL
+        config.ttl = Duration::from_millis(100); // 100ms TTL
 
         let cache = QueryCache::new(config);
 
@@ -243,16 +240,19 @@ mod tests {
 
         // Invalidate cache for user1
         cache.invalidate_user("user1").await;
-        
-        // Moka's invalidate_entries_if is asynchronous and its completion time is non-deterministic 
-        // in tokio test environments without active worker threads polling it. 
-        // To prevent test flakiness, we manually drop the specific keys here to simulate 
+
+        // Moka's invalidate_entries_if is asynchronous and its completion time is non-deterministic
+        // in tokio test environments without active worker threads polling it.
+        // To prevent test flakiness, we manually drop the specific keys here to simulate
         // what the background thread eventually does.
         cache.edge_cache.remove(&key1).await;
         cache.node_list_cache.remove(&key1).await;
 
         // Cache for user1 should be cleared
-        assert!(cache.get_edges(&key1).await.is_none(), "Cache for user1 was not invalidated in time");
+        assert!(
+            cache.get_edges(&key1).await.is_none(),
+            "Cache for user1 was not invalidated in time"
+        );
 
         // Cache for user2 should be preserved
         assert!(cache.get_edges(&key2).await.is_some());

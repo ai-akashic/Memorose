@@ -1,5 +1,5 @@
-use anyhow::Result;
 use super::kv::KvStore;
+use anyhow::Result;
 
 #[derive(Clone)]
 pub struct SystemKvStore {
@@ -27,7 +27,11 @@ impl SystemKvStore {
         self.inner.scan(prefix)
     }
 
-    pub fn scan_range(&self, start_key: &[u8], end_key_exclusive: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    pub fn scan_range(
+        &self,
+        start_key: &[u8],
+        end_key_exclusive: &[u8],
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
         self.inner.scan_range(start_key, end_key_exclusive)
     }
 

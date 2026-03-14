@@ -2,7 +2,9 @@ version: '3'
 
 services:
   gateway:
-    build: .
+    build:
+      context: .
+      target: backend-runner
     command: /app/memorose-gateway
     environment:
       - RUST_LOG=info
@@ -15,7 +17,9 @@ services:
       - memorose-node-1
 
   memorose-node-0:
-    build: .
+    build:
+      context: .
+      target: backend-runner
     command: /app/memorose-server
     environment:
       - RUST_LOG=info
@@ -26,7 +30,9 @@ services:
       - data-shard-0:/app/data
 
   memorose-node-1:
-    build: .
+    build:
+      context: .
+      target: backend-runner
     command: /app/memorose-server
     environment:
       - RUST_LOG=info
@@ -35,6 +41,17 @@ services:
       - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
     volumes:
       - data-shard-1:/app/data
+
+  dashboard:
+    build:
+      context: .
+      target: dashboard-runner
+    environment:
+      - DASHBOARD_API_ORIGIN=http://memorose-node-0:3000
+    ports:
+      - "3100:3100"
+    depends_on:
+      - memorose-node-0
 
 volumes:
   data-shard-0:

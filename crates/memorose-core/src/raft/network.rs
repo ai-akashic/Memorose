@@ -1,10 +1,13 @@
-use tonic::transport::Channel;
-use tonic::Request;
+use openraft::error::{InstallSnapshotError, RPCError, RaftError};
 use openraft::network::RPCOption;
-use openraft::raft::{AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse, VoteRequest, VoteResponse};
-use openraft::error::{RPCError, RaftError, InstallSnapshotError};
+use openraft::raft::{
+    AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse,
+    VoteRequest, VoteResponse,
+};
 use openraft::BasicNode;
 use openraft::{RaftNetwork, RaftNetworkFactory};
+use tonic::transport::Channel;
+use tonic::Request;
 
 use super::types::MemoroseTypeConfig;
 
@@ -23,7 +26,10 @@ pub struct MemoroseNetworkConnection {
 
 impl MemoroseNetworkConnection {
     pub fn new(endpoint: String) -> Self {
-        Self { endpoint, client: None }
+        Self {
+            endpoint,
+            client: None,
+        }
     }
 
     async fn get_client(&mut self) -> Result<&mut RaftServiceClient<Channel>, tonic::Status> {
@@ -48,12 +54,18 @@ impl RaftNetwork<MemoroseTypeConfig> for MemoroseNetworkConnection {
         let data = serde_json::to_vec(&rpc).map_err(to_rpc_err)?;
         let request = Request::new(RaftRequest { data });
 
-        let client = self.get_client().await.map_err(|e| RPCError::Network(openraft::error::NetworkError::new(&e)))?;
-        let response = client.append_entries(request).await
-            .map_err(|e| { self.client = None; RPCError::Network(openraft::error::NetworkError::new(&e)) })?;
+        let client = self
+            .get_client()
+            .await
+            .map_err(|e| RPCError::Network(openraft::error::NetworkError::new(&e)))?;
+        let response = client.append_entries(request).await.map_err(|e| {
+            self.client = None;
+            RPCError::Network(openraft::error::NetworkError::new(&e))
+        })?;
 
         let res_data = response.into_inner().data;
-        let res: AppendEntriesResponse<u64> = serde_json::from_slice(&res_data).map_err(to_rpc_err)?;
+        let res: AppendEntriesResponse<u64> =
+            serde_json::from_slice(&res_data).map_err(to_rpc_err)?;
         Ok(res)
     }
 
@@ -61,16 +73,25 @@ impl RaftNetwork<MemoroseTypeConfig> for MemoroseNetworkConnection {
         &mut self,
         rpc: InstallSnapshotRequest<MemoroseTypeConfig>,
         _option: RPCOption,
-    ) -> Result<InstallSnapshotResponse<u64>, RPCError<u64, BasicNode, RaftError<u64, InstallSnapshotError>>> {
+    ) -> Result<
+        InstallSnapshotResponse<u64>,
+        RPCError<u64, BasicNode, RaftError<u64, InstallSnapshotError>>,
+    > {
         let data = serde_json::to_vec(&rpc).map_err(to_rpc_err_snapshot)?;
         let request = Request::new(RaftRequest { data });
 
-        let client = self.get_client().await.map_err(|e| RPCError::Network(openraft::error::NetworkError::new(&e)))?;
-        let response = client.install_snapshot(request).await
-            .map_err(|e| { self.client = None; RPCError::Network(openraft::error::NetworkError::new(&e)) })?;
+        let client = self
+            .get_client()
+            .await
+            .map_err(|e| RPCError::Network(openraft::error::NetworkError::new(&e)))?;
+        let response = client.install_snapshot(request).await.map_err(|e| {
+            self.client = None;
+            RPCError::Network(openraft::error::NetworkError::new(&e))
+        })?;
 
         let res_data = response.into_inner().data;
-        let res: InstallSnapshotResponse<u64> = serde_json::from_slice(&res_data).map_err(to_rpc_err_snapshot)?;
+        let res: InstallSnapshotResponse<u64> =
+            serde_json::from_slice(&res_data).map_err(to_rpc_err_snapshot)?;
         Ok(res)
     }
 
@@ -82,9 +103,14 @@ impl RaftNetwork<MemoroseTypeConfig> for MemoroseNetworkConnection {
         let data = serde_json::to_vec(&rpc).map_err(to_rpc_err)?;
         let request = Request::new(RaftRequest { data });
 
-        let client = self.get_client().await.map_err(|e| RPCError::Network(openraft::error::NetworkError::new(&e)))?;
-        let response = client.vote(request).await
-            .map_err(|e| { self.client = None; RPCError::Network(openraft::error::NetworkError::new(&e)) })?;
+        let client = self
+            .get_client()
+            .await
+            .map_err(|e| RPCError::Network(openraft::error::NetworkError::new(&e)))?;
+        let response = client.vote(request).await.map_err(|e| {
+            self.client = None;
+            RPCError::Network(openraft::error::NetworkError::new(&e))
+        })?;
 
         let res_data = response.into_inner().data;
         let res: VoteResponse<u64> = serde_json::from_slice(&res_data).map_err(to_rpc_err)?;
@@ -96,7 +122,9 @@ fn to_rpc_err<E: std::error::Error + 'static>(e: E) -> RPCError<u64, BasicNode, 
     RPCError::Network(openraft::error::NetworkError::new(&e))
 }
 
-fn to_rpc_err_snapshot<E: std::error::Error + 'static>(e: E) -> RPCError<u64, BasicNode, RaftError<u64, InstallSnapshotError>> {
+fn to_rpc_err_snapshot<E: std::error::Error + 'static>(
+    e: E,
+) -> RPCError<u64, BasicNode, RaftError<u64, InstallSnapshotError>> {
     RPCError::Network(openraft::error::NetworkError::new(&e))
 }
 
@@ -119,12 +147,16 @@ impl RaftService for MemoroseRaftServer {
         &self,
         request: Request<RaftRequest>,
     ) -> Result<tonic::Response<RaftResponse>, tonic::Status> {
-        let req: AppendEntriesRequest<MemoroseTypeConfig> = serde_json::from_slice(&request.into_inner().data)
-            .map_err(|e| tonic::Status::invalid_argument(e.to_string()))?;
-            
-        let res = self.raft.append_entries(req).await
+        let req: AppendEntriesRequest<MemoroseTypeConfig> =
+            serde_json::from_slice(&request.into_inner().data)
+                .map_err(|e| tonic::Status::invalid_argument(e.to_string()))?;
+
+        let res = self
+            .raft
+            .append_entries(req)
+            .await
             .map_err(|e| tonic::Status::internal(e.to_string()))?;
-            
+
         let data = serde_json::to_vec(&res).map_err(|e| tonic::Status::internal(e.to_string()))?;
         Ok(tonic::Response::new(RaftResponse { data }))
     }
@@ -133,12 +165,16 @@ impl RaftService for MemoroseRaftServer {
         &self,
         request: Request<RaftRequest>,
     ) -> Result<tonic::Response<RaftResponse>, tonic::Status> {
-        let req: InstallSnapshotRequest<MemoroseTypeConfig> = serde_json::from_slice(&request.into_inner().data)
-            .map_err(|e| tonic::Status::invalid_argument(e.to_string()))?;
-            
-        let res = self.raft.install_snapshot(req).await
+        let req: InstallSnapshotRequest<MemoroseTypeConfig> =
+            serde_json::from_slice(&request.into_inner().data)
+                .map_err(|e| tonic::Status::invalid_argument(e.to_string()))?;
+
+        let res = self
+            .raft
+            .install_snapshot(req)
+            .await
             .map_err(|e| tonic::Status::internal(e.to_string()))?;
-            
+
         let data = serde_json::to_vec(&res).map_err(|e| tonic::Status::internal(e.to_string()))?;
         Ok(tonic::Response::new(RaftResponse { data }))
     }
@@ -149,16 +185,22 @@ impl RaftService for MemoroseRaftServer {
     ) -> Result<tonic::Response<RaftResponse>, tonic::Status> {
         let req: VoteRequest<u64> = serde_json::from_slice(&request.into_inner().data)
             .map_err(|e| tonic::Status::invalid_argument(e.to_string()))?;
-            
-        let res = self.raft.vote(req).await
+
+        let res = self
+            .raft
+            .vote(req)
+            .await
             .map_err(|e| tonic::Status::internal(e.to_string()))?;
-            
+
         let data = serde_json::to_vec(&res).map_err(|e| tonic::Status::internal(e.to_string()))?;
         Ok(tonic::Response::new(RaftResponse { data }))
     }
 }
 
-pub async fn run_raft_server(addr: std::net::SocketAddr, raft: super::MemoroseRaft) -> Result<(), tonic::transport::Error> {
+pub async fn run_raft_server(
+    addr: std::net::SocketAddr,
+    raft: super::MemoroseRaft,
+) -> Result<(), tonic::transport::Error> {
     let service = MemoroseRaftServer::new(raft);
     tonic::transport::Server::builder()
         .add_service(RaftServiceServer::new(service))

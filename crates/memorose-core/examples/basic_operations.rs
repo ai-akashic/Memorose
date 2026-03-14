@@ -1,9 +1,9 @@
-use memorose_core::MemoroseEngine;
-use memorose_common::MemoryUnit;
-use uuid::Uuid;
 use anyhow::Result;
-use std::path::PathBuf;
+use memorose_common::MemoryUnit;
+use memorose_core::MemoroseEngine;
 use std::fs;
+use std::path::PathBuf;
+use uuid::Uuid;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -24,15 +24,17 @@ async fn main() -> Result<()> {
     // 3. Store some memories (L1) with simulated embeddings
     // Vector dim: 384 (assuming a small model)
     // We simulate 3 memories: A and B are similar (Topic 1), C is different (Topic 2)
-    
+
     // Memory A: "I like coding in Rust"
-    let mut vec_a = vec![0.0; 384]; 
-    vec_a[0] = 1.0; vec_a[1] = 0.5; // Simple signature for Topic 1
-    
+    let mut vec_a = vec![0.0; 384];
+    vec_a[0] = 1.0;
+    vec_a[1] = 0.5; // Simple signature for Topic 1
+
     // Memory B: "Rust is a safe systems language"
     let mut vec_b = vec![0.0; 384];
-    vec_b[0] = 0.9; vec_b[1] = 0.6; // Similar to A
-    
+    vec_b[0] = 0.9;
+    vec_b[1] = 0.6; // Similar to A
+
     // Memory C: "The weather is sunny today"
     let mut vec_c = vec![0.0; 384];
     vec_c[10] = 1.0; // Orthogonal to A/B
@@ -40,9 +42,36 @@ async fn main() -> Result<()> {
     let user_id = "example_user".to_string();
     let app_id = "example_app".to_string();
 
-    let unit_a = MemoryUnit::new(None, user_id.clone(), None, app_id.clone(), stream_id, memorose_common::MemoryType::Factual, "I like coding in Rust".into(), Some(vec_a.clone()));
-    let unit_b = MemoryUnit::new(None, user_id.clone(), None, app_id.clone(), stream_id, memorose_common::MemoryType::Factual, "Rust is a safe systems language".into(), Some(vec_b.clone()));
-    let unit_c = MemoryUnit::new(None, user_id.clone(), None, app_id.clone(), stream_id, memorose_common::MemoryType::Factual, "The weather is sunny today".into(), Some(vec_c.clone()));
+    let unit_a = MemoryUnit::new(
+        None,
+        user_id.clone(),
+        None,
+        app_id.clone(),
+        stream_id,
+        memorose_common::MemoryType::Factual,
+        "I like coding in Rust".into(),
+        Some(vec_a.clone()),
+    );
+    let unit_b = MemoryUnit::new(
+        None,
+        user_id.clone(),
+        None,
+        app_id.clone(),
+        stream_id,
+        memorose_common::MemoryType::Factual,
+        "Rust is a safe systems language".into(),
+        Some(vec_b.clone()),
+    );
+    let unit_c = MemoryUnit::new(
+        None,
+        user_id.clone(),
+        None,
+        app_id.clone(),
+        stream_id,
+        memorose_common::MemoryType::Factual,
+        "The weather is sunny today".into(),
+        Some(vec_c.clone()),
+    );
 
     println!("\n📥 Storing 3 memory units...");
     engine.store_memory_unit(unit_a.clone()).await?;
@@ -52,14 +81,18 @@ async fn main() -> Result<()> {
 
     // 4. Vector Search (Simulate retrieving "Rust" related memories)
     println!("\n🔍 Searching for similar vectors (Query: Topic 1)...");
-    let results = engine.search_similar(&user_id, Some(app_id.as_str()), &vec_a, 5, None).await?;
+    let results = engine
+        .search_similar(&user_id, Some(app_id.as_str()), &vec_a, 5, None)
+        .await?;
     for (unit, score) in results {
         println!("   - Found: \"{}\" (Score: {:.4})", unit.content, score);
     }
 
     // 5. Full-text Search
     println!("\n🔎 Full-text Search (Query: 'weather')...");
-    let text_results = engine.search_text(&user_id, Some(app_id.as_str()), "weather", 5, false, None).await?;
+    let text_results = engine
+        .search_text(&user_id, Some(app_id.as_str()), "weather", 5, false, None)
+        .await?;
     for unit in text_results {
         println!("   - Found: \"{}\"", unit.content);
     }
@@ -78,7 +111,10 @@ async fn main() -> Result<()> {
         println!("   (No edges found from B yet. Auto-linking relies on vector index visibility. LanceDB might need a moment or consistent index state.)");
     } else {
         for edge in edges_from_b {
-            println!("   - Edge: B -> {} (Type: {:?}, Weight: {:.2})", edge.target_id, edge.relation, edge.weight);
+            println!(
+                "   - Edge: B -> {} (Type: {:?}, Weight: {:.2})",
+                edge.target_id, edge.relation, edge.weight
+            );
             if edge.target_id == unit_a.id {
                 println!("     🎉 Correctly linked to Memory A!");
             }

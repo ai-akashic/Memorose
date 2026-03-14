@@ -1,15 +1,15 @@
+use axum::body::to_bytes;
 use axum::{
     extract::{Request, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Router,
 };
-use axum::body::to_bytes;
 use bytes::Bytes;
-use memorose_common::sharding::{user_id_to_shard, decode_raft_node_id};
+use memorose_common::sharding::{decode_raft_node_id, user_id_to_shard};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::collections::HashMap;
 use tokio::sync::RwLock;
 
 struct AppState {
@@ -58,8 +58,7 @@ async fn main() {
         .expect("SHARD_COUNT must be a number");
 
     // Parse node addresses from NODES env var: "1=127.0.0.1:3000,2=127.0.0.1:3001"
-    let nodes_str = std::env::var("NODES")
-        .unwrap_or_else(|_| "1=127.0.0.1:3000".to_string());
+    let nodes_str = std::env::var("NODES").unwrap_or_else(|_| "1=127.0.0.1:3000".to_string());
 
     let node_addresses: HashMap<u32, String> = nodes_str
         .split(',')
@@ -79,8 +78,12 @@ async fn main() {
         })
         .collect();
 
-    tracing::info!("Gateway starting: {} shards, {} nodes: {:?}",
-        shard_count, node_addresses.len(), node_addresses);
+    tracing::info!(
+        "Gateway starting: {} shards, {} nodes: {:?}",
+        shard_count,
+        node_addresses.len(),
+        node_addresses
+    );
 
     let state = Arc::new(AppState {
         shard_count,
@@ -92,12 +95,14 @@ async fn main() {
             .expect("Failed to build gateway HTTP client"),
     });
 
-    let app = Router::new()
-        .fallback(proxy_handler)
-        .with_state(state);
+    let app = Router::new().fallback(proxy_handler).with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
-    tracing::info!("Gateway listening on {}, routing to {} shards", addr, shard_count);
+    tracing::info!(
+        "Gateway listening on {}, routing to {} shards",
+        addr,
+        shard_count
+    );
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
@@ -159,16 +164,20 @@ async fn proxy_request_with_retry(
 
     let client = &state.http_client;
     let max_retries = 3;
-    
+
     for attempt in 0..max_retries {
         let addr = match &target_addr {
             Some(a) => a.clone(),
-            None => {
-                match state.node_addresses.values().next() {
-                    Some(a) => a.clone(),
-                    None => return (StatusCode::SERVICE_UNAVAILABLE, "No backend nodes configured").into_response(),
+            None => match state.node_addresses.values().next() {
+                Some(a) => a.clone(),
+                None => {
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "No backend nodes configured",
+                    )
+                        .into_response()
                 }
-            }
+            },
         };
 
         let target_url = format!("{}/{}", addr, path);
@@ -178,7 +187,13 @@ async fn proxy_request_with_retry(
             target_url
         };
 
-        tracing::info!("Proxy attempt {} for '{}' (shard {}): {}", attempt + 1, path, shard_id, target_uri_string);
+        tracing::info!(
+            "Proxy attempt {} for '{}' (shard {}): {}",
+            attempt + 1,
+            path,
+            shard_id,
+            target_uri_string
+        );
 
         let mut builder = client.request(method.clone(), &target_uri_string);
         for (key, value) in &headers {
@@ -186,7 +201,7 @@ async fn proxy_request_with_retry(
                 builder = builder.header(key, value);
             }
         }
-        
+
         if let Some(ref bytes) = body {
             builder = builder.body(bytes.clone());
         }
@@ -219,7 +234,9 @@ async fn proxy_request_with_retry(
                             // node actually exists in our config.
                             if let Some(leader_node) = json["leader_physical_node"].as_u64() {
                                 let leader_node = leader_node as u32;
-                                if leader_node > 0 && state.node_addresses.contains_key(&leader_node) {
+                                if leader_node > 0
+                                    && state.node_addresses.contains_key(&leader_node)
+                                {
                                     let mut cache = state.shard_leaders.write().await;
                                     cache.insert(shard_id, leader_node);
                                     target_addr = state.node_addresses.get(&leader_node).cloned();
@@ -229,16 +246,23 @@ async fn proxy_request_with_retry(
                             // Fallback: current_leader is a raw Raft node ID,
                             // decode it to extract the physical_node_id.
                             if let Some(raft_leader_id) = json["current_leader"].as_u64() {
-                                let (_leader_shard, physical_node_id) = decode_raft_node_id(raft_leader_id);
-                                if physical_node_id > 0 && state.node_addresses.contains_key(&physical_node_id) {
+                                let (_leader_shard, physical_node_id) =
+                                    decode_raft_node_id(raft_leader_id);
+                                if physical_node_id > 0
+                                    && state.node_addresses.contains_key(&physical_node_id)
+                                {
                                     let mut cache = state.shard_leaders.write().await;
                                     cache.insert(shard_id, physical_node_id);
-                                    target_addr = state.node_addresses.get(&physical_node_id).cloned();
+                                    target_addr =
+                                        state.node_addresses.get(&physical_node_id).cloned();
                                     continue;
                                 }
                             }
                             // Leader unknown or not in our node list - clear stale cache and retry
-                            tracing::warn!("Shard {} has no known leader, clearing cache and retrying", shard_id);
+                            tracing::warn!(
+                                "Shard {} has no known leader, clearing cache and retrying",
+                                shard_id
+                            );
                             {
                                 let mut cache = state.shard_leaders.write().await;
                                 cache.remove(&shard_id);
@@ -252,7 +276,11 @@ async fn proxy_request_with_retry(
                     }
                     // Non-"Not Leader" 503: retry with backoff instead of
                     // returning immediately.
-                    tracing::warn!("Proxy attempt {} got non-raft 503 for shard {}", attempt + 1, shard_id);
+                    tracing::warn!(
+                        "Proxy attempt {} got non-raft 503 for shard {}",
+                        attempt + 1,
+                        shard_id
+                    );
                     if attempt == max_retries - 1 {
                         return (status, axum::body::Body::from(res_bytes)).into_response();
                     }
@@ -280,7 +308,8 @@ async fn proxy_request_with_retry(
                 }
                 target_addr = None;
                 if attempt == max_retries - 1 {
-                    return (StatusCode::BAD_GATEWAY, format!("Gateway Error: {}", e)).into_response();
+                    return (StatusCode::BAD_GATEWAY, format!("Gateway Error: {}", e))
+                        .into_response();
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             }
@@ -296,7 +325,10 @@ mod tests {
 
     #[test]
     fn test_extract_user_id() {
-        assert_eq!(extract_user_id("v1/users/alice/apps/myapp/streams/123/events"), Some("alice"));
+        assert_eq!(
+            extract_user_id("v1/users/alice/apps/myapp/streams/123/events"),
+            Some("alice")
+        );
         assert_eq!(extract_user_id("v1/users/bob/graph/edges"), Some("bob"));
         assert_eq!(extract_user_id("v1/cluster/initialize"), None);
         assert_eq!(extract_user_id("v1/dashboard/stats"), None);

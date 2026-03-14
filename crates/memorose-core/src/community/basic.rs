@@ -1,8 +1,8 @@
-use std::collections::{HashMap, HashSet};
-use uuid::Uuid;
 use memorose_common::GraphEdge;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
+use std::collections::{HashMap, HashSet};
+use uuid::Uuid;
 
 pub struct CommunityDetector;
 
@@ -16,9 +16,15 @@ impl CommunityDetector {
 
         // Build adjacency list and initialize communities
         for edge in edges {
-            adjacency.entry(edge.source_id).or_default().push(edge.target_id);
-            adjacency.entry(edge.target_id).or_default().push(edge.source_id); // Undirected for community detection
-            
+            adjacency
+                .entry(edge.source_id)
+                .or_default()
+                .push(edge.target_id);
+            adjacency
+                .entry(edge.target_id)
+                .or_default()
+                .push(edge.source_id); // Undirected for community detection
+
             all_nodes.insert(edge.source_id);
             all_nodes.insert(edge.target_id);
         }
@@ -39,7 +45,7 @@ impl CommunityDetector {
             for &node in &nodes_vec {
                 if let Some(neighbors) = adjacency.get(&node) {
                     let mut label_counts: HashMap<Uuid, usize> = HashMap::new();
-                    
+
                     for neighbor in neighbors {
                         if let Some(label) = communities.get(neighbor) {
                             *label_counts.entry(*label).or_default() += 1;
@@ -47,7 +53,9 @@ impl CommunityDetector {
                     }
 
                     // Find max label
-                    if let Some((best_label, _)) = label_counts.iter().max_by_key(|&(_, count)| count) {
+                    if let Some((best_label, _)) =
+                        label_counts.iter().max_by_key(|&(_, count)| count)
+                    {
                         if let Some(current_label) = communities.get(&node) {
                             if current_label != best_label {
                                 communities.insert(node, *best_label);

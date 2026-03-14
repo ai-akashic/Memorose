@@ -1,8 +1,8 @@
-use memorose_core::raft::start_raft_node;
-use memorose_core::raft::network::run_raft_server;
-use memorose_core::MemoroseEngine;
 use memorose_common::config::AppConfig;
 use memorose_common::{Event, EventContent};
+use memorose_core::raft::network::run_raft_server;
+use memorose_core::raft::start_raft_node;
+use memorose_core::MemoroseEngine;
 use openraft::BasicNode;
 use std::collections::BTreeMap;
 use tempfile::tempdir;
@@ -17,10 +17,15 @@ async fn main() -> anyhow::Result<()> {
     // 1. Setup 3 nodes configs
     let node_ids = vec![1, 2, 3];
     let mut node_configs = BTreeMap::new();
-    
+
     for id in &node_ids {
         let port = 5000 + id;
-        node_configs.insert(*id, BasicNode { addr: format!("127.0.0.1:{}", port) });
+        node_configs.insert(
+            *id,
+            BasicNode {
+                addr: format!("127.0.0.1:{}", port),
+            },
+        );
     }
 
     println!("🚀 Starting Memorose 3-node Raft Cluster...");
@@ -30,17 +35,18 @@ async fn main() -> anyhow::Result<()> {
 
     for id in node_ids {
         let dir = tempdir()?;
-        let engine = MemoroseEngine::new_with_default_threshold(dir.path(), 1000, true, true).await?;
-        
+        let engine =
+            MemoroseEngine::new_with_default_threshold(dir.path(), 1000, true, true).await?;
+
         let mut node_config = config.clone();
         node_config.raft.node_id = id;
         node_config.raft.raft_addr = format!("127.0.0.1:{}", 5000 + id);
 
         let raft = start_raft_node(id, engine.clone(), node_config).await?;
-        
+
         let addr = format!("127.0.0.1:{}", 5000 + id).parse()?;
         let raft_server = raft.clone();
-        
+
         // Start gRPC server in background
         tokio::spawn(async move {
             if let Err(e) = run_raft_server(addr, raft_server).await {
@@ -66,22 +72,39 @@ async fn main() -> anyhow::Result<()> {
 
     if let Some(leader_id) = metrics.current_leader {
         println!("✅ Cluster is UP. Leader is Node {}", leader_id);
-        
+
         // 5. Test Consensus: Write through Leader
         println!("📝 Writing event to Leader...");
-        let event = Event::new(None, "example_user".into(), None, "example_app".into(), Uuid::new_v4(), EventContent::Text("Distributed Consensus Test".into()));
+        let event = Event::new(
+            None,
+            "example_user".into(),
+            None,
+            "example_app".into(),
+            Uuid::new_v4(),
+            EventContent::Text("Distributed Consensus Test".into()),
+        );
         let event_id = event.id;
-        
+
         // Must find the leader's raft handle
-        let leader_handle = nodes.iter().find(|(id, _, _, _)| *id == leader_id).map(|(_, r, _, _)| r).unwrap();
-        leader_handle.client_write(memorose_core::raft::types::ClientRequest::IngestEvent(event)).await?;
+        let leader_handle = nodes
+            .iter()
+            .find(|(id, _, _, _)| *id == leader_id)
+            .map(|(_, r, _, _)| r)
+            .unwrap();
+        leader_handle
+            .client_write(memorose_core::raft::types::ClientRequest::IngestEvent(
+                event,
+            ))
+            .await?;
 
         println!("⏳ Waiting for log replication...");
         sleep(Duration::from_secs(2)).await;
 
         // 6. Verify Data on ALL nodes (State Machine Replication)
         for (id, _, engine, _) in &nodes {
-            let saved = engine.get_event("example_user", &event_id.to_string()).await?;
+            let saved = engine
+                .get_event("example_user", &event_id.to_string())
+                .await?;
             if saved.is_some() {
                 println!("✅ Node {} has the replicated data.", id);
             } else {

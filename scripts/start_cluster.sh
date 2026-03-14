@@ -59,10 +59,12 @@ readonly ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # Configuration
 readonly SERVER_BIN="${ROOT_DIR}/target/debug/memorose-server"
+readonly DASHBOARD_DIR="${ROOT_DIR}/dashboard"
 readonly LOG_DIR="${ROOT_DIR}/logs"
 readonly DATA_DIR="${ROOT_DIR}/data"
 readonly PID_DIR="${ROOT_DIR}/.pids"
-readonly DASHBOARD_DIR="${ROOT_DIR}/crates/memorose-server/static/dashboard"
+readonly DASHBOARD_PORT=3100
+readonly DASHBOARD_PID_FILE="${PID_DIR}/dashboard.pid"
 
 # Options
 COMMAND=""
@@ -156,11 +158,12 @@ remove_pid() {
 # Wait for service to be ready
 wait_for_ready() {
     local port="$1"
+    local path="${2:-/}"
     local max_attempts=30
     local attempt=0
 
     while [[ ${attempt} -lt ${max_attempts} ]]; do
-        if curl -sf "http://localhost:${port}/" >/dev/null 2>&1; then
+        if curl -sf "http://localhost:${port}${path}" >/dev/null 2>&1; then
             return 0
         fi
         sleep 1
@@ -169,6 +172,38 @@ wait_for_ready() {
 
     log_error "Service on port ${port} did not become ready in ${max_attempts}s"
     return 1
+}
+
+start_dashboard() {
+    log_info "Starting dashboard on port ${DASHBOARD_PORT}..."
+
+    local log_file="${LOG_DIR}/dashboard.log"
+    mkdir -p "${PID_DIR}"
+
+    if [[ -f "${DASHBOARD_PID_FILE}" ]]; then
+        local existing_pid
+        existing_pid=$(cat "${DASHBOARD_PID_FILE}")
+        if is_process_running "${existing_pid}"; then
+            log_info "Dashboard already running (PID: ${existing_pid})"
+            return 0
+        fi
+        rm -f "${DASHBOARD_PID_FILE}"
+    fi
+
+    cd "${DASHBOARD_DIR}" || exit 1
+    PORT="${DASHBOARD_PORT}" HOSTNAME="127.0.0.1" pnpm start > "${log_file}" 2>&1 &
+
+    local pid=$!
+    echo "${pid}" > "${DASHBOARD_PID_FILE}"
+
+    log_info "Waiting for dashboard to be ready..."
+    if ! wait_for_ready "${DASHBOARD_PORT}" "/dashboard/login"; then
+        log_error "Failed to start dashboard"
+        log_error "Check logs: ${log_file}"
+        return 1
+    fi
+
+    log_success "Dashboard is ready at http://localhost:${DASHBOARD_PORT}/dashboard"
 }
 
 # Stop all servers
@@ -195,6 +230,20 @@ stop_servers() {
 
             rm -f "${pid_file}"
         done
+
+        if [[ -f "${DASHBOARD_PID_FILE}" ]]; then
+            local dashboard_pid
+            dashboard_pid=$(cat "${DASHBOARD_PID_FILE}")
+
+            if is_process_running "${dashboard_pid}"; then
+                log_info "Stopping dashboard process ${dashboard_pid}..."
+                kill "${dashboard_pid}" 2>/dev/null || true
+                pids+=("${dashboard_pid}")
+                ((stopped++))
+            fi
+
+            rm -f "${DASHBOARD_PID_FILE}"
+        fi
     fi
 
     # Wait for graceful shutdown
@@ -277,7 +326,11 @@ show_status() {
     if [[ ${running} -gt 0 ]]; then
         log_success "${running} server(s) running"
         echo ""
-        log_info "Dashboard: http://localhost:3000/dashboard (admin/admin)"
+        if [[ -f "${DASHBOARD_PID_FILE}" ]] && is_process_running "$(cat "${DASHBOARD_PID_FILE}")"; then
+            log_info "Dashboard: http://localhost:${DASHBOARD_PORT}/dashboard (admin/admin)"
+        else
+            log_warn "Dashboard: not running"
+        fi
         log_info "Logs: ${LOG_DIR}/"
         echo ""
         log_warn "ℹ️  This is a local development environment"
@@ -307,8 +360,8 @@ check_prerequisites() {
             needs_rust_build=true
         fi
 
-        # Check dashboard
-        if [[ ! -d "${DASHBOARD_DIR}" ]] || [[ ! -f "${DASHBOARD_DIR}/index.html" ]]; then
+        # Check dashboard build
+        if [[ ! -f "${DASHBOARD_DIR}/.next/BUILD_ID" ]]; then
             log_warn "Dashboard not built"
             needs_ui_build=true
         fi
@@ -339,7 +392,7 @@ check_prerequisites() {
             exit 1
         fi
     else
-        log_success "Dashboard is ready"
+        log_success "Dashboard build is ready"
     fi
 
     log_success "All prerequisites ready"
@@ -374,6 +427,10 @@ start_standalone() {
         exit 1
     fi
 
+    if ! start_dashboard; then
+        exit 1
+    fi
+
     log_info "Initializing cluster..."
     local init_result
     init_result=$(curl -sf -X POST "http://localhost:${port}/v1/cluster/initialize" 2>&1) || true
@@ -383,7 +440,7 @@ start_standalone() {
     log_success "Memorose Standalone is READY! (Local Development)"
     echo ""
     echo -e "  ${CYAN}Endpoint:${NC}  http://localhost:${port}"
-    echo -e "  ${CYAN}Dashboard:${NC} http://localhost:${port}/dashboard ${YELLOW}(admin/admin)${NC}"
+    echo -e "  ${CYAN}Dashboard:${NC} http://localhost:${DASHBOARD_PORT}/dashboard ${YELLOW}(admin/admin)${NC}"
     echo -e "  ${CYAN}Logs:${NC}      ${log_file}"
     echo ""
     log_warn "⚠️  This is a local development instance - not for production use"
@@ -470,6 +527,11 @@ start_cluster() {
         log_info "Join Node 3: ${join3_result}"
     fi
 
+    if ! start_dashboard; then
+        stop_servers
+        exit 1
+    fi
+
     echo ""
     log_success "Memorose Local Cluster is READY! (Development/Testing)"
     echo ""
@@ -479,7 +541,7 @@ start_cluster() {
     echo -e "  ${CYAN}Node 1:${NC}    http://localhost:3000"
     echo -e "  ${CYAN}Node 2:${NC}    http://localhost:3001"
     echo -e "  ${CYAN}Node 3:${NC}    http://localhost:3002"
-    echo -e "  ${CYAN}Dashboard:${NC} http://localhost:3000/dashboard ${YELLOW}(admin/admin)${NC}"
+    echo -e "  ${CYAN}Dashboard:${NC} http://localhost:${DASHBOARD_PORT}/dashboard ${YELLOW}(admin/admin)${NC}"
     echo "  ────────────────────────────────────────────────────────"
     echo -e "  ${CYAN}Logs:${NC}      ${LOG_DIR}/"
     echo ""

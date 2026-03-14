@@ -31,8 +31,8 @@ ENV RUST_MIN_STACK=8388608
 RUN cargo build --release -p memorose-server
 RUN cargo build --release -p memorose-gateway
 
-# ---- Final Stage ----
-FROM debian:bookworm-slim
+# ---- Backend Runner ----
+FROM debian:bookworm-slim AS backend-runner
 
 RUN apt-get update && apt-get install -y ca-certificates openssl && rm -rf /var/lib/apt/lists/*
 
@@ -42,9 +42,6 @@ WORKDIR /app
 COPY --from=backend-builder /usr/src/app/target/release/memorose-server /app/
 COPY --from=backend-builder /usr/src/app/target/release/memorose-gateway /app/
 
-# Copy frontend static files
-COPY --from=frontend-builder /usr/src/app/dashboard/out /app/static/dashboard
-
 # Environment variables
 ENV RUST_LOG=info
 
@@ -53,3 +50,20 @@ EXPOSE 3000 8080
 
 # Default command (overridden in compose)
 CMD ["/app/memorose-server"]
+
+# ---- Dashboard Runner ----
+FROM node:20-alpine AS dashboard-runner
+
+WORKDIR /app/dashboard
+
+ENV NODE_ENV=production
+ENV PORT=3100
+ENV HOSTNAME=0.0.0.0
+
+COPY --from=frontend-builder /usr/src/app/dashboard/.next/standalone ./
+COPY --from=frontend-builder /usr/src/app/dashboard/.next/static ./.next/static
+COPY --from=frontend-builder /usr/src/app/dashboard/public ./public
+
+EXPOSE 3100
+
+CMD ["node", "server.js"]

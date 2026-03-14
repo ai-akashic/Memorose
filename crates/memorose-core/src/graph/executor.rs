@@ -2,10 +2,10 @@
 // But built directly on top of LanceDB's Arrow interfaces to avoid dependency conflicts
 
 use crate::storage::graph::GraphStore;
-use memorose_common::GraphEdge;
-use uuid::Uuid;
 use anyhow::Result;
+use memorose_common::GraphEdge;
 use std::collections::{HashMap, HashSet};
+use uuid::Uuid;
 
 /// Batch edge query executor
 pub struct BatchExecutor {
@@ -29,7 +29,9 @@ impl BatchExecutor {
         source_nodes: &[Uuid],
     ) -> Result<HashMap<Uuid, Vec<GraphEdge>>> {
         // ✅ Use GraphStore's batch API (single SQL IN query)
-        self.graph_store.batch_get_outgoing_edges(user_id, source_nodes).await
+        self.graph_store
+            .batch_get_outgoing_edges(user_id, source_nodes)
+            .await
     }
 
     /// Batch query incoming edges
@@ -39,7 +41,9 @@ impl BatchExecutor {
         target_nodes: &[Uuid],
     ) -> Result<HashMap<Uuid, Vec<GraphEdge>>> {
         // ✅ Use GraphStore's batch API
-        self.graph_store.batch_get_incoming_edges(user_id, target_nodes).await
+        self.graph_store
+            .batch_get_incoming_edges(user_id, target_nodes)
+            .await
     }
 
     /// Batch optimized version of multi-hop traversal
@@ -54,7 +58,7 @@ impl BatchExecutor {
     ) -> Result<Vec<Uuid>> {
         let mut current_frontier = start_nodes.clone();
         let mut all_visited: HashSet<Uuid> = start_nodes.into_iter().collect();
-        
+
         // Hard limit to prevent OOM in extremely dense graphs
         const MAX_FRONTIER_SIZE: usize = 10_000;
 
@@ -64,7 +68,9 @@ impl BatchExecutor {
             }
 
             // Key optimization: batch retrieve edges for all nodes in the current layer
-            let edges_map = self.batch_get_outgoing_edges(user_id, &current_frontier).await?;
+            let edges_map = self
+                .batch_get_outgoing_edges(user_id, &current_frontier)
+                .await?;
 
             let mut next_frontier = Vec::new();
 
@@ -121,10 +127,7 @@ impl BatchExecutor {
         let outgoing = self.batch_get_outgoing_edges(user_id, node_ids).await?;
         let incoming = self.batch_get_incoming_edges(user_id, node_ids).await?;
 
-        Ok(NeighborhoodCache {
-            outgoing,
-            incoming,
-        })
+        Ok(NeighborhoodCache { outgoing, incoming })
     }
 }
 

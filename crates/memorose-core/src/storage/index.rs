@@ -1,9 +1,9 @@
 use anyhow::Result;
-use tantivy::schema::*;
-use tantivy::{Index, IndexWriter, IndexReader, ReloadPolicy};
+use memorose_common::MemoryUnit;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use memorose_common::MemoryUnit;
+use tantivy::schema::*;
+use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy};
 
 #[derive(Clone)]
 pub struct TextIndex {
@@ -35,6 +35,8 @@ impl TextIndex {
         schema_builder.add_text_field("user_id", STRING | STORED);
         schema_builder.add_text_field("app_id", STRING | STORED);
         schema_builder.add_text_field("agent_id", STRING | STORED);
+        schema_builder.add_text_field("domain", STRING | STORED);
+        schema_builder.add_text_field("namespace_key", STRING | STORED);
         schema_builder.add_text_field("content", TEXT | STORED);
         schema_builder.add_text_field("stream_id", STRING);
         schema_builder.add_u64_field("level", INDEXED | STORED);
@@ -42,14 +44,20 @@ impl TextIndex {
         schema_builder.add_i64_field("valid_time", INDEXED | STORED | FAST);
         let schema = schema_builder.build();
 
-        let index = match Index::open_or_create(tantivy::directory::MmapDirectory::open(index_path)?, schema.clone()) {
+        let index = match Index::open_or_create(
+            tantivy::directory::MmapDirectory::open(index_path)?,
+            schema.clone(),
+        ) {
             Ok(idx) => idx,
             Err(e) => {
                 // Schema incompatible - recreate index
                 tracing::warn!("Tantivy schema incompatible, recreating index: {}", e);
                 std::fs::remove_dir_all(index_path)?;
                 std::fs::create_dir_all(index_path)?;
-                Index::open_or_create(tantivy::directory::MmapDirectory::open(index_path)?, schema.clone())?
+                Index::open_or_create(
+                    tantivy::directory::MmapDirectory::open(index_path)?,
+                    schema.clone(),
+                )?
             }
         };
 
@@ -68,7 +76,8 @@ impl TextIndex {
         let shutdown_clone = shutdown.clone();
 
         let commit_task = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(interval_ms));
+            let mut interval =
+                tokio::time::interval(tokio::time::Duration::from_millis(interval_ms));
             interval.tick().await;
 
             loop {
@@ -119,6 +128,8 @@ impl TextIndex {
         let user_id_field = schema.get_field("user_id").unwrap();
         let app_id_field = schema.get_field("app_id").unwrap();
         let agent_id_field = schema.get_field("agent_id").unwrap();
+        let domain_field = schema.get_field("domain").unwrap();
+        let namespace_key_field = schema.get_field("namespace_key").unwrap();
         let content_field = schema.get_field("content").unwrap();
         let stream_field = schema.get_field("stream_id").unwrap();
         let level_field = schema.get_field("level").unwrap();
@@ -131,6 +142,8 @@ impl TextIndex {
         doc.add_text(user_id_field, &unit.user_id);
         doc.add_text(app_id_field, &unit.app_id);
         doc.add_text(agent_id_field, unit.agent_id.as_deref().unwrap_or(""));
+        doc.add_text(domain_field, unit.domain.as_str());
+        doc.add_text(namespace_key_field, &unit.namespace_key);
         doc.add_text(content_field, &unit.content);
         doc.add_text(stream_field, &unit.stream_id.to_string());
         doc.add_u64(level_field, unit.level as u64);
@@ -175,8 +188,18 @@ impl TextIndex {
         Ok(())
     }
 
-    pub fn search(&self, query_str: &str, limit: usize, time_range: Option<memorose_common::TimeRange>, org_id: Option<&str>, user_id: Option<&str>, app_id: Option<&str>) -> Result<Vec<String>> {
-        self.search_bitemporal(query_str, limit, time_range, None, org_id, user_id, app_id, None)
+    pub fn search(
+        &self,
+        query_str: &str,
+        limit: usize,
+        time_range: Option<memorose_common::TimeRange>,
+        org_id: Option<&str>,
+        user_id: Option<&str>,
+        app_id: Option<&str>,
+    ) -> Result<Vec<String>> {
+        self.search_bitemporal(
+            query_str, limit, time_range, None, org_id, user_id, app_id, None, None,
+        )
     }
 
     pub fn search_bitemporal(
@@ -189,6 +212,7 @@ impl TextIndex {
         user_id: Option<&str>,
         app_id: Option<&str>,
         agent_id: Option<&str>,
+        domain: Option<&str>,
     ) -> Result<Vec<String>> {
         let searcher = self.reader.searcher();
         let schema = self.index.schema();
@@ -200,73 +224,100 @@ impl TextIndex {
             Ok(q) => q,
             Err(_) => {
                 // Fallback: strip special characters that Tantivy parser dislikes
-                let sanitized: String = query_str.chars()
+                let sanitized: String = query_str
+                    .chars()
                     .filter(|c| c.is_alphanumeric() || c.is_whitespace())
                     .collect();
-                query_parser.parse_query(&sanitized).unwrap_or_else(|_| Box::new(tantivy::query::AllQuery))
+                query_parser
+                    .parse_query(&sanitized)
+                    .unwrap_or_else(|_| Box::new(tantivy::query::AllQuery))
             }
         };
 
-        let mut sub_queries: Vec<(tantivy::query::Occur, Box<dyn tantivy::query::Query>)> = vec![
-            (tantivy::query::Occur::Must, base_query),
-        ];
+        let mut sub_queries: Vec<(tantivy::query::Occur, Box<dyn tantivy::query::Query>)> =
+            vec![(tantivy::query::Occur::Must, base_query)];
 
         if let Some(oid) = org_id {
             let org_id_field = schema.get_field("org_id").unwrap();
             let term = tantivy::Term::from_field_text(org_id_field, oid);
-            let term_query = tantivy::query::TermQuery::new(term, tantivy::schema::IndexRecordOption::Basic);
+            let term_query =
+                tantivy::query::TermQuery::new(term, tantivy::schema::IndexRecordOption::Basic);
             sub_queries.push((tantivy::query::Occur::Must, Box::new(term_query)));
         }
 
         if let Some(uid) = user_id {
             let user_id_field = schema.get_field("user_id").unwrap();
             let term = tantivy::Term::from_field_text(user_id_field, uid);
-            let term_query = tantivy::query::TermQuery::new(term, tantivy::schema::IndexRecordOption::Basic);
+            let term_query =
+                tantivy::query::TermQuery::new(term, tantivy::schema::IndexRecordOption::Basic);
             sub_queries.push((tantivy::query::Occur::Must, Box::new(term_query)));
         }
 
         if let Some(aid) = app_id {
             let app_id_field = schema.get_field("app_id").unwrap();
             let term = tantivy::Term::from_field_text(app_id_field, aid);
-            let term_query = tantivy::query::TermQuery::new(term, tantivy::schema::IndexRecordOption::Basic);
+            let term_query =
+                tantivy::query::TermQuery::new(term, tantivy::schema::IndexRecordOption::Basic);
             sub_queries.push((tantivy::query::Occur::Must, Box::new(term_query)));
         }
 
         if let Some(agid) = agent_id {
             let agent_id_field = schema.get_field("agent_id").unwrap();
             let term = tantivy::Term::from_field_text(agent_id_field, agid);
-            let term_query = tantivy::query::TermQuery::new(term, tantivy::schema::IndexRecordOption::Basic);
+            let term_query =
+                tantivy::query::TermQuery::new(term, tantivy::schema::IndexRecordOption::Basic);
+            sub_queries.push((tantivy::query::Occur::Must, Box::new(term_query)));
+        }
+
+        if let Some(domain) = domain {
+            let domain_field = schema.get_field("domain").unwrap();
+            let term = tantivy::Term::from_field_text(domain_field, domain);
+            let term_query =
+                tantivy::query::TermQuery::new(term, tantivy::schema::IndexRecordOption::Basic);
             sub_queries.push((tantivy::query::Occur::Must, Box::new(term_query)));
         }
 
         if let Some(range) = valid_time {
             if range.start.is_some() || range.end.is_some() {
-                let start = range.start.map(|t| t.timestamp_micros()).unwrap_or(i64::MIN);
+                let start = range
+                    .start
+                    .map(|t| t.timestamp_micros())
+                    .unwrap_or(i64::MIN);
                 let end = range.end.map(|t| t.timestamp_micros()).unwrap_or(i64::MAX);
-                let time_query = tantivy::query::RangeQuery::new_i64("valid_time".to_string(), start..end + 1);
+                let time_query =
+                    tantivy::query::RangeQuery::new_i64("valid_time".to_string(), start..end + 1);
                 sub_queries.push((tantivy::query::Occur::Must, Box::new(time_query)));
             }
         }
 
         if let Some(range) = transaction_time {
             if range.start.is_some() || range.end.is_some() {
-                let start = range.start.map(|t| t.timestamp_micros()).unwrap_or(i64::MIN);
+                let start = range
+                    .start
+                    .map(|t| t.timestamp_micros())
+                    .unwrap_or(i64::MIN);
                 let end = range.end.map(|t| t.timestamp_micros()).unwrap_or(i64::MAX);
-                let time_query = tantivy::query::RangeQuery::new_i64("transaction_time".to_string(), start..end + 1);
+                let time_query = tantivy::query::RangeQuery::new_i64(
+                    "transaction_time".to_string(),
+                    start..end + 1,
+                );
                 sub_queries.push((tantivy::query::Occur::Must, Box::new(time_query)));
             }
         }
 
         let combined_query = tantivy::query::BooleanQuery::new(sub_queries);
-        let top_docs = searcher.search(&combined_query, &tantivy::collector::TopDocs::with_limit(limit))?;
+        let top_docs = searcher.search(
+            &combined_query,
+            &tantivy::collector::TopDocs::with_limit(limit),
+        )?;
 
         let mut results = Vec::new();
         for (_score, doc_address) in top_docs {
             let retrieved_doc: tantivy::TantivyDocument = searcher.doc(doc_address)?;
             if let Some(val) = retrieved_doc.get_first(id_field) {
-                 if let Some(s) = val.as_str() {
-                     results.push(s.to_string());
-                 }
+                if let Some(s) = val.as_str() {
+                    results.push(s.to_string());
+                }
             }
         }
         Ok(results)
@@ -287,7 +338,16 @@ mod tests {
             let index = TextIndex::new(temp_dir.path(), 1000)?;
 
             let stream_id = Uuid::new_v4();
-            let unit = MemoryUnit::new(None, "u1".into(), None, "a1".into(), stream_id, memorose_common::MemoryType::Factual, "The quick brown fox jumps".to_string(), None);
+            let unit = MemoryUnit::new(
+                None,
+                "u1".into(),
+                None,
+                "a1".into(),
+                stream_id,
+                memorose_common::MemoryType::Factual,
+                "The quick brown fox jumps".to_string(),
+                None,
+            );
 
             index.index_unit(&unit)?;
 

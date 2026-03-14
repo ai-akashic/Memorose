@@ -1,22 +1,24 @@
-use std::path::PathBuf;
+use crate::arbitrator::Arbitrator;
+use crate::reranker::Reranker;
+use crate::storage::graph::GraphStore;
+use crate::storage::index::TextIndex;
 use crate::storage::kv::KvStore;
 use crate::storage::system_kv::SystemKvStore;
 use crate::storage::vector::VectorStore;
-use crate::storage::index::TextIndex;
-use crate::storage::graph::GraphStore;
-use crate::arbitrator::Arbitrator;
-use crate::reranker::Reranker;
-use memorose_common::{Event, MemoryUnit, GraphEdge, RelationType, TimeRange};
 use anyhow::Result;
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-use uuid::Uuid;
-use flate2::write::GzEncoder;
-use flate2::read::GzDecoder;
-use flate2::Compression;
 use dashmap::DashMap;
-use tokio::sync::Mutex;
+use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use lancedb::connect;
+use memorose_common::{
+    Event, GraphEdge, MemoryDomain, MemoryUnit, RelationType, SharePolicy, ShareTarget, TimeRange,
+};
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct MemoroseEngine {
@@ -38,6 +40,10 @@ pub struct MemoroseEngine {
 }
 
 impl MemoroseEngine {
+    fn is_local_domain(domain: &MemoryDomain) -> bool {
+        matches!(domain, MemoryDomain::Agent | MemoryDomain::User)
+    }
+
     fn build_time_filter(&self, range: Option<TimeRange>) -> Option<String> {
         let range = range?;
         let mut conditions = Vec::new();
@@ -56,7 +62,12 @@ impl MemoroseEngine {
         }
     }
 
-    pub fn build_user_filter(&self, user_id: &str, app_id: Option<&str>, extra: Option<String>) -> Option<String> {
+    pub fn build_user_filter(
+        &self,
+        user_id: &str,
+        app_id: Option<&str>,
+        extra: Option<String>,
+    ) -> Option<String> {
         fn escape_sql_string(s: &str) -> String {
             s.replace('\'', "''")
         }
@@ -68,6 +79,60 @@ impl MemoroseEngine {
             conditions.push(e);
         }
         Some(conditions.join(" AND "))
+    }
+
+    fn build_global_filter(
+        &self,
+        domain: MemoryDomain,
+        org_id: Option<&str>,
+        app_id: Option<&str>,
+        agent_id: Option<&str>,
+        extra: Option<String>,
+    ) -> Option<String> {
+        fn escape_sql_string(s: &str) -> String {
+            s.replace('\'', "''")
+        }
+
+        let mut conditions = vec![format!("domain = '{}'", domain.as_str())];
+        if let Some(oid) = org_id {
+            conditions.push(format!("org_id = '{}'", escape_sql_string(oid)));
+        }
+        if let Some(aid) = app_id {
+            conditions.push(format!("app_id = '{}'", escape_sql_string(aid)));
+        }
+        if let Some(agid) = agent_id {
+            conditions.push(format!("agent_id = '{}'", escape_sql_string(agid)));
+        }
+        if let Some(e) = extra {
+            conditions.push(e);
+        }
+        Some(conditions.join(" AND "))
+    }
+
+    fn app_share_policy_key(user_id: &str, app_id: &str) -> String {
+        format!("share_policy:user:{}:app:{}", user_id, app_id)
+    }
+
+    fn org_share_policy_key(user_id: &str, org_id: &str) -> String {
+        format!("share_policy:user:{}:org:{}", user_id, org_id)
+    }
+
+    fn projection_mapping_key(domain: &MemoryDomain, source_id: Uuid) -> String {
+        format!("projection:{}:{}", domain.as_str(), source_id)
+    }
+
+    fn backfill_status_key(domain: &MemoryDomain, user_id: &str, scope_id: &str) -> String {
+        format!(
+            "share_backfill:{}:{}:{}",
+            domain.as_str(),
+            user_id,
+            scope_id
+        )
+    }
+
+    fn normalize_share_policy(mut policy: SharePolicy, target: ShareTarget) -> SharePolicy {
+        policy.targets = vec![target];
+        policy
     }
 }
 
@@ -88,7 +153,10 @@ impl MemoroseEngine {
         auto_planner: bool,
         task_reflection: bool,
     ) -> Result<Self> {
-        let dim = memorose_common::config::AppConfig::load().ok().map(|c| c.llm.embedding_dim).unwrap_or(768);
+        let dim = memorose_common::config::AppConfig::load()
+            .ok()
+            .map(|c| c.llm.embedding_dim)
+            .unwrap_or(768);
         Self::new(
             path,
             commit_interval_ms,
@@ -96,7 +164,8 @@ impl MemoroseEngine {
             task_reflection,
             memorose_common::config::DEFAULT_AUTO_LINK_SIMILARITY_THRESHOLD,
             dim,
-        ).await
+        )
+        .await
     }
 
     pub async fn new(
@@ -112,9 +181,7 @@ impl MemoroseEngine {
         let root_path = root_path.canonicalize()?;
 
         let kv_path = root_path.join("rocksdb");
-        let kv = tokio::task::spawn_blocking(move || {
-            KvStore::open(kv_path)
-        }).await??;
+        let kv = tokio::task::spawn_blocking(move || KvStore::open(kv_path)).await??;
 
         let vector_path = root_path.join("lancedb");
         let vector_uri = vector_path.to_str().unwrap().to_string();
@@ -124,24 +191,29 @@ impl MemoroseEngine {
         let graph = GraphStore::new(db).await?;
 
         let index_path = root_path.join("tantivy");
-        let index = tokio::task::spawn_blocking(move || {
-            TextIndex::new(index_path, commit_interval_ms)
-        }).await??;
+        let index =
+            tokio::task::spawn_blocking(move || TextIndex::new(index_path, commit_interval_ms))
+                .await??;
 
         let arbitrator = Arbitrator::new();
-        let reranker: Arc<dyn crate::reranker::Reranker> = if let Ok(config) = memorose_common::config::AppConfig::load() {
-            if config.reranker.r#type == memorose_common::config::RerankerType::Http && config.reranker.endpoint.is_some() {
-                Arc::new(crate::reranker::HttpReranker::new(config.reranker.endpoint.unwrap()))
+        let reranker: Arc<dyn crate::reranker::Reranker> =
+            if let Ok(config) = memorose_common::config::AppConfig::load() {
+                if config.reranker.r#type == memorose_common::config::RerankerType::Http
+                    && config.reranker.endpoint.is_some()
+                {
+                    Arc::new(crate::reranker::HttpReranker::new(
+                        config.reranker.endpoint.unwrap(),
+                    ))
+                } else {
+                    Arc::new(crate::reranker::WeightedReranker::new())
+                }
             } else {
                 Arc::new(crate::reranker::WeightedReranker::new())
-            }
-        } else {
-            Arc::new(crate::reranker::WeightedReranker::new())
-        };
+            };
 
         // 初始化查询优化组件
         let query_cache = Arc::new(crate::graph::QueryCache::new(crate::graph::CacheConfig {
-            ttl: std::time::Duration::from_secs(300),  // 5 分钟 TTL
+            ttl: std::time::Duration::from_secs(300), // 5 分钟 TTL
             max_entries: 5000,
             enabled: true,
         }));
@@ -243,6 +315,89 @@ impl MemoroseEngine {
         self.task_reflection
     }
 
+    pub fn get_app_share_policy(&self, user_id: &str, app_id: &str) -> Result<SharePolicy> {
+        let key = Self::app_share_policy_key(user_id, app_id);
+        match self.system_kv().get(key.as_bytes())? {
+            Some(bytes) => Ok(serde_json::from_slice(&bytes).unwrap_or_default()),
+            None => Ok(SharePolicy::default()),
+        }
+    }
+
+    pub fn set_app_share_policy(
+        &self,
+        user_id: &str,
+        app_id: &str,
+        policy: &SharePolicy,
+    ) -> Result<()> {
+        let policy = Self::normalize_share_policy(policy.clone(), ShareTarget::App);
+        let key = Self::app_share_policy_key(user_id, app_id);
+        self.system_kv()
+            .put(key.as_bytes(), &serde_json::to_vec(&policy)?)
+    }
+
+    pub fn get_org_share_policy(&self, user_id: &str, org_id: &str) -> Result<SharePolicy> {
+        let key = Self::org_share_policy_key(user_id, org_id);
+        match self.system_kv().get(key.as_bytes())? {
+            Some(bytes) => Ok(serde_json::from_slice(&bytes).unwrap_or_default()),
+            None => Ok(SharePolicy::default()),
+        }
+    }
+
+    pub fn set_org_share_policy(
+        &self,
+        user_id: &str,
+        org_id: &str,
+        policy: &SharePolicy,
+    ) -> Result<()> {
+        let policy = Self::normalize_share_policy(policy.clone(), ShareTarget::Organization);
+        let key = Self::org_share_policy_key(user_id, org_id);
+        self.system_kv()
+            .put(key.as_bytes(), &serde_json::to_vec(&policy)?)
+    }
+
+    pub fn get_app_backfill_status(
+        &self,
+        user_id: &str,
+        app_id: &str,
+    ) -> Result<Option<serde_json::Value>> {
+        let key = Self::backfill_status_key(&MemoryDomain::App, user_id, app_id);
+        match self.system_kv().get(key.as_bytes())? {
+            Some(bytes) => Ok(serde_json::from_slice(&bytes).ok()),
+            None => Ok(None),
+        }
+    }
+
+    pub fn get_org_backfill_status(
+        &self,
+        user_id: &str,
+        org_id: &str,
+    ) -> Result<Option<serde_json::Value>> {
+        let key = Self::backfill_status_key(&MemoryDomain::Organization, user_id, org_id);
+        match self.system_kv().get(key.as_bytes())? {
+            Some(bytes) => Ok(serde_json::from_slice(&bytes).ok()),
+            None => Ok(None),
+        }
+    }
+
+    pub async fn disable_app_contribution(&self, user_id: &str, app_id: &str) -> Result<usize> {
+        let projected = self
+            .find_projected_units_for_scope(user_id, app_id, None, MemoryDomain::App)
+            .await?;
+        self.delete_projected_memory_units(projected).await
+    }
+
+    pub async fn disable_org_contribution(&self, user_id: &str, org_id: &str) -> Result<usize> {
+        let projected = self
+            .find_projected_units_for_scope(
+                user_id,
+                "_all",
+                Some(org_id),
+                MemoryDomain::Organization,
+            )
+            .await?;
+        self.delete_projected_memory_units(projected).await
+    }
+
     pub async fn compact_vector_store(&self) -> Result<()> {
         self.vector.compact_files("memories").await?;
         Ok(())
@@ -263,7 +418,9 @@ impl MemoroseEngine {
         let mut best_app = String::new();
         let mut best_count = 0usize;
         for (app_id, count) in counts {
-            if count > best_count || (count == best_count && (best_app.is_empty() || app_id < best_app)) {
+            if count > best_count
+                || (count == best_count && (best_app.is_empty() || app_id < best_app))
+            {
                 best_app = app_id;
                 best_count = count;
             }
@@ -272,10 +429,7 @@ impl MemoroseEngine {
         if best_count > 0 {
             best_app
         } else {
-            units
-                .first()
-                .map(|u| u.app_id.clone())
-                .unwrap_or_default()
+            units.first().map(|u| u.app_id.clone()).unwrap_or_default()
         }
     }
 
@@ -296,11 +450,10 @@ impl MemoroseEngine {
         }
 
         let skv = self.system_kv();
-        let pending_pairs = tokio::task::spawn_blocking(move || {
-            skv.scan(b"pending:")
-        }).await??;
+        let pending_pairs = tokio::task::spawn_blocking(move || skv.scan(b"pending:")).await??;
 
         let mut events = Vec::new();
+        let mut invalid_pending_entries = Vec::new();
         for (key, val) in pending_pairs {
             if events.len() >= limit {
                 break;
@@ -310,21 +463,58 @@ impl MemoroseEngine {
             let parts: Vec<&str> = key_str.split(':').collect();
             if parts.len() == 2 {
                 let event_id = parts[1];
-                // Parse user_id from the pending value
+                // Parse user_id from the pending value.
+                // If the metadata is malformed or the original event body is gone,
+                // move the pending marker into the failed queue so it doesn't block
+                // consolidation forever.
                 let user_id = if !val.is_empty() {
                     if let Ok(info) = serde_json::from_slice::<serde_json::Value>(&val) {
-                        info["user_id"].as_str().unwrap_or("_legacy").to_string()
+                        match info["user_id"].as_str() {
+                            Some(user_id) if !user_id.is_empty() => user_id.to_string(),
+                            _ => {
+                                invalid_pending_entries.push((
+                                    event_id.to_string(),
+                                    "Pending metadata missing user_id".to_string(),
+                                ));
+                                continue;
+                            }
+                        }
                     } else {
-                        "_legacy".to_string()
+                        invalid_pending_entries.push((
+                            event_id.to_string(),
+                            "Malformed pending metadata".to_string(),
+                        ));
+                        continue;
                     }
                 } else {
-                    "_legacy".to_string()
+                    invalid_pending_entries.push((
+                        event_id.to_string(),
+                        "Pending metadata missing user_id".to_string(),
+                    ));
+                    continue;
                 };
                 if let Some(event) = self.get_event(&user_id, event_id).await? {
                     events.push(event);
+                } else {
+                    invalid_pending_entries.push((
+                        event_id.to_string(),
+                        format!("Pending entry missing source event for user {}", user_id),
+                    ));
                 }
             }
         }
+
+        for (event_id, reason) in invalid_pending_entries {
+            if let Err(err) = self.mark_event_failed(&event_id, &reason).await {
+                tracing::warn!(
+                    "Failed to move invalid pending entry {} to failed queue: {:?}",
+                    event_id,
+                    err
+                );
+            }
+        }
+
+        events.sort_by(|a, b| a.transaction_time.cmp(&b.transaction_time));
         Ok(events)
     }
 
@@ -352,7 +542,8 @@ impl MemoroseEngine {
         let key = format!("retry_count:{}", id);
         let current = self.get_retry_count(id).await?;
         let new_count = current + 1;
-        self.system_kv().put(key.as_bytes(), &new_count.to_le_bytes())?;
+        self.system_kv()
+            .put(key.as_bytes(), &new_count.to_le_bytes())?;
         Ok(new_count)
     }
 
@@ -378,7 +569,8 @@ impl MemoroseEngine {
             "failed_at": chrono::Utc::now().to_rfc3339(),
             "retry_count": retry_count
         });
-        self.system_kv().put(failed_key.as_bytes(), &serde_json::to_vec(&failed_info)?)?;
+        self.system_kv()
+            .put(failed_key.as_bytes(), &serde_json::to_vec(&failed_info)?)?;
 
         // 清理重试计数，避免失败事件残留状态。
         let retry_key = format!("retry_count:{}", id);
@@ -458,7 +650,8 @@ impl MemoroseEngine {
     /// Prospective Reflection: Summarize recent L1 memories into L2 Topic memories.
     pub async fn reflect_on_session(&self, user_id: &str, stream_id: uuid::Uuid) -> Result<()> {
         let recent_l1 = self.fetch_recent_l1_units(user_id, 20).await?;
-        let session_units: Vec<MemoryUnit> = recent_l1.into_iter()
+        let session_units: Vec<MemoryUnit> = recent_l1
+            .into_iter()
             .filter(|u| u.stream_id == stream_id)
             .collect();
 
@@ -466,7 +659,15 @@ impl MemoroseEngine {
             return Ok(());
         }
 
-        let topic_units = self.arbitrator.extract_topics(user_id, &session_units[0].app_id, stream_id, session_units.clone()).await?;
+        let topic_units = self
+            .arbitrator
+            .extract_topics(
+                user_id,
+                &session_units[0].app_id,
+                stream_id,
+                session_units.clone(),
+            )
+            .await?;
 
         if topic_units.is_empty() {
             return Ok(());
@@ -486,7 +687,13 @@ impl MemoroseEngine {
 
         for topic in units_to_store {
             for source_id in topic.references {
-                let edge = GraphEdge::new(topic.user_id.clone(), topic.id, source_id, RelationType::DerivedFrom, 1.0);
+                let edge = GraphEdge::new(
+                    topic.user_id.clone(),
+                    topic.id,
+                    source_id,
+                    RelationType::DerivedFrom,
+                    1.0,
+                );
                 self.graph.add_edge(&edge).await?;
             }
         }
@@ -495,8 +702,15 @@ impl MemoroseEngine {
     }
 
     /// Retrospective Reflection: Apply feedback to the reranker and reinforce graph associations.
-    pub async fn apply_reranker_feedback(&self, user_id: &str, cited_ids: Vec<String>, retrieved_ids: Vec<String>) -> Result<()> {
-        self.reranker.apply_feedback(&self._kv, cited_ids.clone(), retrieved_ids).await?;
+    pub async fn apply_reranker_feedback(
+        &self,
+        user_id: &str,
+        cited_ids: Vec<String>,
+        retrieved_ids: Vec<String>,
+    ) -> Result<()> {
+        self.reranker
+            .apply_feedback(&self._kv, cited_ids.clone(), retrieved_ids)
+            .await?;
 
         if cited_ids.len() >= 2 {
             self.reinforce_associations(user_id, cited_ids).await?;
@@ -509,7 +723,8 @@ impl MemoroseEngine {
     async fn reinforce_associations(&self, user_id: &str, cited_ids: Vec<String>) -> Result<()> {
         let uid = user_id.to_string();
 
-        let uuids: Vec<Uuid> = cited_ids.iter()
+        let uuids: Vec<Uuid> = cited_ids
+            .iter()
             .filter_map(|id| Uuid::parse_str(id).ok())
             .collect();
 
@@ -535,14 +750,24 @@ impl MemoroseEngine {
         tokio::task::spawn_blocking(move || {
             tracing::info!("Exporting snapshot to {:?}", output_path);
 
-            engine.index.commit().map_err(|e| anyhow::anyhow!("Tantivy commit failed: {}", e))?;
-            engine._kv.flush().map_err(|e| anyhow::anyhow!("RocksDB flush failed: {}", e))?;
+            engine
+                .index
+                .commit()
+                .map_err(|e| anyhow::anyhow!("Tantivy commit failed: {}", e))?;
+            engine
+                ._kv
+                .flush()
+                .map_err(|e| anyhow::anyhow!("RocksDB flush failed: {}", e))?;
 
             if let Some(parent) = output_path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| anyhow::anyhow!("Failed to create parent dir {:?}: {}", parent, e))?;
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    anyhow::anyhow!("Failed to create parent dir {:?}: {}", parent, e)
+                })?;
             }
 
-            let file = std::fs::File::create(&output_path).map_err(|e| anyhow::anyhow!("Failed to create output file {:?}: {}", output_path, e))?;
+            let file = std::fs::File::create(&output_path).map_err(|e| {
+                anyhow::anyhow!("Failed to create output file {:?}: {}", output_path, e)
+            })?;
             let enc = GzEncoder::new(file, Compression::default());
             let mut tar = tar::Builder::new(enc);
 
@@ -562,18 +787,28 @@ impl MemoroseEngine {
                 engine.append_dir_to_tar(&mut tar, root, "tantivy")?;
             }
 
-            tar.finish().map_err(|e| anyhow::anyhow!("Tar finish failed: {}", e))?;
+            tar.finish()
+                .map_err(|e| anyhow::anyhow!("Tar finish failed: {}", e))?;
             Ok(())
-        }).await?
+        })
+        .await?
     }
 
-    fn append_dir_to_tar<W: std::io::Write>(&self, tar: &mut tar::Builder<W>, root: &PathBuf, dir_name: &str) -> Result<()> {
+    fn append_dir_to_tar<W: std::io::Write>(
+        &self,
+        tar: &mut tar::Builder<W>,
+        root: &PathBuf,
+        dir_name: &str,
+    ) -> Result<()> {
         let dir_path = root.join(dir_name);
         for entry in walkdir::WalkDir::new(&dir_path) {
             let entry = match entry {
                 Ok(e) => e,
                 Err(e) => {
-                    if e.io_error().map(|ioe| ioe.kind() == std::io::ErrorKind::NotFound).unwrap_or(false) {
+                    if e.io_error()
+                        .map(|ioe| ioe.kind() == std::io::ErrorKind::NotFound)
+                        .unwrap_or(false)
+                    {
                         continue;
                     }
                     return Err(anyhow::anyhow!("Failed to walk dir {:?}: {}", dir_path, e));
@@ -599,7 +834,11 @@ impl MemoroseEngine {
     }
 
     pub async fn restore_from_snapshot(snapshot_path: PathBuf, target_dir: PathBuf) -> Result<()> {
-        tracing::info!("Restoring snapshot from {:?} to {:?}", snapshot_path, target_dir);
+        tracing::info!(
+            "Restoring snapshot from {:?} to {:?}",
+            snapshot_path,
+            target_dir
+        );
 
         if target_dir.exists() {
             std::fs::remove_dir_all(&target_dir)?;
@@ -638,7 +877,13 @@ impl MemoroseEngine {
         // Handle Explicit Linking (Task Hierarchy)
         if !references.is_empty() {
             for parent_id in references {
-                let edge = GraphEdge::new(user_id.clone(), unit_id, parent_id, RelationType::IsSubTaskOf, 1.0);
+                let edge = GraphEdge::new(
+                    user_id.clone(),
+                    unit_id,
+                    parent_id,
+                    RelationType::IsSubTaskOf,
+                    1.0,
+                );
                 self.graph.add_edge(&edge).await?;
             }
         }
@@ -658,7 +903,10 @@ impl MemoroseEngine {
             let agent = agent_id.clone();
             tokio::spawn(async move {
                 let key = format!("planning:{}", unit_id);
-                match engine.auto_plan_goal(org, uid, agent, aid, stream_id, unit_id, cnt, depth + 1).await {
+                match engine
+                    .auto_plan_goal(org, uid, agent, aid, stream_id, unit_id, cnt, depth + 1)
+                    .await
+                {
                     Ok(()) => {
                         let _ = engine.system_kv().put(key.as_bytes(), b"done");
                     }
@@ -672,11 +920,31 @@ impl MemoroseEngine {
         Ok(())
     }
 
-    pub fn auto_plan_goal(&self, org_id: Option<String>, user_id: String, agent_id: Option<String>, app_id: String, stream_id: Uuid, goal_id: Uuid, goal_content: String, depth: usize) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>> {
+    pub fn auto_plan_goal(
+        &self,
+        org_id: Option<String>,
+        user_id: String,
+        agent_id: Option<String>,
+        app_id: String,
+        stream_id: Uuid,
+        goal_id: Uuid,
+        goal_content: String,
+        depth: usize,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>> {
         Box::pin(async move {
             tracing::info!("Auto-planning goal {} (depth {})", goal_id, depth);
 
-            let milestones = self.arbitrator.decompose_goal(org_id.as_deref(), &user_id, agent_id.as_deref(), &app_id, stream_id, &goal_content).await?;
+            let milestones = self
+                .arbitrator
+                .decompose_goal(
+                    org_id.as_deref(),
+                    &user_id,
+                    agent_id.as_deref(),
+                    &app_id,
+                    stream_id,
+                    &goal_content,
+                )
+                .await?;
 
             if milestones.is_empty() {
                 return Ok(());
@@ -684,13 +952,19 @@ impl MemoroseEngine {
 
             let mut updated_milestones = Vec::new();
             for mut ms in milestones {
-                 ms.parent_id = Some(goal_id);
-                 self.store_l3_task(&ms).await?;
-                 updated_milestones.push(ms);
+                ms.parent_id = Some(goal_id);
+                self.store_l3_task(&ms).await?;
+                updated_milestones.push(ms);
             }
 
             for ms in updated_milestones {
-                let edge = GraphEdge::new(ms.user_id.clone(), ms.task_id, goal_id, RelationType::IsSubTaskOf, 1.0);
+                let edge = GraphEdge::new(
+                    ms.user_id.clone(),
+                    ms.task_id,
+                    goal_id,
+                    RelationType::IsSubTaskOf,
+                    1.0,
+                );
                 self.graph.add_edge(&edge).await?;
             }
 
@@ -705,7 +979,11 @@ impl MemoroseEngine {
         Ok(())
     }
 
-    pub async fn get_l3_task(&self, user_id: &str, task_id: Uuid) -> Result<Option<memorose_common::L3Task>> {
+    pub async fn get_l3_task(
+        &self,
+        user_id: &str,
+        task_id: Uuid,
+    ) -> Result<Option<memorose_common::L3Task>> {
         let key = format!("l3:task:{}:{}", user_id, task_id);
         if let Some(val) = self._kv.get(key.as_bytes())? {
             let task: memorose_common::L3Task = serde_json::from_slice(&val)?;
@@ -730,7 +1008,7 @@ impl MemoroseEngine {
     /// Agent Action Driver: Get tasks that are Pending and have all dependencies Completed.
     pub async fn get_ready_l3_tasks(&self, user_id: &str) -> Result<Vec<memorose_common::L3Task>> {
         let all_tasks = self.list_l3_tasks(user_id).await?;
-        
+
         // Build a map of task_id -> status for quick dependency checking
         let status_map: std::collections::HashMap<Uuid, memorose_common::TaskStatus> = all_tasks
             .iter()
@@ -753,13 +1031,343 @@ impl MemoroseEngine {
                         break;
                     }
                 }
-                
+
                 if all_deps_completed {
                     ready_tasks.push(task);
                 }
             }
         }
         Ok(ready_tasks)
+    }
+
+    pub fn schedule_share_backfill(
+        &self,
+        user_id: &str,
+        app_id: &str,
+        org_id: Option<&str>,
+        domain: MemoryDomain,
+    ) -> Result<()> {
+        let scope_id = match domain {
+            MemoryDomain::App => app_id.to_string(),
+            MemoryDomain::Organization => org_id.unwrap_or("_global").to_string(),
+            _ => return Ok(()),
+        };
+
+        let status_key = Self::backfill_status_key(&domain, user_id, &scope_id);
+        let pending = serde_json::json!({
+            "status": "pending",
+            "scheduled_at": chrono::Utc::now().to_rfc3339(),
+            "app_id": app_id,
+            "org_id": org_id,
+            "domain": domain.as_str()
+        });
+        self.system_kv()
+            .put(status_key.as_bytes(), &serde_json::to_vec(&pending)?)?;
+
+        let engine = self.clone();
+        let user_id = user_id.to_string();
+        let app_id = app_id.to_string();
+        let org_id = org_id.map(|value| value.to_string());
+        tokio::spawn(async move {
+            let result = engine
+                .run_share_backfill(&user_id, &app_id, org_id.as_deref(), domain.clone())
+                .await;
+
+            let payload = match result {
+                Ok(projected) => serde_json::json!({
+                    "status": "done",
+                    "finished_at": chrono::Utc::now().to_rfc3339(),
+                    "projected": projected,
+                    "app_id": app_id,
+                    "org_id": org_id,
+                    "domain": domain.as_str()
+                }),
+                Err(error) => serde_json::json!({
+                    "status": "failed",
+                    "finished_at": chrono::Utc::now().to_rfc3339(),
+                    "error": error.to_string(),
+                    "app_id": app_id,
+                    "org_id": org_id,
+                    "domain": domain.as_str()
+                }),
+            };
+
+            if let Err(error) = engine.system_kv().put(
+                status_key.as_bytes(),
+                &serde_json::to_vec(&payload).unwrap_or_default(),
+            ) {
+                tracing::warn!("Failed to update share backfill status: {:?}", error);
+            }
+        });
+
+        Ok(())
+    }
+
+    async fn run_share_backfill(
+        &self,
+        user_id: &str,
+        app_id: &str,
+        org_id: Option<&str>,
+        domain: MemoryDomain,
+    ) -> Result<usize> {
+        let prefix = format!("u:{}:unit:", user_id);
+        let store = self._kv.clone();
+        let prefix_bytes = prefix.into_bytes();
+        let pairs = tokio::task::spawn_blocking(move || store.scan(&prefix_bytes)).await??;
+
+        let native_units: Vec<MemoryUnit> = pairs
+            .into_iter()
+            .filter_map(|(_, val)| serde_json::from_slice::<MemoryUnit>(&val).ok())
+            .filter(|unit| Self::is_local_domain(&unit.domain))
+            .filter(|unit| unit.level <= 2)
+            .filter(|unit| match domain {
+                MemoryDomain::App => unit.app_id == app_id,
+                MemoryDomain::Organization => unit.org_id.as_deref() == org_id,
+                _ => false,
+            })
+            .collect();
+
+        let projected = self
+            .project_native_memory_units_for_domain(&native_units, Some(domain))
+            .await?;
+        Ok(projected)
+    }
+
+    async fn build_projection_candidate(
+        &self,
+        source: &MemoryUnit,
+        target_domain: MemoryDomain,
+    ) -> Result<Option<(String, MemoryUnit)>> {
+        let mapping_key = Self::projection_mapping_key(&target_domain, source.id);
+        if let Some(bytes) = self.system_kv().get(mapping_key.as_bytes())? {
+            let existing_id = String::from_utf8(bytes)?;
+            if let Ok(parsed) = Uuid::parse_str(&existing_id) {
+                if self.get_memory_unit_by_index(parsed).await?.is_some() {
+                    return Ok(None);
+                }
+            }
+        }
+
+        let mut projected = source.clone();
+        projected.id = Uuid::new_v4();
+        projected.domain = target_domain.clone();
+        projected.namespace_key = MemoryUnit::build_namespace_key(
+            &target_domain,
+            source.org_id.as_deref(),
+            Some(&source.user_id),
+            Some(&source.app_id),
+            source.agent_id.as_deref(),
+        );
+        projected.share_policy = SharePolicy::default();
+        projected.projected_from = vec![source.id];
+
+        Ok(Some((mapping_key, projected)))
+    }
+
+    async fn find_projected_units_for_scope(
+        &self,
+        user_id: &str,
+        app_id: &str,
+        org_id: Option<&str>,
+        domain: MemoryDomain,
+    ) -> Result<Vec<MemoryUnit>> {
+        let prefix = format!("u:{}:unit:", user_id);
+        let store = self._kv.clone();
+        let prefix_bytes = prefix.into_bytes();
+        let pairs = tokio::task::spawn_blocking(move || store.scan(&prefix_bytes)).await??;
+
+        let projected = pairs
+            .into_iter()
+            .filter_map(|(_, val)| serde_json::from_slice::<MemoryUnit>(&val).ok())
+            .filter(|unit| !unit.projected_from.is_empty())
+            .filter(|unit| unit.domain == domain)
+            .filter(|unit| match domain {
+                MemoryDomain::App => unit.app_id == app_id,
+                MemoryDomain::Organization => unit.org_id.as_deref() == org_id,
+                _ => false,
+            })
+            .collect();
+
+        Ok(projected)
+    }
+
+    async fn delete_projected_memory_units(&self, units: Vec<MemoryUnit>) -> Result<usize> {
+        if units.is_empty() {
+            return Ok(0);
+        }
+
+        let kv = self._kv.clone();
+        let deletions: Vec<(String, String, Vec<String>)> = units
+            .iter()
+            .map(|unit| {
+                let mapping_keys = unit
+                    .projected_from
+                    .iter()
+                    .map(|source_id| {
+                        Self::projection_mapping_key(&unit.domain, *source_id)
+                    })
+                    .collect();
+                (
+                    format!("u:{}:unit:{}", unit.user_id, unit.id),
+                    format!("idx:unit:{}", unit.id),
+                    mapping_keys,
+                )
+            })
+            .collect();
+
+        tokio::task::spawn_blocking(move || {
+            for (unit_key, index_key, mapping_keys) in deletions {
+                kv.delete(unit_key.as_bytes())?;
+                kv.delete(index_key.as_bytes()).ok();
+                for mapping_key in mapping_keys {
+                    kv.delete(mapping_key.as_bytes()).ok();
+                }
+            }
+            Ok::<(), anyhow::Error>(())
+        })
+        .await??;
+
+        for unit in &units {
+            if let Err(error) = self
+                .vector
+                .delete_by_id("memories", &unit.id.to_string())
+                .await
+            {
+                tracing::warn!(
+                    "Failed to delete projected unit {} from vector store: {:?}",
+                    unit.id,
+                    error
+                );
+            }
+        }
+
+        let index = self.index.clone();
+        let ids: Vec<String> = units.iter().map(|unit| unit.id.to_string()).collect();
+        tokio::task::spawn_blocking(move || {
+            for id in &ids {
+                index.delete_unit(id)?;
+            }
+            index.commit()?;
+            index.reload()?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await??;
+
+        Ok(units.len())
+    }
+
+    async fn store_projected_memory_units(&self, units: Vec<MemoryUnit>) -> Result<()> {
+        if units.is_empty() {
+            return Ok(());
+        }
+
+        let kv = self._kv.clone();
+        let mut kv_batch = Vec::new();
+        for unit in &units {
+            let key = format!("u:{}:unit:{}", unit.user_id, unit.id);
+            let val = serde_json::to_vec(unit)?;
+            kv_batch.push((key, val));
+
+            let idx_key = format!("idx:unit:{}", unit.id);
+            kv_batch.push((idx_key, unit.user_id.as_bytes().to_vec()));
+        }
+
+        tokio::task::spawn_blocking(move || {
+            for (k, v) in kv_batch {
+                kv.put(k.as_bytes(), &v)?;
+            }
+            Ok::<(), anyhow::Error>(())
+        })
+        .await??;
+
+        let units_with_embeddings: Vec<MemoryUnit> = units
+            .iter()
+            .filter(|u| u.embedding.is_some())
+            .cloned()
+            .collect();
+        if !units_with_embeddings.is_empty() {
+            self.vector.ensure_table("memories").await?;
+            self.vector.add("memories", units_with_embeddings).await?;
+        }
+
+        let index = self.index.clone();
+        let units_for_index = units.clone();
+        tokio::task::spawn_blocking(move || {
+            for unit in &units_for_index {
+                index.index_unit(unit)?;
+            }
+            Ok::<(), anyhow::Error>(())
+        })
+        .await??;
+
+        Ok(())
+    }
+
+    async fn project_native_memory_units(&self, units: &[MemoryUnit]) -> Result<usize> {
+        self.project_native_memory_units_for_domain(units, None)
+            .await
+    }
+
+    async fn project_native_memory_units_for_domain(
+        &self,
+        units: &[MemoryUnit],
+        only_domain: Option<MemoryDomain>,
+    ) -> Result<usize> {
+        let mut mappings = Vec::new();
+        let mut projected_units = Vec::new();
+
+        for unit in units {
+            if !Self::is_local_domain(&unit.domain) || unit.level > 2 {
+                continue;
+            }
+
+            let app_policy = self.get_app_share_policy(&unit.user_id, &unit.app_id)?;
+            if app_policy.contribute
+                && only_domain
+                    .as_ref()
+                    .map(|domain| domain == &MemoryDomain::App)
+                    .unwrap_or(true)
+            {
+                if let Some((mapping_key, projected)) = self
+                    .build_projection_candidate(unit, MemoryDomain::App)
+                    .await?
+                {
+                    mappings.push((mapping_key, projected.id));
+                    projected_units.push(projected);
+                }
+            }
+
+            if let Some(org_id) = unit.org_id.as_deref() {
+                let org_policy = self.get_org_share_policy(&unit.user_id, org_id)?;
+                if org_policy.contribute
+                    && only_domain
+                        .as_ref()
+                        .map(|domain| domain == &MemoryDomain::Organization)
+                        .unwrap_or(true)
+                {
+                    if let Some((mapping_key, projected)) = self
+                        .build_projection_candidate(unit, MemoryDomain::Organization)
+                        .await?
+                    {
+                        mappings.push((mapping_key, projected.id));
+                        projected_units.push(projected);
+                    }
+                }
+            }
+        }
+
+        let projected_count = projected_units.len();
+        if projected_count == 0 {
+            return Ok(0);
+        }
+
+        self.store_projected_memory_units(projected_units).await?;
+        for (mapping_key, projected_id) in mappings {
+            self.system_kv()
+                .put(mapping_key.as_bytes(), projected_id.to_string().as_bytes())?;
+        }
+
+        Ok(projected_count)
     }
 
     pub async fn store_memory_units(&self, units: Vec<MemoryUnit>) -> Result<()> {
@@ -781,7 +1389,9 @@ impl MemoroseEngine {
             let idx_key = format!("idx:unit:{}", unit.id);
             kv_batch.push((idx_key, unit.user_id.as_bytes().to_vec()));
 
-            marker_user_ids.insert(unit.user_id.clone());
+            if Self::is_local_domain(&unit.domain) {
+                marker_user_ids.insert(unit.user_id.clone());
+            }
         }
 
         let skv_clone = skv.clone();
@@ -797,14 +1407,22 @@ impl MemoroseEngine {
                 skv_clone.put(reflect_key.as_bytes(), ts.as_bytes())?;
             }
             Ok::<(), anyhow::Error>(())
-        }).await??;
+        })
+        .await??;
 
         // Maintain L1 secondary index for efficient fetch_recent_l1_units.
         // Key: "l1_idx:{user_id}:{id}" -> timestamp_micros as little-endian bytes (fast sort, no JSON).
         // The user_id prefix is critical: without it the global scan mixes all users' L1 units.
-        let l1_units: Vec<(String, String, i64)> = units.iter()
-            .filter(|u| u.level == 1)
-            .map(|u| (u.user_id.clone(), u.id.to_string(), u.transaction_time.timestamp_micros()))
+        let l1_units: Vec<(String, String, i64)> = units
+            .iter()
+            .filter(|u| u.level == 1 && Self::is_local_domain(&u.domain))
+            .map(|u| {
+                (
+                    u.user_id.clone(),
+                    u.id.to_string(),
+                    u.transaction_time.timestamp_micros(),
+                )
+            })
             .collect();
         if !l1_units.is_empty() {
             let kv_l1 = self._kv.clone();
@@ -814,11 +1432,13 @@ impl MemoroseEngine {
                     kv_l1.put(key.as_bytes(), &ts_micros.to_le_bytes())?;
                 }
                 Ok::<(), anyhow::Error>(())
-            }).await??;
+            })
+            .await??;
         }
 
         // 2. Store Vector in Lance (single "memories" table)
-        let units_with_embeddings: Vec<MemoryUnit> = units.iter()
+        let units_with_embeddings: Vec<MemoryUnit> = units
+            .iter()
             .filter(|u| u.embedding.is_some())
             .cloned()
             .collect();
@@ -838,13 +1458,18 @@ impl MemoroseEngine {
                 index.index_unit(unit)?;
             }
             Ok::<(), anyhow::Error>(())
-        }).await??;
+        })
+        .await??;
 
         // 4. Automatic Semantic Linking (Parallelized)
+        let units_for_projection = units.clone();
         let mut join_set = tokio::task::JoinSet::new();
         for unit in units {
             let engine = self.clone();
             join_set.spawn(async move {
+                if !Self::is_local_domain(&unit.domain) {
+                    return;
+                }
                 if let Err(e) = engine.auto_link_memory(&unit).await {
                     tracing::error!("Auto-linking failed for unit {}: {:?}", unit.id, e);
                 }
@@ -860,17 +1485,33 @@ impl MemoroseEngine {
             }
         }
 
+        self.project_native_memory_units(&units_for_projection)
+            .await?;
+
         Ok(())
     }
 
     async fn auto_link_memory(&self, unit: &MemoryUnit) -> Result<()> {
         if let Some(ref embedding) = unit.embedding {
-            let filter = self.build_user_filter(&unit.user_id, None, None);
-            let similar = self.search_similar(&unit.user_id, None, embedding, 5, filter).await?;
+            let filter = self.build_user_filter(
+                &unit.user_id,
+                Some(&unit.app_id),
+                Some("(domain = 'agent' OR domain = 'user')".to_string()),
+            );
+            let similar = self
+                .search_similar(&unit.user_id, None, embedding, 5, filter)
+                .await?;
 
             for (peer, score) in similar {
-                if peer.id != unit.id && score > self.auto_link_similarity_threshold {  // 使用配置值
-                    let edge = GraphEdge::new(unit.user_id.clone(), unit.id, peer.id, RelationType::RelatedTo, score);
+                if peer.id != unit.id && score > self.auto_link_similarity_threshold {
+                    // 使用配置值
+                    let edge = GraphEdge::new(
+                        unit.user_id.clone(),
+                        unit.id,
+                        peer.id,
+                        RelationType::RelatedTo,
+                        score,
+                    );
                     self.graph.add_edge(&edge).await?;
 
                     // Set community marker since graph changed
@@ -882,27 +1523,39 @@ impl MemoroseEngine {
     }
 
     async fn semantic_link_memory(&self, unit: &MemoryUnit) -> Result<()> {
-        let context = self.fetch_recent_l1_units(&unit.user_id, 5).await?;
+        let context = self.fetch_recent_l1_units(&unit.user_id, 25).await?;
 
-        let context: Vec<MemoryUnit> = context.into_iter()
+        let context: Vec<MemoryUnit> = context
+            .into_iter()
+            .filter(|u| u.app_id == unit.app_id)
             .filter(|u| u.id != unit.id)
+            .take(5)
             .collect();
 
-        if context.is_empty() { return Ok(()); }
+        if context.is_empty() {
+            return Ok(());
+        }
 
         let edges = self.arbitrator.analyze_relations(unit, &context).await?;
 
         if !edges.is_empty() {
-             for edge in edges {
-                 self.graph.add_edge(&edge).await?;
-             }
+            for edge in edges {
+                self.graph.add_edge(&edge).await?;
+            }
         }
         Ok(())
     }
 
     // ── Search ──────────────────────────────────────────────────────
 
-    pub async fn search_similar(&self, user_id: &str, _app_id: Option<&str>, vector: &[f32], limit: usize, filter: Option<String>) -> Result<Vec<(MemoryUnit, f32)>> {
+    pub async fn search_similar(
+        &self,
+        user_id: &str,
+        _app_id: Option<&str>,
+        vector: &[f32],
+        limit: usize,
+        filter: Option<String>,
+    ) -> Result<Vec<(MemoryUnit, f32)>> {
         let results = match self.vector.search("memories", vector, limit, filter).await {
             Ok(res) => res,
             Err(_) => return Ok(Vec::new()),
@@ -911,12 +1564,19 @@ impl MemoroseEngine {
     }
 
     /// Perform a BFS graph traversal to expand context from seed memories.
-    async fn expand_subgraph(&self, user_id: &str, seeds: Vec<(MemoryUnit, f32)>, depth: usize) -> Result<Vec<(MemoryUnit, f32)>> {
+    async fn expand_subgraph(
+        &self,
+        user_id: &str,
+        app_id: Option<&str>,
+        seeds: Vec<(MemoryUnit, f32)>,
+        depth: usize,
+    ) -> Result<Vec<(MemoryUnit, f32)>> {
         if depth == 0 || seeds.is_empty() {
             return Ok(seeds);
         }
 
-        let mut results: HashMap<String, (MemoryUnit, f32)> = seeds.iter()
+        let mut results: HashMap<String, (MemoryUnit, f32)> = seeds
+            .iter()
             .map(|(u, s)| (u.id.to_string(), (u.clone(), *s)))
             .collect();
 
@@ -924,7 +1584,9 @@ impl MemoroseEngine {
         let mut visited: HashSet<String> = frontier.iter().cloned().collect();
 
         for _d in 0..depth {
-            if frontier.is_empty() { break; }
+            if frontier.is_empty() {
+                break;
+            }
 
             // Guard against unbounded expansion
             if results.len() > 500 {
@@ -937,9 +1599,10 @@ impl MemoroseEngine {
             }
 
             let mut next_frontier = HashSet::new();
-            
+
             // 优化：使用 BatchExecutor 批量查询
-            let node_ids: Vec<Uuid> = frontier.iter()
+            let node_ids: Vec<Uuid> = frontier
+                .iter()
                 .filter_map(|id_str| Uuid::parse_str(id_str).ok())
                 .collect();
 
@@ -949,8 +1612,10 @@ impl MemoroseEngine {
 
             // 批量查询出边和入边
             let (out_map_res, in_map_res) = tokio::join!(
-                self.batch_executor.batch_get_outgoing_edges(user_id, &node_ids),
-                self.batch_executor.batch_get_incoming_edges(user_id, &node_ids)
+                self.batch_executor
+                    .batch_get_outgoing_edges(user_id, &node_ids),
+                self.batch_executor
+                    .batch_get_incoming_edges(user_id, &node_ids)
             );
 
             let out_map = out_map_res?;
@@ -971,14 +1636,24 @@ impl MemoroseEngine {
 
             for edge in edges_to_process {
                 let is_outgoing = visited.contains(&edge.source_id.to_string());
-                let neighbor_id = if is_outgoing { edge.target_id } else { edge.source_id };
+                let neighbor_id = if is_outgoing {
+                    edge.target_id
+                } else {
+                    edge.source_id
+                };
                 let neighbor_str = neighbor_id.to_string();
 
-                if visited.contains(&neighbor_str) { continue; }
+                if visited.contains(&neighbor_str) {
+                    continue;
+                }
 
                 let is_relevant = match edge.relation {
                     RelationType::DerivedFrom | RelationType::EvolvedTo => true,
-                    RelationType::RelatedTo if edge.weight > self.auto_link_similarity_threshold => true,
+                    RelationType::RelatedTo
+                        if edge.weight > self.auto_link_similarity_threshold =>
+                    {
+                        true
+                    }
                     _ => false,
                 };
 
@@ -992,6 +1667,12 @@ impl MemoroseEngine {
             if !ids_list.is_empty() {
                 let units = self.fetch_units(user_id, ids_list).await?;
                 for unit in units {
+                    if let Some(expected_app_id) = app_id {
+                        if unit.app_id != expected_app_id {
+                            continue;
+                        }
+                    }
+
                     let score = 0.8_f32.powi((_d + 1) as i32) * 0.8;
 
                     let unit_id_str = unit.id.to_string();
@@ -1007,15 +1688,26 @@ impl MemoroseEngine {
     }
 
     /// Perform hybrid search combining vector similarity and full-text search using Reciprocal Rank Fusion (RRF).
-    pub async fn search_procedural(&self, user_id: &str, app_id: Option<&str>, agent_id: Option<&str>, query_text: &str, vector: &[f32], limit: usize) -> Result<Vec<(MemoryUnit, f32)>> {
-        let mut extra_filter = "memory_type = 'procedural'".to_string();
+    pub async fn search_procedural(
+        &self,
+        user_id: &str,
+        app_id: Option<&str>,
+        agent_id: Option<&str>,
+        query_text: &str,
+        vector: &[f32],
+        limit: usize,
+    ) -> Result<Vec<(MemoryUnit, f32)>> {
+        let mut extra_filter =
+            "(domain = 'agent' OR domain = 'user') AND memory_type = 'procedural'".to_string();
         if let Some(aid) = agent_id {
             extra_filter.push_str(&format!(" AND agent_id = '{}'", aid.replace('\'', "''")));
         }
-        
+
         let vec_filter = self.build_user_filter(user_id, app_id, Some(extra_filter));
-        let vector_future = self.vector.search("memories", vector, limit * 2, vec_filter);
-        
+        let vector_future = self
+            .vector
+            .search("memories", vector, limit * 2, vec_filter);
+
         // Skip Tantivy full-text for procedural, vector is better for behavior trajectories, or we can use it
         // Let's stick to vector-only for now, to ensure tight behavioral trajectory matches.
         let vector_hits = match vector_future.await {
@@ -1033,15 +1725,17 @@ impl MemoroseEngine {
             return Ok(Vec::new());
         }
 
-        let candidates_to_fetch: Vec<String> = vector_hits.iter().map(|(id, _)| id.clone()).collect();
+        let candidates_to_fetch: Vec<String> =
+            vector_hits.iter().map(|(id, _)| id.clone()).collect();
         let mut units: Vec<MemoryUnit> = self.fetch_units(user_id, candidates_to_fetch).await?;
-        
+
         // Ensure strictly procedural
         units.retain(|u| u.memory_type == memorose_common::MemoryType::Procedural);
 
         let mut seeds = Vec::new();
         for unit in units {
-            let score = vector_hits.iter()
+            let score = vector_hits
+                .iter()
                 .find(|(id, _)| *id == unit.id.to_string())
                 .map(|(_, s)| *s)
                 .unwrap_or(0.0);
@@ -1051,22 +1745,38 @@ impl MemoroseEngine {
         // We can do chronological trajectory tracking here in the future
         // For now, rerank and return
         let final_results = self.reranker.rerank(query_text, &self._kv, seeds).await?;
-        
+
         Ok(final_results.into_iter().take(limit).collect())
     }
 
-    pub async fn search_hybrid(&self, user_id: &str, app_id: Option<&str>, agent_id: Option<&str>, query_text: &str, vector: &[f32], limit: usize, enable_arbitration: bool, min_score: Option<f32>, graph_depth: usize, valid_time: Option<TimeRange>, transaction_time: Option<TimeRange>) -> Result<Vec<(MemoryUnit, f32)>> {
+    pub async fn search_hybrid(
+        &self,
+        user_id: &str,
+        app_id: Option<&str>,
+        agent_id: Option<&str>,
+        query_text: &str,
+        vector: &[f32],
+        limit: usize,
+        enable_arbitration: bool,
+        min_score: Option<f32>,
+        graph_depth: usize,
+        valid_time: Option<TimeRange>,
+        transaction_time: Option<TimeRange>,
+    ) -> Result<Vec<(MemoryUnit, f32)>> {
         let time_filter = self.build_time_filter(valid_time.clone());
         let agent_filter = agent_id.map(|aid| format!("agent_id = '{}'", aid.replace('\'', "''")));
+        let local_filter = "(domain = 'agent' OR domain = 'user')".to_string();
         let extra = match (time_filter, agent_filter) {
-            (Some(tf), Some(af)) => Some(format!("{} AND {}", tf, af)),
-            (Some(tf), None) => Some(tf),
-            (None, Some(af)) => Some(af),
-            (None, None) => None,
+            (Some(tf), Some(af)) => Some(format!("{} AND {} AND {}", local_filter, tf, af)),
+            (Some(tf), None) => Some(format!("{} AND {}", local_filter, tf)),
+            (None, Some(af)) => Some(format!("{} AND {}", local_filter, af)),
+            (None, None) => Some(local_filter),
         };
         let vec_filter = self.build_user_filter(user_id, app_id, extra);
 
-        let vector_future = self.vector.search("memories", vector, limit * 2, vec_filter);
+        let vector_future = self
+            .vector
+            .search("memories", vector, limit * 2, vec_filter);
 
         let index = self.index.clone();
         let q_text = query_text.to_string();
@@ -1078,7 +1788,17 @@ impl MemoroseEngine {
         let text_future = tokio::task::spawn_blocking(move || {
             // Ensure reader sees latest committed segments before searching
             index.reload().ok();
-            index.search_bitemporal(&q_text, limit * 2, vt, tt, None, uid.as_deref(), aid.as_deref(), agid.as_deref())
+            index.search_bitemporal(
+                &q_text,
+                limit * 2,
+                vt,
+                tt,
+                None,
+                uid.as_deref(),
+                aid.as_deref(),
+                agid.as_deref(),
+                None,
+            )
         });
 
         let (vector_results, text_results) = tokio::join!(vector_future, text_future);
@@ -1122,12 +1842,17 @@ impl MemoroseEngine {
         let mut sorted_ids: Vec<(String, f32)> = rrf_scores.into_iter().collect();
         sorted_ids.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        let candidates_to_fetch: Vec<String> = sorted_ids.iter().take(limit * 3).map(|(id, _)| id.clone()).collect();
+        let candidates_to_fetch: Vec<String> = sorted_ids
+            .iter()
+            .take(limit * 3)
+            .map(|(id, _)| id.clone())
+            .collect();
         let units: Vec<MemoryUnit> = self.fetch_units(user_id, candidates_to_fetch).await?;
 
         let mut seeds = Vec::new();
         for unit in units {
-            let score = sorted_ids.iter()
+            let score = sorted_ids
+                .iter()
                 .find(|(id, _)| *id == unit.id.to_string())
                 .map(|(_, s)| *s)
                 .unwrap_or(0.0);
@@ -1135,18 +1860,24 @@ impl MemoroseEngine {
         }
 
         // Graph Expansion (BFS)
-        let mut expanded_units = self.expand_subgraph(user_id, seeds, graph_depth).await?;
+        let mut expanded_units = self
+            .expand_subgraph(user_id, app_id, seeds, graph_depth)
+            .await?;
 
         expanded_units.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // Time and Importance Reranking
-        let final_results = self.reranker.rerank(query_text, &self._kv, expanded_units).await?;
+        let final_results = self
+            .reranker
+            .rerank(query_text, &self._kv, expanded_units)
+            .await?;
 
         // Default threshold lowered: RRF scores are now normalized to [0,1], and the
         // reranker adds importance (0.2) + recency (0.1) components, so a reasonable
         // cutoff is ~0.3 to keep relevant results while filtering noise.
         let threshold = min_score.unwrap_or(0.3);
-        let mut final_results: Vec<_> = final_results.into_iter()
+        let mut final_results: Vec<_> = final_results
+            .into_iter()
             .filter(|(_, score)| *score >= threshold)
             .collect();
 
@@ -1178,7 +1909,7 @@ impl MemoroseEngine {
 
         let mut results_for_arbitration = final_results;
         if results_for_arbitration.len() > limit * 2 {
-             results_for_arbitration.truncate(limit * 2);
+            results_for_arbitration.truncate(limit * 2);
         }
 
         // Heuristic Arbitration Trigger
@@ -1190,18 +1921,33 @@ impl MemoroseEngine {
             if (top1_score - top2_score).abs() < 0.25 {
                 should_arbitrate = true;
             } else {
-                tracing::info!("Skipping arbitration due to high confidence in Top 1 (Score gap: {:.2})", (top1_score - top2_score).abs());
+                tracing::info!(
+                    "Skipping arbitration due to high confidence in Top 1 (Score gap: {:.2})",
+                    (top1_score - top2_score).abs()
+                );
             }
         }
 
         if should_arbitrate {
-            tracing::info!("Executing LLM Arbitration for {} candidates...", results_for_arbitration.len());
-            let units_to_arbitrate: Vec<MemoryUnit> = results_for_arbitration.iter().map(|(u, _)| u.clone()).collect();
-            let arbitrated = self.arbitrator.arbitrate(units_to_arbitrate, Some(query_text)).await?;
+            tracing::info!(
+                "Executing LLM Arbitration for {} candidates...",
+                results_for_arbitration.len()
+            );
+            let units_to_arbitrate: Vec<MemoryUnit> = results_for_arbitration
+                .iter()
+                .map(|(u, _)| u.clone())
+                .collect();
+            let arbitrated = self
+                .arbitrator
+                .arbitrate(units_to_arbitrate, Some(query_text))
+                .await?;
 
             let mut arbitrated_results = Vec::new();
             for unit in arbitrated {
-                if let Some((_, score)) = results_for_arbitration.iter().find(|(u, _)| u.id == unit.id) {
+                if let Some((_, score)) = results_for_arbitration
+                    .iter()
+                    .find(|(u, _)| u.id == unit.id)
+                {
                     arbitrated_results.push((unit, *score));
                 }
             }
@@ -1211,11 +1957,217 @@ impl MemoroseEngine {
         }
     }
 
-    pub async fn search_text(&self, user_id: &str, app_id: Option<&str>, query: &str, limit: usize, enable_arbitration: bool, time_range: Option<TimeRange>) -> Result<Vec<MemoryUnit>> {
+    async fn search_shared_scope(
+        &self,
+        domain: MemoryDomain,
+        org_id: Option<&str>,
+        app_id: Option<&str>,
+        agent_id: Option<&str>,
+        query_text: &str,
+        vector: &[f32],
+        limit: usize,
+        min_score: Option<f32>,
+        valid_time: Option<TimeRange>,
+    ) -> Result<Vec<(MemoryUnit, f32)>> {
+        let filter = self.build_global_filter(
+            domain,
+            org_id,
+            app_id,
+            agent_id,
+            self.build_time_filter(valid_time),
+        );
+
+        let hits = match self
+            .vector
+            .search("memories", vector, limit * 2, filter)
+            .await
+        {
+            Ok(hits) => hits,
+            Err(error) => {
+                let msg = error.to_string().to_lowercase();
+                if (msg.contains("table") || msg.contains("no such")) && msg.contains("not found") {
+                    Vec::new()
+                } else {
+                    return Err(error);
+                }
+            }
+        };
+
+        if hits.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let candidates = self.fetch_units_with_scores_global(hits).await?;
+        let mut reranked = self
+            .reranker
+            .rerank(query_text, &self._kv, candidates)
+            .await?;
+        let threshold = min_score.unwrap_or(0.3);
+        reranked.retain(|(_, score)| *score >= threshold);
+        Ok(reranked)
+    }
+
+    pub async fn search_hybrid_with_shared(
+        &self,
+        user_id: &str,
+        app_id: Option<&str>,
+        org_id: Option<&str>,
+        agent_id: Option<&str>,
+        query_text: &str,
+        vector: &[f32],
+        limit: usize,
+        enable_arbitration: bool,
+        min_score: Option<f32>,
+        graph_depth: usize,
+        valid_time: Option<TimeRange>,
+        transaction_time: Option<TimeRange>,
+    ) -> Result<Vec<(MemoryUnit, f32)>> {
+        let mut combined = self
+            .search_hybrid(
+                user_id,
+                app_id,
+                agent_id,
+                query_text,
+                vector,
+                limit,
+                false,
+                min_score,
+                graph_depth,
+                valid_time.clone(),
+                transaction_time,
+            )
+            .await?;
+
+        if let Some(app_id) = app_id {
+            let app_policy = self.get_app_share_policy(user_id, app_id)?;
+            if app_policy.consume {
+                let mut app_results = self
+                    .search_shared_scope(
+                        MemoryDomain::App,
+                        None,
+                        Some(app_id),
+                        agent_id,
+                        query_text,
+                        vector,
+                        limit,
+                        min_score,
+                        valid_time.clone(),
+                    )
+                    .await?;
+                for (_, score) in &mut app_results {
+                    *score *= 0.85;
+                }
+                combined.extend(app_results);
+            }
+        }
+
+        if let Some(org_id) = org_id {
+            let org_policy = self.get_org_share_policy(user_id, org_id)?;
+            if org_policy.consume {
+                let mut org_results = self
+                    .search_shared_scope(
+                        MemoryDomain::Organization,
+                        Some(org_id),
+                        None,
+                        agent_id,
+                        query_text,
+                        vector,
+                        limit,
+                        min_score,
+                        valid_time,
+                    )
+                    .await?;
+                for (_, score) in &mut org_results {
+                    *score *= 0.7;
+                }
+                combined.extend(org_results);
+            }
+        }
+
+        if combined.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        combined.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        let mut deduped: Vec<(MemoryUnit, f32)> = Vec::new();
+        let mut seen_ids = HashSet::new();
+        for (unit, score) in combined {
+            if !seen_ids.insert(unit.id) {
+                continue;
+            }
+
+            let mut is_duplicate = false;
+            for (existing, _) in &deduped {
+                if let (Some(v1), Some(v2)) = (&unit.embedding, &existing.embedding) {
+                    if cosine_similarity(v1, v2) > 0.92 {
+                        is_duplicate = true;
+                        break;
+                    }
+                }
+            }
+
+            if !is_duplicate {
+                deduped.push((unit, score));
+            }
+
+            if deduped.len() >= limit * 2 {
+                break;
+            }
+        }
+
+        let threshold = min_score.unwrap_or(0.3);
+        deduped.retain(|(_, score)| *score >= threshold);
+        if deduped.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        if deduped.len() > limit * 2 {
+            deduped.truncate(limit * 2);
+        }
+
+        let should_arbitrate =
+            enable_arbitration && deduped.len() >= 2 && (deduped[0].1 - deduped[1].1).abs() < 0.25;
+
+        if should_arbitrate {
+            let arbitrated = self
+                .arbitrator
+                .arbitrate(
+                    deduped.iter().map(|(unit, _)| unit.clone()).collect(),
+                    Some(query_text),
+                )
+                .await?;
+
+            let mut final_results = Vec::new();
+            for unit in arbitrated {
+                if let Some((_, score)) = deduped
+                    .iter()
+                    .find(|(candidate, _)| candidate.id == unit.id)
+                {
+                    final_results.push((unit, *score));
+                }
+            }
+            Ok(final_results)
+        } else {
+            deduped.truncate(limit);
+            Ok(deduped)
+        }
+    }
+
+    pub async fn search_text(
+        &self,
+        user_id: &str,
+        app_id: Option<&str>,
+        query: &str,
+        limit: usize,
+        enable_arbitration: bool,
+        time_range: Option<TimeRange>,
+    ) -> Result<Vec<MemoryUnit>> {
         let index = self.index.clone();
         tokio::task::spawn_blocking(move || {
             index.reload().ok();
-        }).await?;
+        })
+        .await?;
 
         let index = self.index.clone();
         let q = query.to_string();
@@ -1224,9 +2176,11 @@ impl MemoroseEngine {
         let aid = app_id.map(|s| s.to_string());
         let ids = tokio::task::spawn_blocking(move || {
             index.search(&q, limit, tr, None, uid.as_deref(), aid.as_deref())
-        }).await??;
+        })
+        .await??;
 
-        let units = self.fetch_units(user_id, ids).await?;
+        let mut units = self.fetch_units(user_id, ids).await?;
+        units.retain(|unit| Self::is_local_domain(&unit.domain));
 
         if enable_arbitration {
             self.arbitrator.arbitrate(units, Some(query)).await
@@ -1235,9 +2189,131 @@ impl MemoroseEngine {
         }
     }
 
+    pub async fn search_text_with_shared(
+        &self,
+        user_id: &str,
+        app_id: Option<&str>,
+        org_id: Option<&str>,
+        query: &str,
+        limit: usize,
+        enable_arbitration: bool,
+        time_range: Option<TimeRange>,
+    ) -> Result<Vec<MemoryUnit>> {
+        let index = self.index.clone();
+        tokio::task::spawn_blocking(move || {
+            index.reload().ok();
+        })
+        .await?;
+
+        let mut rrf_scores: HashMap<String, f32> = HashMap::new();
+        let k = 60.0;
+        for (rank, unit) in self
+            .search_text(user_id, app_id, query, limit, false, time_range.clone())
+            .await?
+            .into_iter()
+            .enumerate()
+        {
+            *rrf_scores.entry(unit.id.to_string()).or_default() += 1.0 / (k + rank as f32);
+        }
+
+        if let Some(app_id) = app_id {
+            let app_policy = self.get_app_share_policy(user_id, app_id)?;
+            if app_policy.consume {
+                let q = query.to_string();
+                let tr = time_range.clone();
+                let aid = Some(app_id.to_string());
+                let app_ids = {
+                    let index = self.index.clone();
+                    tokio::task::spawn_blocking(move || {
+                        index.search_bitemporal(
+                            &q,
+                            limit,
+                            tr,
+                            None,
+                            None,
+                            None,
+                            aid.as_deref(),
+                            None,
+                            Some("app"),
+                        )
+                    })
+                    .await??
+                };
+
+                for (rank, id) in app_ids.into_iter().enumerate() {
+                    *rrf_scores.entry(id).or_default() += 0.85 / (k + rank as f32);
+                }
+            }
+        }
+
+        if let Some(org_id) = org_id {
+            let org_policy = self.get_org_share_policy(user_id, org_id)?;
+            if org_policy.consume {
+                let q = query.to_string();
+                let tr = time_range.clone();
+                let oid = Some(org_id.to_string());
+                let org_ids = {
+                    let index = self.index.clone();
+                    tokio::task::spawn_blocking(move || {
+                        index.search_bitemporal(
+                            &q,
+                            limit,
+                            tr,
+                            None,
+                            oid.as_deref(),
+                            None,
+                            None,
+                            None,
+                            Some("organization"),
+                        )
+                    })
+                    .await??
+                };
+
+                for (rank, id) in org_ids.into_iter().enumerate() {
+                    *rrf_scores.entry(id).or_default() += 0.7 / (k + rank as f32);
+                }
+            }
+        }
+
+        if rrf_scores.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut sorted_ids: Vec<(String, f32)> = rrf_scores.into_iter().collect();
+        sorted_ids.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        let ids: Vec<String> = sorted_ids
+            .iter()
+            .take(limit * 2)
+            .map(|(id, _)| id.clone())
+            .collect();
+        let mut units = self.fetch_units_global(ids).await?;
+        if units.len() > limit * 2 {
+            units.truncate(limit * 2);
+        }
+
+        if enable_arbitration {
+            self.arbitrator.arbitrate(units, Some(query)).await
+        } else {
+            if units.len() > limit {
+                units.truncate(limit);
+            }
+            Ok(units)
+        }
+    }
+
     /// Search and then consolidate the results into a single narrative.
-    pub async fn search_consolidated(&self, user_id: &str, app_id: Option<&str>, query: &str, limit: usize) -> Result<String> {
-        let units = self.search_text(user_id, app_id, query, limit, false, None).await?;
+    pub async fn search_consolidated(
+        &self,
+        user_id: &str,
+        app_id: Option<&str>,
+        query: &str,
+        limit: usize,
+    ) -> Result<String> {
+        let units = self
+            .search_text(user_id, app_id, query, limit, false, None)
+            .await?;
         self.arbitrator.consolidate(units).await
     }
 
@@ -1289,7 +2365,8 @@ impl MemoroseEngine {
                 }
             }
             Ok::<(), anyhow::Error>(())
-        }).await??;
+        })
+        .await??;
 
         Ok(())
     }
@@ -1304,7 +2381,8 @@ impl MemoroseEngine {
         let pairs = tokio::task::spawn_blocking({
             let kv = kv.clone();
             move || kv.scan(&prefix_bytes)
-        }).await??;
+        })
+        .await??;
 
         // Collect units to prune first, then delete from all stores.
         let mut to_prune: Vec<(Vec<u8>, MemoryUnit)> = Vec::new();
@@ -1337,12 +2415,21 @@ impl MemoroseEngine {
                 }
             }
             Ok::<(), anyhow::Error>(())
-        }).await??;
+        })
+        .await??;
 
         // 2. Delete from LanceDB vector store
         for (_, unit) in &to_prune {
-            if let Err(e) = self.vector.delete_by_id("memories", &unit.id.to_string()).await {
-                tracing::warn!("Failed to delete unit {} from vector store during pruning: {:?}", unit.id, e);
+            if let Err(e) = self
+                .vector
+                .delete_by_id("memories", &unit.id.to_string())
+                .await
+            {
+                tracing::warn!(
+                    "Failed to delete unit {} from vector store during pruning: {:?}",
+                    unit.id,
+                    e
+                );
             }
         }
 
@@ -1354,7 +2441,8 @@ impl MemoroseEngine {
                 index.delete_unit(id)?;
             }
             Ok::<(), anyhow::Error>(())
-        }).await??;
+        })
+        .await??;
 
         Ok(count)
     }
@@ -1363,7 +2451,8 @@ impl MemoroseEngine {
 
     /// Graph-driven L2 Generation for a specific user.
     pub async fn process_communities(&self, user_id: &str) -> Result<()> {
-        self.process_communities_with_limits(user_id, 3, usize::MAX).await?;
+        self.process_communities_with_limits(user_id, 3, usize::MAX)
+            .await?;
         Ok(())
     }
 
@@ -1383,11 +2472,15 @@ impl MemoroseEngine {
 
         let communities = tokio::task::spawn_blocking(move || {
             crate::community::CommunityDetector::detect_communities(&edges)
-        }).await?;
+        })
+        .await?;
 
         let mut community_groups: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
         for (node_id, community_id) in communities {
-            community_groups.entry(community_id).or_default().push(node_id);
+            community_groups
+                .entry(community_id)
+                .or_default()
+                .push(node_id);
         }
 
         let min_members = min_members.max(1);
@@ -1413,14 +2506,15 @@ impl MemoroseEngine {
 
             let insight = self.arbitrator.summarize_community(texts).await?;
 
-            let mut l2_unit = MemoryUnit::new(None, 
+            let mut l2_unit = MemoryUnit::new(
+                None,
                 user_id.to_string(),
                 None,
                 Self::derive_l2_app_id(&units),
                 Uuid::new_v4(),
                 memorose_common::MemoryType::Factual,
                 insight.summary,
-                None
+                None,
             );
             l2_unit.level = 2;
             l2_unit.keywords.push(insight.name.clone());
@@ -1438,12 +2532,23 @@ impl MemoroseEngine {
             let l2_id = l2_unit.id;
             let uid2 = user_id.to_string();
             for member_id in members {
-                let edge = GraphEdge::new(uid2.clone(), l2_id, member_id, RelationType::DerivedFrom, 1.0);
+                let edge = GraphEdge::new(
+                    uid2.clone(),
+                    l2_id,
+                    member_id,
+                    RelationType::DerivedFrom,
+                    1.0,
+                );
                 self.graph.add_edge(&edge).await?;
             }
 
             created += 1;
-            tracing::info!("Created L2 Insight '{}' from {} members for user {}", insight.name, units.len(), user_id);
+            tracing::info!(
+                "Created L2 Insight '{}' from {} members for user {}",
+                insight.name,
+                units.len(),
+                user_id
+            );
         }
 
         Ok(created)
@@ -1488,17 +2593,14 @@ impl MemoroseEngine {
 
         // 对于大图，使用批量优化版本
         if node_ids.len() > 1000 {
-            let batch_detector = BatchCommunityDetector::new(
-                self.graph.clone(),
-                config,
-            );
-            batch_detector.detect_communities_for_user(user_id, &node_ids).await
+            let batch_detector = BatchCommunityDetector::new(self.graph.clone(), config);
+            batch_detector
+                .detect_communities_for_user(user_id, &node_ids)
+                .await
         } else {
             // 小图直接使用增强检测器
             let detector = EnhancedCommunityDetector::new(config);
-            tokio::task::spawn_blocking(move || {
-                detector.detect(&edges)
-            }).await?
+            tokio::task::spawn_blocking(move || detector.detect(&edges)).await?
         }
     }
 
@@ -1530,10 +2632,7 @@ impl MemoroseEngine {
         }
         let node_ids: Vec<Uuid> = all_nodes.into_iter().collect();
 
-        let batch_detector = BatchCommunityDetector::new(
-            self.graph.clone(),
-            config,
-        );
+        let batch_detector = BatchCommunityDetector::new(self.graph.clone(), config);
 
         batch_detector.two_phase_detection(user_id, &node_ids).await
     }
@@ -1565,14 +2664,15 @@ impl MemoroseEngine {
             let texts: Vec<String> = units.iter().map(|u| u.content.clone()).collect();
             let insight = self.arbitrator.summarize_community(texts).await?;
 
-            let mut l2_unit = MemoryUnit::new(None, 
+            let mut l2_unit = MemoryUnit::new(
+                None,
                 user_id.to_string(),
                 None,
                 Self::derive_l2_app_id(&units),
                 Uuid::new_v4(),
                 memorose_common::MemoryType::Factual,
                 insight.summary,
-                None
+                None,
             );
             l2_unit.level = 2;
             l2_unit.keywords.push(insight.name.clone());
@@ -1590,7 +2690,13 @@ impl MemoroseEngine {
             let l2_id = l2_unit.id;
             let uid2 = user_id.to_string();
             for member_id in members {
-                let edge = GraphEdge::new(uid2.clone(), l2_id, member_id, RelationType::DerivedFrom, 1.0);
+                let edge = GraphEdge::new(
+                    uid2.clone(),
+                    l2_id,
+                    member_id,
+                    RelationType::DerivedFrom,
+                    1.0,
+                );
                 self.graph.add_edge(&edge).await?;
             }
 
@@ -1609,7 +2715,11 @@ impl MemoroseEngine {
 
     /// Fetch the latest L1 memory units for a specific user.
     /// Uses the "l1_idx:{user_id}:{id}" secondary index to avoid loading all units into memory.
-    pub async fn fetch_recent_l1_units(&self, user_id: &str, limit: usize) -> Result<Vec<MemoryUnit>> {
+    pub async fn fetch_recent_l1_units(
+        &self,
+        user_id: &str,
+        limit: usize,
+    ) -> Result<Vec<MemoryUnit>> {
         let prefix = format!("u:{}:unit:", user_id);
         let store = self._kv.clone();
         let prefix_bytes = prefix.into_bytes();
@@ -1621,11 +2731,14 @@ impl MemoroseEngine {
         let index_pairs = tokio::task::spawn_blocking({
             let store = store.clone();
             move || store.scan(&l1_index_prefix)
-        }).await??;
+        })
+        .await??;
 
         if index_pairs.is_empty() {
             // Fallback for nodes that pre-date the L1 index: scan full units.
-            return self.fetch_recent_l1_units_fallback(prefix_bytes, limit).await;
+            return self
+                .fetch_recent_l1_units_fallback(prefix_bytes, limit)
+                .await;
         }
 
         // Sort by timestamp descending, take top `limit` IDs.
@@ -1643,30 +2756,45 @@ impl MemoroseEngine {
         id_ts.truncate(limit);
 
         // Multi-get the actual units by their KV keys.
-        let keys: Vec<String> = id_ts.iter()
+        let keys: Vec<String> = id_ts
+            .iter()
             .map(|(id, _)| format!("u:{}:unit:{}", user_id, id))
             .collect();
 
         let values = tokio::task::spawn_blocking({
             let store = store.clone();
             let key_refs_owned: Vec<Vec<u8>> = keys.iter().map(|k| k.as_bytes().to_vec()).collect();
-            move || store.multi_get(&key_refs_owned.iter().map(|k| k.as_slice()).collect::<Vec<_>>())
-        }).await??;
+            move || {
+                store.multi_get(
+                    &key_refs_owned
+                        .iter()
+                        .map(|k| k.as_slice())
+                        .collect::<Vec<_>>(),
+                )
+            }
+        })
+        .await??;
 
-        let results: Vec<MemoryUnit> = values.into_iter()
-            .filter_map(|v| v.and_then(|bytes| serde_json::from_slice(&bytes).ok()))
+        let results: Vec<MemoryUnit> = values
+            .into_iter()
+            .filter_map(|v| v.and_then(|bytes| serde_json::from_slice::<MemoryUnit>(&bytes).ok()))
+            .filter(|unit: &MemoryUnit| Self::is_local_domain(&unit.domain))
             .collect();
 
         Ok(results)
     }
 
-    async fn fetch_recent_l1_units_fallback(&self, prefix_bytes: Vec<u8>, limit: usize) -> Result<Vec<MemoryUnit>> {
+    async fn fetch_recent_l1_units_fallback(
+        &self,
+        prefix_bytes: Vec<u8>,
+        limit: usize,
+    ) -> Result<Vec<MemoryUnit>> {
         let store = self._kv.clone();
         let pairs = tokio::task::spawn_blocking(move || store.scan(&prefix_bytes)).await??;
         let mut results: Vec<MemoryUnit> = pairs
             .into_iter()
             .filter_map(|(_, val)| serde_json::from_slice::<MemoryUnit>(&val).ok())
-            .filter(|u| u.level == 1)
+            .filter(|u| u.level == 1 && Self::is_local_domain(&u.domain))
             .collect();
         results.sort_by(|a, b| b.transaction_time.cmp(&a.transaction_time));
         results.truncate(limit);
@@ -1685,7 +2813,8 @@ impl MemoroseEngine {
         let index_pairs = tokio::task::spawn_blocking({
             let store = store.clone();
             move || store.scan(&l1_index_prefix)
-        }).await??;
+        })
+        .await??;
 
         if !index_pairs.is_empty() {
             return Ok(index_pairs.len());
@@ -1694,18 +2823,24 @@ impl MemoroseEngine {
         // Fallback: scan all units and count level-1 ones.
         let count = tokio::task::spawn_blocking(move || {
             let pairs = store.scan(&prefix_bytes)?;
-            let count = pairs.into_iter()
+            let count = pairs
+                .into_iter()
                 .filter_map(|(_, val)| serde_json::from_slice::<MemoryUnit>(&val).ok())
-                .filter(|u| u.level == 1)
+                .filter(|u| u.level == 1 && Self::is_local_domain(&u.domain))
                 .count();
             Ok::<usize, anyhow::Error>(count)
-        }).await??;
+        })
+        .await??;
 
         Ok(count)
     }
 
     /// Track cumulative L1 growth and return the count range crossed by this update.
-    pub async fn bump_l1_count_and_get_range(&self, user_id: &str, delta: usize) -> Result<(usize, usize)> {
+    pub async fn bump_l1_count_and_get_range(
+        &self,
+        user_id: &str,
+        delta: usize,
+    ) -> Result<(usize, usize)> {
         if delta == 0 {
             let current = self.current_l1_count(user_id).await?;
             return Ok((current, current));
@@ -1715,11 +2850,12 @@ impl MemoroseEngine {
         if let Some(bytes) = self.system_kv().get(key.as_bytes())? {
             let current = u64::from_le_bytes(bytes.try_into().unwrap_or([0; 8])) as usize;
             let updated = current.saturating_add(delta);
-            self.system_kv().put(key.as_bytes(), &(updated as u64).to_le_bytes())?;
+            self.system_kv()
+                .put(key.as_bytes(), &(updated as u64).to_le_bytes())?;
             return Ok((current, updated));
         }
 
-        // Lazy init from real storage count so legacy data doesn't lose trigger state.
+        // Initialize from persisted storage when the counter has not been materialized yet.
         let current_after_store = self.count_l1_units(user_id).await?;
         let current_before_store = current_after_store.saturating_sub(delta);
         self.system_kv()
@@ -1739,16 +2875,26 @@ impl MemoroseEngine {
         Ok(current)
     }
 
-    pub async fn fetch_units_with_scores(&self, user_id: &str, results: Vec<(String, f32)>) -> Result<Vec<(MemoryUnit, f32)>> {
-        if results.is_empty() { return Ok(Vec::new()); }
+    pub async fn fetch_units_with_scores(
+        &self,
+        user_id: &str,
+        results: Vec<(String, f32)>,
+    ) -> Result<Vec<(MemoryUnit, f32)>> {
+        if results.is_empty() {
+            return Ok(Vec::new());
+        }
 
-        let keys: Vec<String> = results.iter().map(|(id, _)| format!("u:{}:unit:{}", user_id, id)).collect();
+        let keys: Vec<String> = results
+            .iter()
+            .map(|(id, _)| format!("u:{}:unit:{}", user_id, id))
+            .collect();
         let store = self._kv.clone();
 
         let db_results = tokio::task::spawn_blocking(move || {
             let key_bytes: Vec<&[u8]> = keys.iter().map(|k| k.as_bytes()).collect();
             store.multi_get(&key_bytes)
-        }).await??;
+        })
+        .await??;
 
         let mut final_results = Vec::new();
         for (i, res) in db_results.into_iter().enumerate() {
@@ -1761,16 +2907,45 @@ impl MemoroseEngine {
         Ok(final_results)
     }
 
-    pub async fn fetch_units(&self, user_id: &str, ids: Vec<String>) -> Result<Vec<MemoryUnit>> {
-        if ids.is_empty() { return Ok(Vec::new()); }
+    pub async fn fetch_units_with_scores_global(
+        &self,
+        results: Vec<(String, f32)>,
+    ) -> Result<Vec<(MemoryUnit, f32)>> {
+        if results.is_empty() {
+            return Ok(Vec::new());
+        }
 
-        let keys: Vec<String> = ids.iter().map(|id| format!("u:{}:unit:{}", user_id, id)).collect();
+        let mut final_results = Vec::new();
+        for (id, score) in results {
+            let parsed = match Uuid::parse_str(&id) {
+                Ok(parsed) => parsed,
+                Err(_) => continue,
+            };
+
+            if let Some(unit) = self.get_memory_unit_by_index(parsed).await? {
+                final_results.push((unit, score));
+            }
+        }
+
+        Ok(final_results)
+    }
+
+    pub async fn fetch_units(&self, user_id: &str, ids: Vec<String>) -> Result<Vec<MemoryUnit>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let keys: Vec<String> = ids
+            .iter()
+            .map(|id| format!("u:{}:unit:{}", user_id, id))
+            .collect();
         let store = self._kv.clone();
 
         let results = tokio::task::spawn_blocking(move || {
             let key_bytes: Vec<&[u8]> = keys.iter().map(|k| k.as_bytes()).collect();
             store.multi_get(&key_bytes)
-        }).await??;
+        })
+        .await??;
 
         let mut units = Vec::new();
         for res in results {
@@ -1783,6 +2958,26 @@ impl MemoroseEngine {
         Ok(units)
     }
 
+    pub async fn fetch_units_global(&self, ids: Vec<String>) -> Result<Vec<MemoryUnit>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut units = Vec::new();
+        for id in ids {
+            let parsed = match Uuid::parse_str(&id) {
+                Ok(parsed) => parsed,
+                Err(_) => continue,
+            };
+
+            if let Some(unit) = self.get_memory_unit_by_index(parsed).await? {
+                units.push(unit);
+            }
+        }
+
+        Ok(units)
+    }
+
     // ── 图查询优化 API ──────────────────────────────────────────────────
 
     /// 批量查询多个节点的邻居（使用批量优化）
@@ -1791,7 +2986,9 @@ impl MemoroseEngine {
         user_id: &str,
         node_ids: &[Uuid],
     ) -> Result<HashMap<Uuid, Vec<GraphEdge>>> {
-        self.batch_executor.batch_get_outgoing_edges(user_id, node_ids).await
+        self.batch_executor
+            .batch_get_outgoing_edges(user_id, node_ids)
+            .await
     }
 
     /// 带缓存的邻居查询（用于热点查询）
@@ -1830,12 +3027,9 @@ impl MemoroseEngine {
         max_hops: usize,
         min_weight: Option<f32>,
     ) -> Result<Vec<Uuid>> {
-        self.batch_executor.batch_multi_hop_traverse(
-            user_id,
-            start_nodes,
-            max_hops,
-            min_weight,
-        ).await
+        self.batch_executor
+            .batch_multi_hop_traverse(user_id, start_nodes, max_hops, min_weight)
+            .await
     }
 
     /// 失效用户的查询缓存（在写入边时调用）
@@ -1852,10 +3046,10 @@ impl MemoroseEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
+    use memorose_common::EventContent;
     use tempfile::tempdir;
     use uuid::Uuid;
-    use memorose_common::EventContent;
-    use chrono::Utc;
 
     const TEST_USER: &str = "test_user";
     const TEST_APP: &str = "test_app";
@@ -1863,11 +3057,19 @@ mod tests {
     #[tokio::test]
     async fn test_engine_integration() -> Result<()> {
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
 
         // 1. Test L0 Ingestion
         let stream_id = Uuid::new_v4();
-        let event = Event::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, EventContent::Text("L0 Test".to_string()));
+        let event = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            TEST_APP.into(),
+            stream_id,
+            EventContent::Text("L0 Test".to_string()),
+        );
         engine.ingest_event(event.clone()).await?;
 
         let pending = engine.fetch_pending_events().await?;
@@ -1886,7 +3088,16 @@ mod tests {
         // 2. Test L1 Storage & Retrieval
         let mut embedding = vec![0.0; 384];
         embedding[10] = 1.0;
-        let unit = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "L1 Insight".to_string(), Some(embedding.clone()));
+        let unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            TEST_APP.into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "L1 Insight".to_string(),
+            Some(embedding.clone()),
+        );
 
         engine.store_memory_unit(unit.clone()).await?;
         engine.index.commit()?;
@@ -1894,17 +3105,30 @@ mod tests {
 
         // Search by Vector
         let filter = engine.build_user_filter(TEST_USER, None, None);
-        let similar = engine.search_similar(TEST_USER, None, &embedding, 1, filter).await?;
+        let similar = engine
+            .search_similar(TEST_USER, None, &embedding, 1, filter)
+            .await?;
         assert_eq!(similar.len(), 1);
         assert_eq!(similar[0].0.id, unit.id);
 
         // Search by Text
-        let text_hits = engine.search_text(TEST_USER, None, "Insight", 1, true, None).await?;
+        let text_hits = engine
+            .search_text(TEST_USER, None, "Insight", 1, true, None)
+            .await?;
         assert_eq!(text_hits.len(), 1);
         assert_eq!(text_hits[0].id, unit.id);
 
         // 3. Test Forgetting Mechanism
-        let mut weak_unit = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Weak Memory".to_string(), None);
+        let mut weak_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            TEST_APP.into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Weak Memory".to_string(),
+            None,
+        );
         weak_unit.importance = 0.15;
         engine.store_memory_unit(weak_unit.clone()).await?;
 
@@ -1916,7 +3140,9 @@ mod tests {
         assert!(pruned_count >= 1);
 
         // Verify it's gone
-        let search_gone = engine.search_text(TEST_USER, None, "Weak", 1, true, None).await?;
+        let search_gone = engine
+            .search_text(TEST_USER, None, "Weak", 1, true, None)
+            .await?;
         assert!(search_gone.is_empty());
 
         Ok(())
@@ -1925,23 +3151,45 @@ mod tests {
     #[tokio::test]
     async fn test_auto_linking() -> Result<()> {
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let stream_id = Uuid::new_v4();
 
         // 1. Store first memory
         let mut emb1 = vec![0.0; 384];
         emb1[0] = 1.0;
-        let unit1 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Apple is a fruit".to_string(), Some(emb1));
+        let unit1 = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            TEST_APP.into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Apple is a fruit".to_string(),
+            Some(emb1),
+        );
         engine.store_memory_unit(unit1.clone()).await?;
 
         // 2. Store second similar memory
         let mut emb2 = vec![0.0; 384];
         emb2[0] = 0.99;
-        let unit2 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Apples are sweet".to_string(), Some(emb2));
+        let unit2 = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            TEST_APP.into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Apples are sweet".to_string(),
+            Some(emb2),
+        );
         engine.store_memory_unit(unit2.clone()).await?;
 
         // Verify graph edge exists from unit2 to unit1
-        let edges = engine.graph().get_outgoing_edges(TEST_USER, unit2.id).await?;
+        let edges = engine
+            .graph()
+            .get_outgoing_edges(TEST_USER, unit2.id)
+            .await?;
         assert!(!edges.is_empty(), "Edge should be automatically created");
         assert_eq!(edges[0].target_id, unit1.id);
 
@@ -1955,52 +3203,115 @@ mod tests {
         }
 
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let stream_id = Uuid::new_v4();
 
-        let mut emb1 = vec![0.0; 384]; emb1[0] = 1.0;
-        let mut unit1 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "I love cats".to_string(), Some(emb1.clone()));
+        let mut emb1 = vec![0.0; 384];
+        emb1[0] = 1.0;
+        let mut unit1 = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            TEST_APP.into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "I love cats".to_string(),
+            Some(emb1.clone()),
+        );
         unit1.transaction_time = Utc::now() - chrono::Duration::days(1);
         engine.store_memory_unit(unit1.clone()).await?;
 
-        let mut emb2 = vec![0.0; 384]; emb2[0] = 0.95;
-        let unit2 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "I hate cats now".to_string(), Some(emb2.clone()));
+        let mut emb2 = vec![0.0; 384];
+        emb2[0] = 0.95;
+        let unit2 = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            TEST_APP.into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "I hate cats now".to_string(),
+            Some(emb2.clone()),
+        );
         engine.store_memory_unit(unit2.clone()).await?;
         engine.index.commit()?;
         engine.index.reload()?;
 
-        let results = engine.search_text(TEST_USER, None, "cats", 10, true, None).await?;
+        let results = engine
+            .search_text(TEST_USER, None, "cats", 10, true, None)
+            .await?;
 
-        println!("Arbitration results: {:?}", results.iter().map(|u| &u.content).collect::<Vec<_>>());
+        println!(
+            "Arbitration results: {:?}",
+            results.iter().map(|u| &u.content).collect::<Vec<_>>()
+        );
 
         Ok(())
     }
 
     #[tokio::test]
     async fn test_community_flow() -> Result<()> {
-        let has_google = std::env::var("GOOGLE_API_KEY").map(|s| !s.is_empty()).unwrap_or(false);
-        let has_openai = std::env::var("OPENAI_API_KEY").map(|s| !s.is_empty()).unwrap_or(false);
+        let has_google = std::env::var("GOOGLE_API_KEY")
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
+        let has_openai = std::env::var("OPENAI_API_KEY")
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
         if !has_google && !has_openai {
             return Ok(());
         }
 
         let temp_dir = tempdir()?;
-        let engine = match MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await {
-            Ok(e) => e,
-            Err(_) => return Ok(()), // skip if backend fails to initialize
-        };
+        let engine =
+            match MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true)
+                .await
+            {
+                Ok(e) => e,
+                Err(_) => return Ok(()), // skip if backend fails to initialize
+            };
         let stream_id = Uuid::new_v4();
 
-        let mut emb1 = vec![0.0; 768]; emb1[0] = 1.0;
-        let u1 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Rust is memory safe".to_string(), Some(emb1.clone()));
+        let mut emb1 = vec![0.0; 768];
+        emb1[0] = 1.0;
+        let u1 = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            TEST_APP.into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Rust is memory safe".to_string(),
+            Some(emb1.clone()),
+        );
         engine.store_memory_unit(u1.clone()).await?;
 
-        let mut emb2 = vec![0.0; 768]; emb2[0] = 0.95;
-        let u2 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "The borrow checker prevents data races".to_string(), Some(emb2.clone()));
+        let mut emb2 = vec![0.0; 768];
+        emb2[0] = 0.95;
+        let u2 = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            TEST_APP.into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "The borrow checker prevents data races".to_string(),
+            Some(emb2.clone()),
+        );
         engine.store_memory_unit(u2.clone()).await?;
 
-        let mut emb3 = vec![0.0; 768]; emb3[0] = 0.90;
-        let u3 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Ownership is key to Rust".to_string(), Some(emb3.clone()));
+        let mut emb3 = vec![0.0; 768];
+        emb3[0] = 0.90;
+        let u3 = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            TEST_APP.into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Ownership is key to Rust".to_string(),
+            Some(emb3.clone()),
+        );
         engine.store_memory_unit(u3.clone()).await?;
 
         let _ = engine.process_communities(TEST_USER).await;
@@ -2008,21 +3319,28 @@ mod tests {
         let prefix = format!("u:{}:unit:", TEST_USER);
         let kv = engine._kv.clone();
         let prefix_bytes = prefix.into_bytes();
-        let all_units: Vec<(Vec<u8>, Vec<u8>)> = tokio::task::spawn_blocking(move || {
-            kv.scan(&prefix_bytes)
-        }).await??;
+        let all_units: Vec<(Vec<u8>, Vec<u8>)> =
+            tokio::task::spawn_blocking(move || kv.scan(&prefix_bytes)).await??;
 
-        let l2_units: Vec<MemoryUnit> = all_units.into_iter()
+        let l2_units: Vec<MemoryUnit> = all_units
+            .into_iter()
             .filter_map(|(_, v): (Vec<u8>, Vec<u8>)| serde_json::from_slice::<MemoryUnit>(&v).ok())
             .filter(|u| u.level == 2)
             .collect();
 
         if !l2_units.is_empty() {
             let l2 = &l2_units[0];
-            println!("Generated L2: {} - {}", l2.keywords.first().unwrap_or(&"No Name".to_string()), l2.content);
+            println!(
+                "Generated L2: {} - {}",
+                l2.keywords.first().unwrap_or(&"No Name".to_string()),
+                l2.content
+            );
 
             assert!(l2.references.len() >= 3);
-            assert!(!l2.keywords.is_empty(), "L2 unit should have keywords (at least title)");
+            assert!(
+                !l2.keywords.is_empty(),
+                "L2 unit should have keywords (at least title)"
+            );
         }
 
         Ok(())
@@ -2031,21 +3349,55 @@ mod tests {
     #[tokio::test]
     async fn test_feedback_loop() -> Result<()> {
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let stream_id = Uuid::new_v4();
 
-        let u1 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Memory A".into(), None);
-        let u2 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Memory B".into(), None);
+        let u1 = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            TEST_APP.into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Memory A".into(),
+            None,
+        );
+        let u2 = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            TEST_APP.into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Memory B".into(),
+            None,
+        );
         engine.store_memory_unit(u1.clone()).await?;
         engine.store_memory_unit(u2.clone()).await?;
 
-        engine.apply_reranker_feedback(TEST_USER, vec![u1.id.to_string(), u2.id.to_string()], vec![]).await?;
+        engine
+            .apply_reranker_feedback(
+                TEST_USER,
+                vec![u1.id.to_string(), u2.id.to_string()],
+                vec![],
+            )
+            .await?;
 
         let edges = engine.graph().get_outgoing_edges(TEST_USER, u1.id).await?;
-        let edge = edges.iter().find(|e| e.target_id == u2.id).expect("Edge should be created by reinforcement");
+        let edge = edges
+            .iter()
+            .find(|e| e.target_id == u2.id)
+            .expect("Edge should be created by reinforcement");
         assert!((edge.weight - 0.1).abs() < 0.001);
 
-        engine.apply_reranker_feedback(TEST_USER, vec![u1.id.to_string(), u2.id.to_string()], vec![]).await?;
+        engine
+            .apply_reranker_feedback(
+                TEST_USER,
+                vec![u1.id.to_string(), u2.id.to_string()],
+                vec![],
+            )
+            .await?;
         let edges_updated = engine.graph().get_outgoing_edges(TEST_USER, u1.id).await?;
         let edge_updated = edges_updated.iter().find(|e| e.target_id == u2.id).unwrap();
         assert!((edge_updated.weight - 0.2).abs() < 0.001);
@@ -2056,15 +3408,36 @@ mod tests {
     #[tokio::test]
     async fn test_temporal_text_search() -> Result<()> {
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let stream_id = Uuid::new_v4();
 
-        let mut u1 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Memorose started in 2020".into(), None);
-        u1.valid_time = Some(chrono::TimeZone::with_ymd_and_hms(&Utc, 2020, 1, 1, 0, 0, 0).unwrap());
+        let mut u1 = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            TEST_APP.into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Memorose started in 2020".into(),
+            None,
+        );
+        u1.valid_time =
+            Some(chrono::TimeZone::with_ymd_and_hms(&Utc, 2020, 1, 1, 0, 0, 0).unwrap());
         engine.store_memory_unit(u1.clone()).await?;
 
-        let mut u2 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Memorose is advanced in 2026".into(), None);
-        u2.valid_time = Some(chrono::TimeZone::with_ymd_and_hms(&Utc, 2026, 1, 1, 0, 0, 0).unwrap());
+        let mut u2 = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            TEST_APP.into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Memorose is advanced in 2026".into(),
+            None,
+        );
+        u2.valid_time =
+            Some(chrono::TimeZone::with_ymd_and_hms(&Utc, 2026, 1, 1, 0, 0, 0).unwrap());
         engine.store_memory_unit(u2.clone()).await?;
 
         engine.index.commit()?;
@@ -2075,9 +3448,15 @@ mod tests {
             end: Some(chrono::TimeZone::with_ymd_and_hms(&Utc, 2027, 1, 1, 0, 0, 0).unwrap()),
         };
 
-        let hits = engine.search_text(TEST_USER, None, "Memorose", 10, false, Some(range)).await?;
+        let hits = engine
+            .search_text(TEST_USER, None, "Memorose", 10, false, Some(range))
+            .await?;
 
-        assert_eq!(hits.len(), 1, "Should only return 1 hit due to time filtering");
+        assert_eq!(
+            hits.len(),
+            1,
+            "Should only return 1 hit due to time filtering"
+        );
         assert_eq!(hits[0].id, u2.id);
 
         Ok(())
@@ -2086,31 +3465,54 @@ mod tests {
     #[tokio::test]
     async fn test_search_filters() -> Result<()> {
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let stream_id = Uuid::new_v4();
 
-        let mut u1 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Highly relevant".into(), Some(vec![1.0; 768]));
+        let mut u1 = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            TEST_APP.into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Highly relevant".into(),
+            Some(vec![1.0; 768]),
+        );
         u1.importance = 1.0;
-        let mut u2 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Less relevant".into(), Some(vec![0.5; 768]));
+        let mut u2 = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            TEST_APP.into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Less relevant".into(),
+            Some(vec![0.5; 768]),
+        );
         u2.importance = 0.5;
 
-        engine.store_memory_units(vec![u1.clone(), u2.clone()]).await?;
+        engine
+            .store_memory_units(vec![u1.clone(), u2.clone()])
+            .await?;
         engine.index.commit()?;
         engine.index.reload()?;
 
-        let results = engine.search_hybrid(
-            TEST_USER,
-            None,
-            None,
-            "relevant",
-            &vec![1.0; 768],
-            10,
-            false,
-            Some(0.3),
-            0,
-            None,
-            None
-        ).await?;
+        let results = engine
+            .search_hybrid(
+                TEST_USER,
+                None,
+                None,
+                "relevant",
+                &vec![1.0; 768],
+                10,
+                false,
+                Some(0.3),
+                0,
+                None,
+                None,
+            )
+            .await?;
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0.id, u1.id);
@@ -2121,24 +3523,60 @@ mod tests {
     struct MockReranker;
     #[async_trait::async_trait]
     impl crate::reranker::Reranker for MockReranker {
-        async fn rerank(&self, _query: &str, _store: &KvStore, _candidates: Vec<(MemoryUnit, f32)>) -> Result<Vec<(MemoryUnit, f32)>> {
+        async fn rerank(
+            &self,
+            _query: &str,
+            _store: &KvStore,
+            _candidates: Vec<(MemoryUnit, f32)>,
+        ) -> Result<Vec<(MemoryUnit, f32)>> {
             Ok(vec![])
         }
-        async fn apply_feedback(&self, _store: &KvStore, _c: Vec<String>, _r: Vec<String>) -> Result<()> { Ok(()) }
+        async fn apply_feedback(
+            &self,
+            _store: &KvStore,
+            _c: Vec<String>,
+            _r: Vec<String>,
+        ) -> Result<()> {
+            Ok(())
+        }
     }
 
     #[tokio::test]
     async fn test_custom_reranker() -> Result<()> {
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true)
+            .await?
             .with_reranker(std::sync::Arc::new(MockReranker));
 
-        let u1 = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), Uuid::new_v4(), memorose_common::MemoryType::Factual, "Test".into(), Some(vec![1.0; 768]));
+        let u1 = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            TEST_APP.into(),
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "Test".into(),
+            Some(vec![1.0; 768]),
+        );
         engine.store_memory_unit(u1).await?;
         engine.index.commit()?;
         engine.index.reload()?;
 
-        let results = engine.search_hybrid(TEST_USER, None, None, "Test", &vec![1.0; 768], 10, false, None, 0, None, None).await?;
+        let results = engine
+            .search_hybrid(
+                TEST_USER,
+                None,
+                None,
+                "Test",
+                &vec![1.0; 768],
+                10,
+                false,
+                None,
+                0,
+                None,
+                None,
+            )
+            .await?;
         assert!(results.is_empty());
 
         Ok(())
@@ -2147,11 +3585,21 @@ mod tests {
     #[tokio::test]
     async fn test_concurrency_progress_update() -> Result<()> {
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let stream_id = Uuid::new_v4();
 
         // 1. Create parent L2
-        let mut parent = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, "Parent Task".into(), None);
+        let mut parent = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            TEST_APP.into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Parent Task".into(),
+            None,
+        );
         parent.level = 2;
         parent.task_metadata = Some(memorose_common::TaskMetadata {
             status: memorose_common::TaskStatus::InProgress,
@@ -2162,7 +3610,16 @@ mod tests {
 
         // 2. Create 10 children L1s and link them
         for i in 0..10 {
-            let mut child = MemoryUnit::new(None, TEST_USER.into(), None, TEST_APP.into(), stream_id, memorose_common::MemoryType::Factual, format!("Child {}", i), None);
+            let mut child = MemoryUnit::new(
+                None,
+                TEST_USER.into(),
+                None,
+                TEST_APP.into(),
+                stream_id,
+                memorose_common::MemoryType::Factual,
+                format!("Child {}", i),
+                None,
+            );
             child.level = 1;
             child.task_metadata = Some(memorose_common::TaskMetadata {
                 status: memorose_common::TaskStatus::Completed,
@@ -2202,28 +3659,51 @@ mod tests {
     #[tokio::test]
     async fn test_user_isolation() -> Result<()> {
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let stream_id = Uuid::new_v4();
 
         // Store memory for user A
-        let unit_a = MemoryUnit::new(None, "user_a".into(), None, "app1".into(), stream_id, memorose_common::MemoryType::Factual, "Secret of user A".into(), None);
+        let unit_a = MemoryUnit::new(
+            None,
+            "user_a".into(),
+            None,
+            "app1".into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Secret of user A".into(),
+            None,
+        );
         engine.store_memory_unit(unit_a.clone()).await?;
         engine.index.commit()?;
         engine.index.reload()?;
 
         // Store memory for user B
-        let unit_b = MemoryUnit::new(None, "user_b".into(), None, "app1".into(), stream_id, memorose_common::MemoryType::Factual, "Secret of user B".into(), None);
+        let unit_b = MemoryUnit::new(
+            None,
+            "user_b".into(),
+            None,
+            "app1".into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Secret of user B".into(),
+            None,
+        );
         engine.store_memory_unit(unit_b.clone()).await?;
         engine.index.commit()?;
         engine.index.reload()?;
 
         // User A should only see their own data
-        let results_a = engine.search_text("user_a", None, "Secret", 10, false, None).await?;
+        let results_a = engine
+            .search_text("user_a", None, "Secret", 10, false, None)
+            .await?;
         assert_eq!(results_a.len(), 1);
         assert_eq!(results_a[0].user_id, "user_a");
 
         // User B should only see their own data
-        let results_b = engine.search_text("user_b", None, "Secret", 10, false, None).await?;
+        let results_b = engine
+            .search_text("user_b", None, "Secret", 10, false, None)
+            .await?;
         assert_eq!(results_b.len(), 1);
         assert_eq!(results_b[0].user_id, "user_b");
 
@@ -2233,9 +3713,11 @@ mod tests {
     #[tokio::test]
     async fn test_mark_event_failed_clears_retry_state() -> Result<()> {
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
 
-        let event = Event::new(None, 
+        let event = Event::new(
+            None,
             TEST_USER.into(),
             None,
             TEST_APP.into(),
@@ -2245,13 +3727,21 @@ mod tests {
         let event_id = event.id.to_string();
         engine.ingest_event_directly(event).await?;
 
-        assert_eq!(engine.increment_retry_count_if_pending(&event_id).await?, Some(1));
+        assert_eq!(
+            engine.increment_retry_count_if_pending(&event_id).await?,
+            Some(1)
+        );
         assert_eq!(engine.get_retry_count(&event_id).await?, 1);
 
-        engine.mark_event_failed(&event_id, "simulated failure").await?;
+        engine
+            .mark_event_failed(&event_id, "simulated failure")
+            .await?;
 
         assert_eq!(engine.get_retry_count(&event_id).await?, 0);
-        assert_eq!(engine.increment_retry_count_if_pending(&event_id).await?, None);
+        assert_eq!(
+            engine.increment_retry_count_if_pending(&event_id).await?,
+            None
+        );
         assert!(engine.fetch_pending_events().await?.is_empty());
         let failed_key = format!("failed:{}", event_id);
         assert!(engine.system_kv().get(failed_key.as_bytes())?.is_some());
@@ -2260,13 +3750,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_fetch_pending_events_sorts_by_transaction_time() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let mut later = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            TEST_APP.into(),
+            Uuid::new_v4(),
+            EventContent::Text("later".into()),
+        );
+        later.transaction_time = Utc::now() + chrono::Duration::seconds(30);
+
+        let mut earlier = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            TEST_APP.into(),
+            Uuid::new_v4(),
+            EventContent::Text("earlier".into()),
+        );
+        earlier.transaction_time = Utc::now() - chrono::Duration::seconds(30);
+
+        engine.ingest_event_directly(later.clone()).await?;
+        engine.ingest_event_directly(earlier.clone()).await?;
+
+        let pending = engine.fetch_pending_events_limited(10).await?;
+        assert_eq!(pending.len(), 2);
+        assert_eq!(pending[0].id, earlier.id);
+        assert_eq!(pending[1].id, later.id);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_fetch_pending_events_marks_orphaned_entries_failed() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let orphan_id = Uuid::new_v4().to_string();
+        let pending_key = format!("pending:{}", orphan_id);
+        let pending_val = serde_json::to_vec(&serde_json::json!({
+            "user_id": TEST_USER,
+            "app_id": TEST_APP
+        }))?;
+        engine
+            .system_kv()
+            .put(pending_key.as_bytes(), &pending_val)?;
+
+        let pending = engine.fetch_pending_events_limited(10).await?;
+        assert!(pending.is_empty());
+        let failed_key = format!("failed:{}", orphan_id);
+        assert!(engine.system_kv().get(failed_key.as_bytes())?.is_some());
+        assert!(engine.system_kv().get(pending_key.as_bytes())?.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_bump_l1_count_tracks_threshold_crossing() -> Result<()> {
         let temp_dir = tempdir()?;
-        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let stream_id = Uuid::new_v4();
 
         for i in 0..4 {
-            let unit = MemoryUnit::new(None, 
+            let unit = MemoryUnit::new(
+                None,
                 TEST_USER.into(),
                 None,
                 TEST_APP.into(),
@@ -2279,7 +3833,8 @@ mod tests {
         }
 
         for i in 0..2 {
-            let unit = MemoryUnit::new(None, 
+            let unit = MemoryUnit::new(
+                None,
                 TEST_USER.into(),
                 None,
                 TEST_APP.into(),
@@ -2295,7 +3850,8 @@ mod tests {
         assert_eq!((before, after), (4, 6));
         assert!(before / 5 < after / 5);
 
-        let unit = MemoryUnit::new(None, 
+        let unit = MemoryUnit::new(
+            None,
             TEST_USER.into(),
             None,
             TEST_APP.into(),
@@ -2308,6 +3864,588 @@ mod tests {
         let (before, after) = engine.bump_l1_count_and_get_range(TEST_USER, 1).await?;
         assert_eq!((before, after), (6, 7));
         assert!(!(before / 5 < after / 5));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_graph_expansion_respects_app_filter() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let seed = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            "app_a".into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Seed memory".into(),
+            Some(vec![1.0; 768]),
+        );
+        let foreign = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            "app_b".into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Foreign memory".into(),
+            Some(vec![0.9; 768]),
+        );
+
+        engine
+            .store_memory_units(vec![seed.clone(), foreign.clone()])
+            .await?;
+        engine
+            .graph()
+            .add_edge(&GraphEdge::new(
+                TEST_USER.into(),
+                seed.id,
+                foreign.id,
+                RelationType::DerivedFrom,
+                1.0,
+            ))
+            .await?;
+        engine.index.commit()?;
+        engine.index.reload()?;
+
+        let results = engine
+            .search_hybrid(
+                TEST_USER,
+                Some("app_a"),
+                None,
+                "Seed",
+                &vec![1.0; 768],
+                10,
+                false,
+                None,
+                1,
+                None,
+                None,
+            )
+            .await?;
+
+        assert!(!results.is_empty());
+        assert!(results.iter().all(|(unit, _)| unit.app_id == "app_a"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_app_shared_memory_requires_consume_policy() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        engine.set_app_share_policy(
+            "author",
+            "shared_app",
+            &memorose_common::SharePolicy {
+                contribute: true,
+                consume: false,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+        engine.set_app_share_policy(
+            "consumer",
+            "shared_app",
+            &memorose_common::SharePolicy {
+                contribute: false,
+                consume: true,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+
+        let source = MemoryUnit::new(
+            None,
+            "author".into(),
+            None,
+            "shared_app".into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Shared app playbook".into(),
+            Some(vec![1.0; 768]),
+        );
+        engine.store_memory_unit(source.clone()).await?;
+
+        let local_only = engine
+            .search_hybrid(
+                "consumer",
+                Some("shared_app"),
+                None,
+                "playbook",
+                &vec![1.0; 768],
+                5,
+                false,
+                Some(0.0),
+                0,
+                None,
+                None,
+            )
+            .await?;
+        assert!(local_only.is_empty());
+
+        let shared = engine
+            .search_hybrid_with_shared(
+                "consumer",
+                Some("shared_app"),
+                None,
+                None,
+                "playbook",
+                &vec![1.0; 768],
+                5,
+                false,
+                Some(0.0),
+                0,
+                None,
+                None,
+            )
+            .await?;
+
+        assert!(!shared.is_empty());
+        assert!(shared
+            .iter()
+            .any(|(unit, _)| unit.domain == MemoryDomain::App
+                && unit.projected_from == vec![source.id]));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_org_shared_memory_crosses_apps() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        engine.set_org_share_policy(
+            "author",
+            "org_alpha",
+            &memorose_common::SharePolicy {
+                contribute: true,
+                consume: false,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+        engine.set_org_share_policy(
+            "consumer",
+            "org_alpha",
+            &memorose_common::SharePolicy {
+                contribute: false,
+                consume: true,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+
+        let source = MemoryUnit::new(
+            Some("org_alpha".into()),
+            "author".into(),
+            None,
+            "app_a".into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Organization onboarding standard".into(),
+            Some(vec![1.0; 768]),
+        );
+        engine.store_memory_unit(source.clone()).await?;
+
+        let shared = engine
+            .search_hybrid_with_shared(
+                "consumer",
+                Some("app_b"),
+                Some("org_alpha"),
+                None,
+                "onboarding standard",
+                &vec![1.0; 768],
+                5,
+                false,
+                Some(0.0),
+                0,
+                None,
+                None,
+            )
+            .await?;
+
+        assert!(!shared.is_empty());
+        assert!(shared
+            .iter()
+            .any(|(unit, _)| unit.domain == MemoryDomain::Organization
+                && unit.projected_from == vec![source.id]));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_app_share_backfill_projects_existing_local_memory() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let source = MemoryUnit::new(
+            None,
+            "author".into(),
+            None,
+            "history_app".into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Historical app memory".into(),
+            Some(vec![1.0; 768]),
+        );
+        engine.store_memory_unit(source.clone()).await?;
+
+        engine.set_app_share_policy(
+            "author",
+            "history_app",
+            &memorose_common::SharePolicy {
+                contribute: true,
+                consume: false,
+                include_history: true,
+                targets: vec![],
+            },
+        )?;
+        engine.set_app_share_policy(
+            "consumer",
+            "history_app",
+            &memorose_common::SharePolicy {
+                contribute: false,
+                consume: true,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+
+        let projected = engine
+            .run_share_backfill("author", "history_app", None, MemoryDomain::App)
+            .await?;
+        assert_eq!(projected, 1);
+
+        let shared = engine
+            .search_hybrid_with_shared(
+                "consumer",
+                Some("history_app"),
+                None,
+                None,
+                "historical memory",
+                &vec![1.0; 768],
+                5,
+                false,
+                Some(0.0),
+                0,
+                None,
+                None,
+            )
+            .await?;
+
+        assert!(shared
+            .iter()
+            .any(|(unit, _)| unit.domain == MemoryDomain::App
+                && unit.projected_from == vec![source.id]));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_disabling_app_contribution_removes_projected_memory() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        engine.set_app_share_policy(
+            "author",
+            "cleanup_app",
+            &memorose_common::SharePolicy {
+                contribute: true,
+                consume: false,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+        engine.set_app_share_policy(
+            "consumer",
+            "cleanup_app",
+            &memorose_common::SharePolicy {
+                contribute: false,
+                consume: true,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+
+        let source = MemoryUnit::new(
+            None,
+            "author".into(),
+            None,
+            "cleanup_app".into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Cleanup shared memory".into(),
+            Some(vec![1.0; 768]),
+        );
+        engine.store_memory_unit(source.clone()).await?;
+
+        let before = engine
+            .search_hybrid_with_shared(
+                "consumer",
+                Some("cleanup_app"),
+                None,
+                None,
+                "cleanup shared",
+                &vec![1.0; 768],
+                5,
+                false,
+                Some(0.0),
+                0,
+                None,
+                None,
+            )
+            .await?;
+        assert!(!before.is_empty());
+
+        let removed = engine
+            .disable_app_contribution("author", "cleanup_app")
+            .await?;
+        assert_eq!(removed, 1);
+
+        let after = engine
+            .search_hybrid_with_shared(
+                "consumer",
+                Some("cleanup_app"),
+                None,
+                None,
+                "cleanup shared",
+                &vec![1.0; 768],
+                5,
+                false,
+                Some(0.0),
+                0,
+                None,
+                None,
+            )
+            .await?;
+        assert!(after.is_empty());
+
+        let after_text = engine
+            .search_text_with_shared(
+                "consumer",
+                Some("cleanup_app"),
+                None,
+                "cleanup shared",
+                5,
+                false,
+                None,
+            )
+            .await?;
+        assert!(after_text.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_text_with_shared_returns_app_projection() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        engine.set_app_share_policy(
+            "author",
+            "text_app",
+            &memorose_common::SharePolicy {
+                contribute: true,
+                consume: false,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+        engine.set_app_share_policy(
+            "consumer",
+            "text_app",
+            &memorose_common::SharePolicy {
+                contribute: false,
+                consume: true,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+
+        let source = MemoryUnit::new(
+            None,
+            "author".into(),
+            None,
+            "text_app".into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Shared text retrieval phrase".into(),
+            None,
+        );
+        engine.store_memory_unit(source.clone()).await?;
+        engine.index.commit()?;
+        engine.index.reload()?;
+
+        let units = engine
+            .search_text_with_shared(
+                "consumer",
+                Some("text_app"),
+                None,
+                "retrieval phrase",
+                5,
+                false,
+                None,
+            )
+            .await?;
+
+        assert!(!units.is_empty());
+        assert!(
+            units
+                .iter()
+                .any(|unit| unit.domain == MemoryDomain::App
+                    && unit.projected_from == vec![source.id])
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_disabling_org_contribution_removes_projected_memory() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        engine.set_org_share_policy(
+            "author",
+            "org_cleanup",
+            &memorose_common::SharePolicy {
+                contribute: true,
+                consume: false,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+        engine.set_org_share_policy(
+            "consumer",
+            "org_cleanup",
+            &memorose_common::SharePolicy {
+                contribute: false,
+                consume: true,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+
+        let source = MemoryUnit::new(
+            Some("org_cleanup".into()),
+            "author".into(),
+            None,
+            "app_a".into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Org cleanup knowledge".into(),
+            Some(vec![1.0; 768]),
+        );
+        engine.store_memory_unit(source.clone()).await?;
+
+        let before = engine
+            .search_hybrid_with_shared(
+                "consumer",
+                Some("app_b"),
+                Some("org_cleanup"),
+                None,
+                "cleanup knowledge",
+                &vec![1.0; 768],
+                5,
+                false,
+                Some(0.0),
+                0,
+                None,
+                None,
+            )
+            .await?;
+        assert!(!before.is_empty());
+
+        let removed = engine
+            .disable_org_contribution("author", "org_cleanup")
+            .await?;
+        assert_eq!(removed, 1);
+
+        let after = engine
+            .search_hybrid_with_shared(
+                "consumer",
+                Some("app_b"),
+                Some("org_cleanup"),
+                None,
+                "cleanup knowledge",
+                &vec![1.0; 768],
+                5,
+                false,
+                Some(0.0),
+                0,
+                None,
+                None,
+            )
+            .await?;
+        assert!(after.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_local_text_search_excludes_shared_projection() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        engine.set_app_share_policy(
+            TEST_USER,
+            "local_text_app",
+            &memorose_common::SharePolicy {
+                contribute: true,
+                consume: false,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+
+        let source = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            "local_text_app".into(),
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Projection should not leak into local text search".into(),
+            None,
+        );
+        engine.store_memory_unit(source.clone()).await?;
+        engine.index.commit()?;
+        engine.index.reload()?;
+
+        let local_results = engine
+            .search_text(
+                TEST_USER,
+                Some("local_text_app"),
+                "projection leak",
+                10,
+                false,
+                None,
+            )
+            .await?;
+
+        assert_eq!(local_results.len(), 1);
+        assert!(local_results
+            .iter()
+            .all(|unit| MemoroseEngine::is_local_domain(&unit.domain)));
 
         Ok(())
     }

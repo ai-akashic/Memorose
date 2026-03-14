@@ -5,12 +5,12 @@
 // 2. 模块度评估
 // 3. 批量优化的性能
 
-use memorose_core::MemoroseEngine;
-use memorose_common::{MemoryUnit, GraphEdge, RelationType};
-use uuid::Uuid;
-use std::time::Instant;
 use anyhow::Result;
+use memorose_common::{GraphEdge, MemoryUnit, RelationType};
+use memorose_core::MemoroseEngine;
 use std::path::PathBuf;
+use std::time::Instant;
+use uuid::Uuid;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -21,7 +21,9 @@ async fn main() -> Result<()> {
 
     // 初始化引擎
     let data_dir = PathBuf::from("./data_community_demo");
-    if data_dir.exists() { std::fs::remove_dir_all(&data_dir)?; }
+    if data_dir.exists() {
+        std::fs::remove_dir_all(&data_dir)?;
+    }
     let engine = MemoroseEngine::new_with_default_threshold(&data_dir, 1000, false, false).await?;
 
     let user_id = "demo_user";
@@ -40,8 +42,9 @@ async fn main() -> Result<()> {
         &engine,
         user_id,
         memorose_core::community::Algorithm::LabelPropagation,
-        "Basic LPA"
-    ).await?;
+        "Basic LPA",
+    )
+    .await?;
     println!();
 
     // === 测试 2: 加权 LPA ===
@@ -51,8 +54,9 @@ async fn main() -> Result<()> {
         &engine,
         user_id,
         memorose_core::community::Algorithm::WeightedLPA,
-        "Weighted LPA"
-    ).await?;
+        "Weighted LPA",
+    )
+    .await?;
     println!();
 
     // === 测试 3: Louvain ===
@@ -62,8 +66,9 @@ async fn main() -> Result<()> {
         &engine,
         user_id,
         memorose_core::community::Algorithm::Louvain,
-        "Louvain"
-    ).await?;
+        "Louvain",
+    )
+    .await?;
     println!();
 
     // === 测试 4: 两阶段检测（大图优化）===
@@ -101,7 +106,8 @@ async fn build_test_communities(
         for i in 0..50 {
             let content = format!("Community {} - Node {}", comm, i);
             let embedding = vec![(comm * 50 + i) as f32 / 150.0; 384];
-            let unit = MemoryUnit::new(None, 
+            let unit = MemoryUnit::new(
+                None,
                 user_id.to_string(),
                 None,
                 app_id.to_string(),
@@ -185,7 +191,9 @@ async fn test_algorithm(
     println!("  Modularity: {:.4}", result.modularity);
 
     // 显示社区大小分布
-    let mut sizes: Vec<usize> = result.community_to_nodes.values()
+    let mut sizes: Vec<usize> = result
+        .community_to_nodes
+        .values()
         .map(|members| members.len())
         .collect();
     sizes.sort_by(|a, b| b.cmp(a));
@@ -196,10 +204,7 @@ async fn test_algorithm(
 }
 
 /// 测试两阶段检测
-async fn test_two_phase(
-    engine: &MemoroseEngine,
-    user_id: &str,
-) -> Result<()> {
+async fn test_two_phase(engine: &MemoroseEngine, user_id: &str) -> Result<()> {
     let config = memorose_core::community::DetectionConfig {
         algorithm: memorose_core::community::Algorithm::Louvain,
         max_iterations: 50,
@@ -216,7 +221,9 @@ async fn test_two_phase(
     println!("  Communities found: {}", result.num_communities);
     println!("  Modularity: {:.4}", result.modularity);
 
-    let mut sizes: Vec<usize> = result.community_to_nodes.values()
+    let mut sizes: Vec<usize> = result
+        .community_to_nodes
+        .values()
         .map(|members| members.len())
         .collect();
     sizes.sort_by(|a, b| b.cmp(a));
