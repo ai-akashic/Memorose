@@ -40,19 +40,19 @@ CLEAN_BUILD=false
 
 # Logging functions
 log_info() {
-    echo -e "${BLUE}==>${NC} $*"
+    echo "${BLUE}==>${NC} $*"
 }
 
 log_success() {
-    echo -e "${GREEN}✓${NC} $*"
+    echo "${GREEN}✓${NC} $*"
 }
 
 log_warn() {
-    echo -e "${YELLOW}⚠${NC} $*"
+    echo "${YELLOW}⚠${NC} $*"
 }
 
 log_error() {
-    echo -e "${RED}✗${NC} $*" >&2
+    echo "${RED}✗${NC} $*" >&2
 }
 
 show_help() {
