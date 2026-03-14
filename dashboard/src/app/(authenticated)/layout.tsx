@@ -150,12 +150,12 @@ export default function AuthenticatedLayout({
                 <div className="space-y-2 px-1">
                   <div className="flex items-center gap-2">
                     <UserRound className="w-3.5 h-3.5 text-muted-foreground" />
-                    <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Scope</span>
+                    <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">User Filter</span>
                   </div>
                   <Input
                     value={userId}
                     onChange={(e) => setUserId(e.target.value)}
-                    placeholder="USER_ID"
+                    placeholder="Search user_id..."
                     className="h-8 text-[12px] font-mono bg-muted border-border focus:border-primary placeholder:text-muted-foreground/50"
                   />
                 </div>
