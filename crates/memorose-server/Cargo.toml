@@ -35,3 +35,4 @@ async-recursion = "1.0"
 async-stream = "0.3"
 futures-util = "0.3"
 reqwest = { version = "0.12", features = ["json"] }
+sha2 = "0.10"

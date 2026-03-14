@@ -1,8 +1,9 @@
 import { getToken, clearToken } from "./auth";
 
+const DASHBOARD_BASE_PATH = "/dashboard";
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || (typeof window !== "undefined"
-  ? `${window.location.protocol}//${window.location.hostname}:${window.location.port}`
-  : "");
+  ? `${window.location.origin}${DASHBOARD_BASE_PATH}`
+  : DASHBOARD_BASE_PATH);
 
 async function fetchAPI<T>(
   path: string,
@@ -89,9 +90,10 @@ export const api = {
     }),
 
   clusterStatus: () => fetchAPI<import("./types").ClusterStatus>("/cluster/status"),
-  stats: (user_id?: string) => {
+  stats: (user_id?: string, org_id?: string) => {
     const qs = new URLSearchParams();
     if (user_id) qs.set("user_id", user_id);
+    if (org_id) qs.set("org_id", org_id);
     const qstr = qs.toString();
     return fetchAPI<import("./types").Stats>(`/stats${qstr ? `?${qstr}` : ""}`);
   },
@@ -103,6 +105,7 @@ export const api = {
     page?: number;
     limit?: number;
     sort?: string;
+    org_id?: string;
     user_id?: string;
     agent_id?: string;
   }) => {
@@ -111,6 +114,7 @@ export const api = {
     if (params.page) qs.set("page", String(params.page));
     if (params.limit) qs.set("limit", String(params.limit));
     if (params.sort) qs.set("sort", params.sort);
+    if (params.org_id) qs.set("org_id", params.org_id);
     if (params.user_id) qs.set("user_id", params.user_id);
     if (params.agent_id) qs.set("agent_id", params.agent_id);
     return fetchAPI<import("./types").MemoryListResponse>(`/memories?${qs}`);
@@ -120,10 +124,11 @@ export const api = {
     return fetchAPI<import("./types").MemoryUnit>(`/memories/${id}`);
   },
 
-  graph: (limit?: number, user_id?: string) => {
+  graph: (limit?: number, user_id?: string, org_id?: string) => {
     const qs = new URLSearchParams();
     if (limit) qs.set("limit", String(limit));
     if (user_id) qs.set("user_id", user_id);
+    if (org_id) qs.set("org_id", org_id);
     return fetchAPI<import("./types").GraphData>(`/graph?${qs}`);
   },
 
@@ -132,8 +137,9 @@ export const api = {
     mode?: string;
     limit?: number;
     enable_arbitration?: boolean;
-    user_id?: string;
+    user_id: string;
     app_id?: string;
+    org_id?: string;
     agent_id?: string;
   }) =>
     fetchAPI<import("./types").SearchResponse>("/search", {
@@ -151,20 +157,44 @@ export const api = {
     };
   }) => {
     const { user_id, app_id, stream_id, content } = params;
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    const token = getToken();
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
     return fetch(`${API_BASE}/v1/users/${user_id}/apps/${app_id}/streams/${stream_id}/events`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ content }),
+      headers,
+      body: JSON.stringify({ content: content.data, content_type: content.type }),
     });
   },
 
   agents: () =>
     fetchAPI<import("./types").AgentListResponse>("/agents"),
 
-  list_apps: () =>
-    fetchAPI<import("./types").AppSummary[]>("/apps"),
+  listOrganizations: () =>
+    fetchAPI<import("./types").OrganizationListResponse>("/organizations"),
+
+  createOrganization: (body: { org_id: string; name?: string }) =>
+    fetchAPI<import("./types").Organization>("/organizations", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  list_apps: (org_id?: string) => {
+    const qs = new URLSearchParams();
+    if (org_id) qs.set("org_id", org_id);
+    const suffix = qs.toString();
+    return fetchAPI<import("./types").AppListResponse>(`/apps${suffix ? `?${suffix}` : ""}`);
+  },
+
+  createApp: (body: { app_id: string; org_id: string; name?: string }) =>
+    fetchAPI<import("./types").AppSummary>("/apps", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   agentStats: (agentId: string) =>
     fetchAPI<import("./types").AgentSummary & Record<string, unknown>>(`/agents/${encodeURIComponent(agentId)}/stats`),
@@ -176,6 +206,44 @@ export const api = {
   // App stats
   appStats: (app_id: string) =>
     fetchAPI<import("./types").AppStats>(`/apps/${encodeURIComponent(app_id)}/stats`),
+
+  listApiKeys: (app_id: string) =>
+    fetchAPI<import("./types").AppApiKeyListResponse>(`/apps/${encodeURIComponent(app_id)}/api-keys`),
+
+  createApiKey: (app_id: string, body: { name?: string }) =>
+    fetchAPI<import("./types").CreateApiKeyResponse>(`/apps/${encodeURIComponent(app_id)}/api-keys`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  revokeApiKey: (app_id: string, key_id: string) =>
+    fetchAPI<{ status: string }>(`/apps/${encodeURIComponent(app_id)}/api-keys/${encodeURIComponent(key_id)}`, {
+      method: "DELETE",
+    }),
+
+  getMemorySharing: (user_id: string, app_id: string, org_id?: string) => {
+    const qs = new URLSearchParams();
+    if (org_id) {
+      qs.set("org_id", org_id);
+    }
+    const suffix = qs.toString();
+    return fetchRaw<import("./types").MemorySharingState>(
+      `/v1/users/${user_id}/apps/${app_id}/memory-sharing${suffix ? `?${suffix}` : ""}`
+    );
+  },
+
+  updateMemorySharing: (
+    user_id: string,
+    app_id: string,
+    body: import("./types").MemorySharingUpdateRequest
+  ) =>
+    fetchRaw<import("./types").MemorySharingState>(
+      `/v1/users/${user_id}/apps/${app_id}/memory-sharing`,
+      {
+        method: "PUT",
+        body: JSON.stringify(body),
+      }
+    ),
 
   // Task endpoints
   getReadyTasks: (user_id: string) =>

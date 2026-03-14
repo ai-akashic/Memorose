@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { isAuthenticated, clearToken } from "@/lib/auth";
 import {
@@ -14,11 +14,12 @@ import {
   Package,
   Bot,
   CheckSquare,
-  UserRound,
+  Building2,
 } from "lucide-react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
+import { OrgScopeProvider } from "@/lib/org-scope";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -27,18 +28,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { CommandPalette } from "@/components/CommandPalette";
-import { Input } from "@/components/ui/input";
 import { LocaleSwitcher } from "@/components/LocaleSwitcher";
 import { OrgSwitcher } from "@/components/OrgSwitcher";
-
-const UserFilterContext = createContext<{
-  userId: string;
-  setUserId: (v: string) => void;
-}>({ userId: "", setUserId: () => {} });
-
-export function useUserFilter() {
-  return useContext(UserFilterContext);
-}
 
 export default function AuthenticatedLayout({
   children,
@@ -50,10 +41,10 @@ export default function AuthenticatedLayout({
   const t = useTranslations("Navigation");
   const [collapsed, setCollapsed] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const [userId, setUserId] = useState("");
 
   const navItems = [
     { href: "/cluster/", label: t("cluster"), icon: LayoutDashboard },
+    { href: "/organizations/", label: "Organizations", icon: Building2 },
     { href: "/apps/", label: t("apps"), icon: Package },
     { href: "/memories/", label: t("memories"), icon: Database },
     { href: "/playground/", label: "Playground", icon: MessageSquare },
@@ -89,7 +80,7 @@ export default function AuthenticatedLayout({
   }
 
   return (
-    <UserFilterContext.Provider value={{ userId, setUserId }}>
+    <OrgScopeProvider>
       <TooltipProvider delayDuration={0}>
         <div className="h-screen flex bg-background overflow-hidden relative">
           <CommandPalette />
@@ -129,38 +120,9 @@ export default function AuthenticatedLayout({
                   );
                 }
 
-
                 return link;
               })}
             </nav>
-
-            <div className="border-t border-border px-3 py-4">
-              {collapsed ? (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <div className="flex justify-center py-1 cursor-default">
-                      <UserRound className={cn("w-4 h-4 shrink-0", userId ? "text-primary opacity-80" : "text-muted-foreground")} />
-                    </div>
-                  </TooltipTrigger>
-                  <TooltipContent side="right" className="text-xs bg-popover border-border text-popover-foreground">
-                    {userId || "NO FILTER"}
-                  </TooltipContent>
-                </Tooltip>
-              ) : (
-                <div className="space-y-2 px-1">
-                  <div className="flex items-center gap-2">
-                    <UserRound className="w-3.5 h-3.5 text-muted-foreground" />
-                    <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">User Filter</span>
-                  </div>
-                  <Input
-                    value={userId}
-                    onChange={(e) => setUserId(e.target.value)}
-                    placeholder="Search user_id..."
-                    className="h-8 text-[12px] font-mono bg-muted border-border focus:border-primary placeholder:text-muted-foreground/50"
-                  />
-                </div>
-              )}
-            </div>
 
             <div className="border-t border-border p-3 space-y-1 bg-background/50 flex flex-col items-center">
               {!collapsed ? (
@@ -208,10 +170,10 @@ export default function AuthenticatedLayout({
           </aside>
 
           <main className="flex-1 overflow-auto h-full allow-select bg-background">
-            <div className="p-6 max-w-7xl h-full openclaw-dashboard-enter">{children}</div>
+            <div className="mx-auto max-w-7xl p-6 h-full openclaw-dashboard-enter">{children}</div>
           </main>
         </div>
       </TooltipProvider>
-    </UserFilterContext.Provider>
+    </OrgScopeProvider>
   );
 }

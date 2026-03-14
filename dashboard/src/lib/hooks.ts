@@ -1,6 +1,17 @@
+import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { api } from "./api";
-import type { ClusterStatus, Stats, MemoryListResponse, GraphData, AgentListResponse, PendingCountResponse } from "./types";
+import type {
+  AgentListResponse,
+  AppListResponse,
+  OrganizationListResponse,
+  ClusterStatus,
+  GraphData,
+  MemorySharingState,
+  MemoryListResponse,
+  PendingCountResponse,
+  Stats,
+} from "./types";
 
 export function useClusterStatus() {
   return useSWR<ClusterStatus>("cluster-status", () => api.clusterStatus(), {
@@ -8,8 +19,8 @@ export function useClusterStatus() {
   });
 }
 
-export function useStats(user_id?: string) {
-  return useSWR<Stats>(`stats-${user_id ?? "_all"}`, () => api.stats(user_id), {
+export function useStats(user_id?: string, org_id?: string) {
+  return useSWR<Stats>(`stats-${user_id ?? "_all"}-${org_id ?? "_all"}`, () => api.stats(user_id, org_id), {
     refreshInterval: 5000,
   });
 }
@@ -19,6 +30,7 @@ export function useMemories(params: {
   page?: number;
   limit?: number;
   sort?: string;
+  org_id?: string;
   user_id?: string;
   agent_id?: string;
 }) {
@@ -28,13 +40,25 @@ export function useMemories(params: {
   });
 }
 
-export function useGraph(limit?: number, user_id?: string) {
-  const key = `graph-${limit}-${user_id ?? "_all"}`;
-  return useSWR<GraphData>(key, () => api.graph(limit, user_id));
+export function useGraph(limit?: number, user_id?: string, org_id?: string) {
+  const key = `graph-${limit}-${user_id ?? "_all"}-${org_id ?? "_all"}`;
+  return useSWR<GraphData>(key, () => api.graph(limit, user_id, org_id));
 }
 
 export function useAgents() {
   return useSWR<AgentListResponse>("agents-list", () => api.agents(), {
+    refreshInterval: 30000,
+  });
+}
+
+export function useOrganizations() {
+  return useSWR<OrganizationListResponse>("organizations-list", () => api.listOrganizations(), {
+    refreshInterval: 30000,
+  });
+}
+
+export function useApps(org_id?: string) {
+  return useSWR<AppListResponse>(`apps-list-${org_id ?? "_all"}`, () => api.list_apps(org_id), {
     refreshInterval: 30000,
   });
 }
@@ -60,6 +84,22 @@ export function useAppStats(appId: string | undefined) {
   );
 }
 
+export function useMemorySharing(
+  userId: string | undefined,
+  appId: string | undefined,
+  orgId?: string | undefined
+) {
+  const key = userId && appId
+    ? `memory-sharing-${userId}-${appId}-${orgId ?? "_none"}`
+    : null;
+
+  return useSWR<MemorySharingState>(
+    key,
+    () => api.getMemorySharing(userId!, appId!, orgId),
+    { refreshInterval: 5000 }
+  );
+}
+
 export function useReadyTasks(user_id: string | undefined) {
   return useSWR(
     user_id ? `ready-tasks-${user_id}` : null,
@@ -72,4 +112,28 @@ export function usePendingCount() {
   return useSWR<PendingCountResponse>("pending-count", () => api.pendingCount(), {
     refreshInterval: 5000,
   });
+}
+
+export function useStoredString(key: string, fallback = "") {
+  const [value, setValue] = useState(() => {
+    if (typeof window === "undefined") {
+      return fallback;
+    }
+    return window.localStorage.getItem(key) ?? fallback;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const trimmed = value.trim();
+    if (trimmed) {
+      window.localStorage.setItem(key, trimmed);
+    } else {
+      window.localStorage.removeItem(key);
+    }
+  }, [key, value]);
+
+  return [value, setValue] as const;
 }

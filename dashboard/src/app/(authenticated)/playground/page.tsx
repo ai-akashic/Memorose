@@ -3,6 +3,8 @@
 import { useState, useRef, useEffect } from "react";
 import { api } from "@/lib/api";
 import { getToken } from "@/lib/auth";
+import { useStoredString } from "@/lib/hooks";
+import { useOrgScope } from "@/lib/org-scope";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -46,10 +48,12 @@ function ChatPanel() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [streaming, setStreaming] = useState(false);
-  const [userId, setUserId] = useState("demo-user");
-  const [appId, setAppId] = useState("playground");
+  const [userId, setUserId] = useStoredString("memorose-playground-chat-user");
+  const [appId, setAppId] = useStoredString("memorose-playground-chat-app");
+  const { orgId } = useOrgScope();
   const scrollRef = useRef<HTMLDivElement>(null);
   const streamingMessageRef = useRef<string>("");
+  const scopedOrgId = orgId.trim();
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -59,6 +63,7 @@ function ChatPanel() {
 
   const handleSend = async () => {
     if (!input.trim() || loading) return;
+    if (!userId.trim() || !appId.trim()) return;
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -76,8 +81,8 @@ function ChatPanel() {
 
     try {
       await api.ingestEvent({
-        user_id: userId,
-        app_id: appId,
+        user_id: userId.trim(),
+        app_id: appId.trim(),
         stream_id: "chat",
         content: {
           type: "text",
@@ -93,8 +98,9 @@ function ChatPanel() {
         },
         body: JSON.stringify({
           message: messageContent,
-          user_id: userId,
-          app_id: appId,
+          user_id: userId.trim(),
+          app_id: appId.trim(),
+          ...(scopedOrgId ? { org_id: scopedOrgId } : {}),
           context_limit: 5,
         }),
       });
@@ -206,6 +212,12 @@ function ChatPanel() {
         </div>
       </motion.div>
 
+      {scopedOrgId && (
+        <div className="mb-4 self-end rounded-lg border border-border/70 bg-background/50 px-3 py-2 text-[11px] font-mono text-muted-foreground">
+          org scope: {scopedOrgId}
+        </div>
+      )}
+
       <Card className="flex-1 flex flex-col overflow-hidden glass-card rounded-3xl relative">
         
 
@@ -226,6 +238,11 @@ function ChatPanel() {
                   <p className="text-sm opacity-50 max-w-xs text-center leading-relaxed">
                     Persistent encoding active. Data flowing to L0/L1/L2 memory hierarchy.
                   </p>
+                  {(!userId.trim() || !appId.trim()) && (
+                    <p className="mt-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+                      Set user_id and app_id to start a session
+                    </p>
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>
@@ -285,7 +302,7 @@ function ChatPanel() {
               />
               <Button
                 onClick={handleSend}
-                disabled={loading || !input.trim()}
+                disabled={loading || !input.trim() || !userId.trim() || !appId.trim()}
                 size="icon"
                 className={cn(
                   "h-12 w-12 rounded-xl transition-all duration-500",
@@ -307,9 +324,9 @@ function ChatPanel() {
 }
 
 function RetrievePanel() {
-  const [userId, setUserId] = useState("demo-user");
-  const [appId, setAppId] = useState("playground");
-  const [streamId, setStreamId] = useState("chat");
+  const [userId, setUserId] = useStoredString("memorose-playground-retrieve-user");
+  const [appId, setAppId] = useStoredString("memorose-playground-retrieve-app");
+  const [streamId, setStreamId] = useStoredString("memorose-playground-retrieve-stream", "chat");
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState("10");
   const [minScore, setMinScore] = useState("");
@@ -320,21 +337,19 @@ function RetrievePanel() {
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<RetrieveResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { orgId } = useOrgScope();
+  const scopedOrgId = orgId.trim();
 
   // Suggestions
   const [apps, setApps] = useState<string[]>([]);
-  const [users, setUsers] = useState<string[]>([]);
   const [streams] = useState<string[]>(["chat", "system", "logs", "internal"]);
 
   useEffect(() => {
-    // Fetch apps
-    api.list_apps().then(res => setApps(res.map(a => a.app_id))).catch(() => {});
-    // Fetch agents (often used as user_id or to find users)
-    api.agents().then(res => setUsers(res.agents.map(a => a.agent_id))).catch(() => {});
-  }, []);
+    api.list_apps(scopedOrgId).then(res => setApps(res.apps.map(a => a.app_id))).catch(() => {});
+  }, [scopedOrgId]);
 
   async function handleRetrieve() {
-    if (!query.trim()) return;
+    if (!query.trim() || !userId.trim() || !appId.trim() || !streamId.trim()) return;
     setLoading(true);
     setError(null);
     setResults(null);
@@ -344,11 +359,11 @@ function RetrievePanel() {
         ...(limit ? { limit: Number(limit) } : {}),
         ...(minScore ? { min_score: Number(minScore) } : {}),
         ...(graphDepth ? { graph_depth: Number(graphDepth) } : {}),
-        ...(validTimeStart ? { valid_time_start: validTimeStart } : {}),
-        ...(validTimeEnd ? { valid_time_end: validTimeEnd } : {}),
+        ...(validTimeStart ? { start_time: validTimeStart } : {}),
+        ...(validTimeEnd ? { end_time: validTimeEnd } : {}),
         ...(asOf ? { as_of: asOf } : {}),
       };
-      const res = await api.retrieve(userId, appId, streamId, body);
+      const res = await api.retrieve(userId.trim(), appId.trim(), streamId.trim(), body);
       setResults(res);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unknown error");
@@ -366,14 +381,10 @@ function RetrievePanel() {
             <div className="space-y-2">
               <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">User ID</label>
               <Input 
-                list="user-suggestions"
                 value={userId} 
                 onChange={(e) => setUserId(e.target.value)} 
                 className="h-11 text-[13px] font-mono bg-card border-border" 
               />
-              <datalist id="user-suggestions">
-                {users.map(u => <option key={u} value={u} />)}
-              </datalist>
             </div>
             <div className="space-y-2">
               <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">App ID</label>
@@ -401,6 +412,12 @@ function RetrievePanel() {
             </div>
           </div>
 
+          {scopedOrgId && (
+            <div className="rounded-lg border border-border/70 bg-background/50 px-3 py-2 text-[11px] font-mono text-muted-foreground">
+              org scope: {scopedOrgId}
+            </div>
+          )}
+
           <div className="flex gap-4">
             <Input
               value={query}
@@ -409,7 +426,11 @@ function RetrievePanel() {
               className="flex-1 h-14 bg-card border-border text-base px-6 placeholder:text-muted-foreground/10"
               onKeyDown={(e) => e.key === "Enter" && handleRetrieve()}
             />
-            <Button onClick={handleRetrieve} disabled={loading || !query.trim()} className="h-14 px-8 gap-3 rounded-2xl text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+            <Button
+              onClick={handleRetrieve}
+              disabled={loading || !query.trim() || !userId.trim() || !appId.trim() || !streamId.trim()}
+              className="h-14 px-8 gap-3 rounded-2xl text-[11px] font-medium uppercase tracking-widest text-muted-foreground"
+            >
               {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
               Retrieve
             </Button>

@@ -3,6 +3,40 @@ export interface LoginResponse {
   expires_in: number;
 }
 
+export interface SharePolicy {
+  contribute: boolean;
+  consume: boolean;
+  include_history: boolean;
+  targets: Array<"app" | "organization">;
+}
+
+export interface ShareBackfillStatus {
+  status: "pending" | "done" | "failed";
+  scheduled_at?: string;
+  finished_at?: string;
+  app_id?: string;
+  org_id?: string | null;
+  domain?: "app" | "organization";
+  projected?: number;
+  error?: string;
+}
+
+export interface MemorySharingState {
+  user_id: string;
+  app_id: string;
+  org_id?: string | null;
+  app: SharePolicy;
+  organization?: SharePolicy | null;
+  app_backfill?: ShareBackfillStatus | null;
+  organization_backfill?: ShareBackfillStatus | null;
+}
+
+export interface MemorySharingUpdateRequest {
+  org_id?: string;
+  app?: SharePolicy;
+  organization?: SharePolicy;
+}
+
 export interface ShardStatus {
   shard_id: number;
   raft_node_id: number;
@@ -61,18 +95,40 @@ export interface Stats {
   pending_events: number;
   total_memory_units: number;
   total_edges: number;
+  memory_by_scope: {
+    local: number;
+    shared: number;
+  };
+  memory_by_domain: {
+    agent: number;
+    user: number;
+    app: number;
+    organization: number;
+  };
   memory_by_level: {
     l1: number;
     l2: number;
+  };
+  memory_by_level_and_scope: {
+    local: {
+      l1: number;
+      l2: number;
+    };
+    shared: {
+      l1: number;
+      l2: number;
+    };
   };
   uptime_seconds: number;
 }
 
 export interface MemoryItem {
   id: string;
+  org_id?: string | null;
   user_id: string;
   agent_id?: string | null;
   app_id: string;
+  domain?: "agent" | "user" | "app" | "organization";
   memory_type?: "factual" | "procedural";
   content: string;
   level: number;
@@ -95,11 +151,13 @@ export interface MemoryListResponse {
 
 export interface MemoryUnit {
   id: string;
+  org_id?: string | null;
   user_id: string;
   agent_id: string | null;
   app_id: string;
   stream_id: string;
   memory_type: "factual" | "procedural";
+  domain: "agent" | "user" | "app" | "organization";
   content: string;
   keywords: string[];
   importance: number;
@@ -109,6 +167,7 @@ export interface MemoryUnit {
   last_accessed_at: string;
   access_count: number;
   references: string[];
+  projected_from?: string[];
   assets: Array<{
     storage_key: string;
     original_name: string;
@@ -156,6 +215,37 @@ export interface AppConfig {
   worker: Record<string, unknown>;
   llm: Record<string, unknown>;
   storage: Record<string, unknown>;
+}
+
+export interface Organization {
+  org_id: string;
+  name: string;
+  created_at: string;
+}
+
+export interface OrganizationListResponse {
+  organizations: Organization[];
+  total_count: number;
+}
+
+export interface AppApiKey {
+  key_id: string;
+  app_id: string;
+  org_id: string;
+  name: string;
+  key_prefix: string;
+  created_at: string;
+  revoked_at?: string | null;
+}
+
+export interface AppApiKeyListResponse {
+  api_keys: AppApiKey[];
+  total_count: number;
+}
+
+export interface CreateApiKeyResponse {
+  api_key: AppApiKey;
+  raw_key: string;
 }
 
 export interface VersionInfo {
@@ -208,14 +298,47 @@ export interface GoalTree {
 
 export interface AppStats {
   app_id: string;
+  org_id: string;
+  name: string;
   overview: {
     total_events: number;
     total_users: number;
     total_memories: number;
+    local_memories: number;
+    shared_memories: number;
+    shared_app_memories: number;
+    shared_org_memories: number;
+    agent_memories: number;
+    user_memories: number;
     l1_count: number;
     l2_count: number;
+    local_l1_count: number;
+    local_l2_count: number;
+    shared_l1_count: number;
+    shared_l2_count: number;
     memory_pipeline_status: string;
     avg_memories_per_user: number;
+    avg_local_memories_per_user: number;
+    memory_by_scope: {
+      local: number;
+      shared: number;
+    };
+    memory_by_domain: {
+      agent: number;
+      user: number;
+      app: number;
+      organization: number;
+    };
+    memory_by_level_and_scope: {
+      local: {
+        l1: number;
+        l2: number;
+      };
+      shared: {
+        l1: number;
+        l2: number;
+      };
+    };
   };
   users: Array<{
     user_id: string;
@@ -231,6 +354,8 @@ export interface AppStats {
   }>;
   performance: {
     total_storage_bytes: number;
+    event_storage_bytes: number;
+    memory_storage_bytes: number;
     avg_event_size_bytes: number;
     l1_generation_rate: number;
     l2_generation_rate: number;
@@ -239,9 +364,28 @@ export interface AppStats {
 
 export interface AppSummary {
   app_id: string;
+  org_id: string;
+  name: string;
   total_events: number;
   total_users: number;
   total_memories: number;
+  local_memories: number;
+  shared_app_memories: number;
+  shared_org_memories: number;
+  agent_memories: number;
+  user_memories: number;
+  l1_count: number;
+  l2_count: number;
+  local_l1_count: number;
+  local_l2_count: number;
+  shared_l1_count: number;
+  shared_l2_count: number;
+  last_activity: number | null;
+}
+
+export interface AppListResponse {
+  apps: AppSummary[];
+  total_count: number;
 }
 
 export interface RetrieveRequest {
@@ -249,9 +393,11 @@ export interface RetrieveRequest {
   limit?: number;
   min_score?: number;
   graph_depth?: number;
-  valid_time_start?: string;
-  valid_time_end?: string;
+  start_time?: string;
+  end_time?: string;
   as_of?: string;
+  org_id?: string;
+  agent_id?: string;
 }
 
 export type RetrieveResponse = SearchResponse;

@@ -1,143 +1,299 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
-import { Copy, Plus, KeyRound, Terminal, Trash2 } from "lucide-react";
-import { Card } from "@/components/ui/card";
+import { Activity, Building2, Database, Layers, Loader2, Package, Plus, Share2, Users } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { api } from "@/lib/api";
+import { useApps } from "@/lib/hooks";
+import { useOrgScope } from "@/lib/org-scope";
+import { formatNumber } from "@/lib/utils";
 
-const MOCK_APPS = [
-  { id: "app_a1b2c3", name: "Customer Support Bot", description: "Production memory layer for support channels.", keys: 2 },
-  { id: "app_x9y8z7", name: "Internal Coding Assistant", description: "Dev team knowledge graph.", keys: 1 },
-];
-
-const MOCK_KEYS = [
-  { id: "key_1", name: "Production Key", key: "sk_live_8f92a1...4b2e", created: "2026-03-01", lastUsed: "2 mins ago" },
-  { id: "key_2", name: "Developer Testing", key: "sk_test_11x9f0...9q8w", created: "2026-03-10", lastUsed: "Never" },
-];
+function AppMetric({
+  label,
+  value,
+  sub,
+  tone = "text-foreground/70",
+}: {
+  label: string;
+  value: number;
+  sub?: string;
+  tone?: string;
+}) {
+  return (
+    <div className="rounded-xl border border-border/60 bg-background/50 px-3 py-3">
+      <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+        {label}
+      </div>
+      <div className={`mt-1 font-mono text-base ${tone}`}>{formatNumber(value)}</div>
+      {sub ? <div className="mt-1 text-[11px] text-muted-foreground">{sub}</div> : null}
+    </div>
+  );
+}
 
 export default function AppsPage() {
-  const [selectedApp, setSelectedApp] = useState(MOCK_APPS[0]);
+  const { orgId } = useOrgScope();
+  const scopedOrgId = orgId.trim();
+  const { data, isLoading, error, mutate } = useApps(scopedOrgId);
+  const [appId, setAppId] = useState("");
+  const [appName, setAppName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [messageTone, setMessageTone] = useState<"success" | "error">("success");
 
-  return (
-    <div className="flex flex-col h-full gap-8">
-      {/* Header Section */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight text-foreground">Applications</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Manage your agent memory contexts and API keys.
-          </p>
+  async function handleCreateApp() {
+    const normalizedAppId = appId.trim();
+    if (!normalizedAppId) {
+      setMessageTone("error");
+      setMessage("app_id is required");
+      return;
+    }
+
+    setCreating(true);
+    setMessage(null);
+
+    try {
+      await api.createApp({
+        app_id: normalizedAppId,
+        org_id: scopedOrgId,
+        name: appName.trim() || undefined,
+      });
+      setAppId("");
+      setAppName("");
+      setMessageTone("success");
+      setMessage(`Application ${normalizedAppId} created in ${scopedOrgId}.`);
+      await mutate();
+    } catch (createError) {
+      setMessageTone("error");
+      setMessage(createError instanceof Error ? createError.message : "Failed to create application");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-48" />
+          <Skeleton className="h-4 w-80" />
         </div>
-        <Button className="h-9 gap-2">
-          <Plus className="w-4 h-4" />
-          Create App
-        </Button>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Left Column: Apps List */}
-        <div className="col-span-1 space-y-4">
-          <div className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
-            Your Apps
-          </div>
-          <div className="space-y-2">
-            {MOCK_APPS.map((app) => (
-              <button
-                key={app.id}
-                onClick={() => setSelectedApp(app)}
-                className={`w-full text-left p-4 rounded-lg border transition-all duration-200 ${
-                  selectedApp.id === app.id
-                    ? "bg-muted border-border"
-                    : "bg-card border-border/50 hover:border-border hover:bg-muted/50"
-                }`}
-              >
-                <div className="font-semibold text-[14px] text-foreground">{app.name}</div>
-                <div className="text-xs font-mono text-muted-foreground mt-1">{app.id}</div>
-              </button>
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
+          <Skeleton className="h-64 rounded-3xl" />
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <Skeleton key={index} className="h-64 rounded-3xl" />
             ))}
           </div>
         </div>
+      </div>
+    );
+  }
 
-        {/* Right Column: App Detail & API Keys */}
-        <div className="col-span-2 space-y-6">
-          <Card className="glass-card p-6">
-            <div className="flex items-start justify-between">
-              <div>
-                <h2 className="text-lg font-bold">{selectedApp.name}</h2>
-                <p className="text-sm text-muted-foreground mt-1">{selectedApp.description}</p>
-                <div className="flex items-center gap-2 mt-4">
-                  <span className="text-[11px] uppercase tracking-widest text-muted-foreground font-medium">App ID</span>
-                  <code className="text-xs font-mono bg-muted px-2 py-1 rounded border border-border">
-                    {selectedApp.id}
-                  </code>
-                  <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground">
-                    <Copy className="w-3 h-3" />
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </Card>
+  if (error) {
+    return (
+      <Card className="glass-card">
+        <CardContent className="pt-6 text-sm text-destructive">{error.message}</CardContent>
+      </Card>
+    );
+  }
 
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-                <KeyRound className="w-3.5 h-3.5" />
-                API Keys
-              </div>
-              <Button variant="outline" size="sm" className="h-8 text-xs">
-                Generate Key
-              </Button>
-            </div>
+  const apps = data?.apps ?? [];
 
-            <Card className="glass-card overflow-hidden">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-border bg-muted/30">
-                    <th className="px-4 py-3 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Name</th>
-                    <th className="px-4 py-3 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Secret Key</th>
-                    <th className="px-4 py-3 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Last Used</th>
-                    <th className="px-4 py-3 text-right"></th>
-                  </tr>
-                </thead>
-                <tbody className="text-sm">
-                  {MOCK_KEYS.map((key) => (
-                    <tr key={key.id} className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors">
-                      <td className="px-4 py-3 font-medium">{key.name}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <code className="text-xs font-mono text-muted-foreground">{key.key}</code>
-                          <Button variant="ghost" size="icon" className="h-5 w-5 opacity-50 hover:opacity-100">
-                            <Copy className="w-3 h-3" />
-                          </Button>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground text-xs">{key.lastUsed}</td>
-                      <td className="px-4 py-3 text-right">
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10">
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </Card>
-
-            {/* Quick Start Guide */}
-            <Card className="glass-card p-5 mt-4 border-primary/20 bg-primary/5">
-              <div className="flex items-center gap-2 text-primary font-medium text-sm mb-3">
-                <Terminal className="w-4 h-4" />
-                Quick Integration
-              </div>
-              <pre className="text-xs font-mono bg-background border border-border rounded-md p-4 overflow-x-auto text-muted-foreground">
-<span className="text-primary">curl</span> -X POST https://api.memorose.io/v1/users/dylan/streams/sys-01/events \
-  -H <span className="text-green-400">&quot;Authorization: Bearer sk_live_8f92a1...4b2e&quot;</span> \
-  -H <span className="text-green-400">&quot;Content-Type: application/json&quot;</span> \
-  -d <span className="text-yellow-200">{"'{ \"content\": \"I prefer dark mode UI.\" }'"}</span>
-              </pre>
-            </Card>
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+            <Building2 className="h-3.5 w-3.5" />
+            Organization
           </div>
+          <h1 className="mt-2 text-2xl font-bold tracking-tight text-foreground">{scopedOrgId}</h1>
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+            Applications are owned by one organization. App memory stays inside this product
+            boundary, while organization memory can be shared across apps inside the same org.
+          </p>
         </div>
+
+        <div className="rounded-2xl border border-border/70 bg-card px-4 py-3">
+          <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+            Registered Apps
+          </div>
+          <div className="mt-1 font-mono text-2xl font-bold">{formatNumber(data?.total_count ?? 0)}</div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+        <Card className="glass-card border-border/70">
+          <CardHeader className="space-y-2">
+            <CardTitle className="text-sm">Create Application</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              API keys are created per app, so the app must exist first.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                org_id
+              </label>
+              <div className="rounded-xl border border-border/70 bg-background/60 px-3 py-2.5 font-mono text-sm">
+                {scopedOrgId}
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                app_id
+              </label>
+              <Input
+                value={appId}
+                onChange={(event) => setAppId(event.target.value)}
+                placeholder="support-console"
+                className="font-mono"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                Display Name
+              </label>
+              <Input
+                value={appName}
+                onChange={(event) => setAppName(event.target.value)}
+                placeholder="Support Console"
+              />
+            </div>
+
+            {message ? (
+              <div
+                className={`rounded-xl border px-3 py-2 text-sm ${
+                  messageTone === "success"
+                    ? "border-success/20 bg-success/5 text-success"
+                    : "border-destructive/20 bg-destructive/5 text-destructive"
+                }`}
+              >
+                {message}
+              </div>
+            ) : null}
+
+            <Button onClick={handleCreateApp} disabled={creating} className="w-full">
+              {creating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+              Create App
+            </Button>
+          </CardContent>
+        </Card>
+
+        {apps.length === 0 ? (
+          <Card className="glass-card border-border/70">
+            <CardContent className="flex min-h-[20rem] flex-col items-center justify-center py-16 text-center">
+              <Package className="mb-4 h-10 w-10 text-muted-foreground" />
+              <p className="text-sm font-medium text-foreground">No applications in this organization</p>
+              <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+                Create the first app in <span className="font-mono">{scopedOrgId}</span>, then mint
+                API keys from the app detail page.
+              </p>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            {apps.map((app) => (
+              <Link key={app.app_id} href={`/apps/${encodeURIComponent(app.app_id)}/`}>
+                <Card className="glass-card h-full border-border/70 transition-colors hover:border-primary/30 hover:bg-card/90">
+                  <CardHeader className="space-y-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <CardTitle className="flex items-center gap-2 text-base">
+                          <Package className="h-4 w-4 text-primary" />
+                          <span className="truncate">{app.name}</span>
+                        </CardTitle>
+                        <div className="mt-2 space-y-1">
+                          <p className="font-mono text-[11px] text-muted-foreground">{app.app_id}</p>
+                          <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                            Last Activity{" "}
+                            <span className="font-mono normal-case tracking-normal text-foreground/70">
+                              {app.last_activity
+                                ? new Date(app.last_activity * 1000).toLocaleString()
+                                : "No traffic yet"}
+                            </span>
+                          </p>
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-border/70 bg-background/60 px-3 py-2 text-right">
+                        <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                          Total Memories
+                        </div>
+                        <div className="font-mono text-lg font-bold">{formatNumber(app.total_memories)}</div>
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid grid-cols-2 gap-3">
+                      <AppMetric label="Events" value={app.total_events} tone="text-primary/80" />
+                      <AppMetric label="Users" value={app.total_users} tone="text-foreground/80" />
+                      <AppMetric label="Local" value={app.local_memories} tone="text-success" />
+                      <AppMetric
+                        label="Shared"
+                        value={app.shared_app_memories + app.shared_org_memories}
+                        tone="text-warning"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 border-t border-border/70 pt-4">
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                          <Layers className="h-3.5 w-3.5" />
+                          Local Domains
+                        </div>
+                        <div className="space-y-1 text-sm">
+                          <div className="flex items-center justify-between">
+                            <span className="flex items-center gap-2 text-muted-foreground">
+                              <Activity className="h-3.5 w-3.5" />
+                              Agent
+                            </span>
+                            <span className="font-mono">{formatNumber(app.agent_memories)}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="flex items-center gap-2 text-muted-foreground">
+                              <Users className="h-3.5 w-3.5" />
+                              User
+                            </span>
+                            <span className="font-mono">{formatNumber(app.user_memories)}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                          <Share2 className="h-3.5 w-3.5" />
+                          Shared Domains
+                        </div>
+                        <div className="space-y-1 text-sm">
+                          <div className="flex items-center justify-between">
+                            <span className="flex items-center gap-2 text-muted-foreground">
+                              <Package className="h-3.5 w-3.5" />
+                              App
+                            </span>
+                            <span className="font-mono">{formatNumber(app.shared_app_memories)}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="flex items-center gap-2 text-muted-foreground">
+                              <Database className="h-3.5 w-3.5" />
+                              Org
+                            </span>
+                            <span className="font-mono">{formatNumber(app.shared_org_memories)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
