@@ -1,30 +1,35 @@
 "use client";
 
-import { useLocale, useTranslations } from "next-intl";
-import { usePathname, useRouter } from "@/i18n/routing";
 import { Button } from "@/components/ui/button";
-import { Globe } from "lucide-react";
+import { Languages } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 export function LocaleSwitcher() {
-  const t = useTranslations("LocaleSwitcher");
-  const locale = useLocale();
-  const router = useRouter();
-  const pathname = usePathname();
-
-  function toggleLocale() {
-    const nextLocale = locale === "en" ? "zh" : "en";
-    router.replace(pathname, { locale: nextLocale });
-  }
+  const switchLocale = (locale: string) => {
+    localStorage.setItem('locale', locale);
+    window.location.reload();
+  };
 
   return (
-    <Button
-      variant="ghost"
-      size="sm"
-      onClick={toggleLocale}
-      className="gap-2 text-muted-foreground hover:text-foreground"
-    >
-      <Globe className="w-4 h-4 shrink-0" />
-      <span className="text-[13px] font-medium">{t(locale === "en" ? "zh" : "en")}</span>
-    </Button>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground">
+          <Languages className="w-4 h-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="bg-popover border-border">
+        <DropdownMenuItem onClick={() => switchLocale('en')} className="text-xs cursor-pointer focus:bg-muted">
+          English
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => switchLocale('zh')} className="text-xs cursor-pointer focus:bg-muted">
+          中文
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState } from "react";
-import { useRouter } from "@/i18n/routing";
+import { useRouter, usePathname } from "next/navigation";
 import { isAuthenticated, clearToken } from "@/lib/auth";
 import {
   LayoutDashboard,
@@ -16,7 +16,7 @@ import {
   CheckSquare,
   UserRound,
 } from "lucide-react";
-import { usePathname, Link } from "@/i18n/routing";
+import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";

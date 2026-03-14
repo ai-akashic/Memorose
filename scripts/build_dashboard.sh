@@ -153,7 +153,7 @@ create_redirect() {
 <!DOCTYPE html>
 <html>
 <head>
-    <meta http-equiv="refresh" content="0;url=/dashboard/en/login/">
+    <meta http-equiv="refresh" content="0;url=/dashboard/login/">
     <title>Redirecting...</title>
 </head>
 <body>
