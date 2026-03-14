@@ -171,28 +171,9 @@ async fn main() {
 
     let app = Router::new()
         .route("/", get(root))
-        // Backward-compatible redirects for dashboard paths without the /dashboard base prefix.
-        .route("/login", get(|| async { Redirect::temporary("/dashboard/login/") }))
-        .route("/login/", get(|| async { Redirect::temporary("/dashboard/login/") }))
-        .route("/cluster", get(|| async { Redirect::temporary("/dashboard/cluster/") }))
-        .route("/cluster/", get(|| async { Redirect::temporary("/dashboard/cluster/") }))
-        .route("/memories", get(|| async { Redirect::temporary("/dashboard/memories/") }))
-        .route("/memories/", get(|| async { Redirect::temporary("/dashboard/memories/") }))
-        .route("/playground", get(|| async { Redirect::temporary("/dashboard/playground/") }))
-        .route("/playground/", get(|| async { Redirect::temporary("/dashboard/playground/") }))
-        .route("/apps", get(|| async { Redirect::temporary("/dashboard/apps/") }))
-        .route("/apps/", get(|| async { Redirect::temporary("/dashboard/apps/") }))
-        .route("/apps/:app_id", get(legacy_app_detail_redirect))
-        .route("/apps/:app_id/", get(legacy_app_detail_redirect))
-        .route("/agents", get(|| async { Redirect::temporary("/dashboard/agents/") }))
-        .route("/agents/", get(|| async { Redirect::temporary("/dashboard/agents/") }))
-        .route("/metrics", get(|| async { Redirect::temporary("/dashboard/metrics/") }))
-        .route("/metrics/", get(|| async { Redirect::temporary("/dashboard/metrics/") }))
-        .route("/settings", get(|| async { Redirect::temporary("/dashboard/settings/") }))
-        .route("/settings/", get(|| async { Redirect::temporary("/dashboard/settings/") }))
         .merge(v1_routes)
         .nest("/v1/dashboard", dashboard_routes)
-        // Fallback for static files on /dashboard prefix
+        // Serve static dashboard files directly via /dashboard fallback
         .nest_service("/dashboard", dashboard_static)
         .layer(
             ServiceBuilder::new()
@@ -432,12 +413,6 @@ struct AddEdgeRequest {
 
 async fn root() -> &'static str {
     "Memorose is running."
-}
-
-async fn legacy_app_detail_redirect(
-    Path(app_id): Path<String>,
-) -> Redirect {
-    Redirect::temporary(&format!("/dashboard/apps/{}/", app_id))
 }
 
 /// Returns the number of pending (un-consolidated) events across all shards.
