@@ -143,7 +143,7 @@
     @apply bg-card border border-border rounded-lg shadow-sm transition-all duration-150 ease-out;
   }
   .glass-card:hover {
-    @apply border-[#2e3040];
+    @apply border-white/[0.06];
   }
 
   ::selection {

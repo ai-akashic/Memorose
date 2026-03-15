@@ -11,6 +11,7 @@ import { api } from "@/lib/api";
 import { useApps } from "@/lib/hooks";
 import { useOrgScope } from "@/lib/org-scope";
 import { formatNumber } from "@/lib/utils";
+import { useTranslations } from "next-intl";
 
 function AppMetric({
   label,
@@ -35,6 +36,7 @@ function AppMetric({
 }
 
 export default function AppsPage() {
+  const t = useTranslations("Apps");
   const { orgId } = useOrgScope();
   const scopedOrgId = orgId.trim();
   const { data, isLoading, error, mutate } = useApps(scopedOrgId);
@@ -109,18 +111,17 @@ export default function AppsPage() {
         <div>
           <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
             <Building2 className="h-3.5 w-3.5" />
-            Organization
+            {t("sectionLabel")}
           </div>
           <h1 className="mt-2 text-2xl font-bold tracking-tight text-foreground">{scopedOrgId}</h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Applications are owned by one organization. App memory stays inside this product
-            boundary, while organization memory can be shared across apps inside the same org.
+            {t("description")}
           </p>
         </div>
 
         <div className="rounded-2xl border border-border/70 bg-card px-4 py-3">
           <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-            Registered Apps
+            {t("registeredApps")}
           </div>
           <div className="mt-1 font-mono text-2xl font-bold">{formatNumber(data?.total_count ?? 0)}</div>
         </div>
@@ -129,15 +130,15 @@ export default function AppsPage() {
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
         <Card className="glass-card border-border/70">
           <CardHeader className="space-y-2">
-            <CardTitle className="text-sm">Create Application</CardTitle>
+            <CardTitle className="text-sm">{t("create.title")}</CardTitle>
             <p className="text-sm text-muted-foreground">
-              API keys are created per app, so the app must exist first.
+              {t("create.description")}
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-1.5">
               <label className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                org_id
+                {t("create.orgIdLabel")}
               </label>
               <div className="rounded-xl border border-border/70 bg-background/60 px-3 py-2.5 font-mono text-sm">
                 {scopedOrgId}
@@ -146,7 +147,7 @@ export default function AppsPage() {
 
             <div className="space-y-1.5">
               <label className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                app_id
+                {t("create.appIdLabel")}
               </label>
               <Input
                 value={appId}
@@ -158,7 +159,7 @@ export default function AppsPage() {
 
             <div className="space-y-1.5">
               <label className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                Display Name
+                {t("create.displayName")}
               </label>
               <Input
                 value={appName}
@@ -181,7 +182,7 @@ export default function AppsPage() {
 
             <Button onClick={handleCreateApp} disabled={creating} className="w-full">
               {creating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
-              Create App
+              {t("create.button")}
             </Button>
           </CardContent>
         </Card>
@@ -190,10 +191,9 @@ export default function AppsPage() {
           <Card className="glass-card border-border/70">
             <CardContent className="flex min-h-[20rem] flex-col items-center justify-center py-16 text-center">
               <Package className="mb-4 h-10 w-10 text-muted-foreground" />
-              <p className="text-sm font-medium text-foreground">No applications in this organization</p>
+              <p className="text-sm font-medium text-foreground">{t("empty.title")}</p>
               <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-                Create the first app in <span className="font-mono">{scopedOrgId}</span>, then mint
-                API keys from the app detail page.
+                {t("empty.description", { orgId: scopedOrgId })}
               </p>
             </CardContent>
           </Card>
@@ -212,18 +212,18 @@ export default function AppsPage() {
                         <div className="mt-2 space-y-1">
                           <p className="font-mono text-[11px] text-muted-foreground">{app.app_id}</p>
                           <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                            Last Activity{" "}
+                            {t("card.lastActivity")}{" "}
                             <span className="font-mono normal-case tracking-normal text-foreground/70">
                               {app.last_activity
                                 ? new Date(app.last_activity * 1000).toLocaleString()
-                                : "No traffic yet"}
+                                : t("card.noTraffic")}
                             </span>
                           </p>
                         </div>
                       </div>
                       <div className="rounded-xl border border-border/70 bg-background/60 px-3 py-2 text-right">
                         <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                          Total Memories
+                          {t("card.totalMemories")}
                         </div>
                         <div className="font-mono text-lg font-bold">{formatNumber(app.total_memories)}</div>
                       </div>
@@ -231,11 +231,11 @@ export default function AppsPage() {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="grid grid-cols-2 gap-3">
-                      <AppMetric label="Events" value={app.total_events} tone="text-primary/80" />
-                      <AppMetric label="Users" value={app.total_users} tone="text-foreground/80" />
-                      <AppMetric label="Local" value={app.local_memories} tone="text-success" />
+                      <AppMetric label={t("card.events")} value={app.total_events} tone="text-primary/80" />
+                      <AppMetric label={t("card.users")} value={app.total_users} tone="text-foreground/80" />
+                      <AppMetric label={t("card.local")} value={app.local_memories} tone="text-success" />
                       <AppMetric
-                        label="Shared"
+                        label={t("card.shared")}
                         value={app.shared_app_memories + app.shared_org_memories}
                         tone="text-warning"
                       />
@@ -245,20 +245,20 @@ export default function AppsPage() {
                       <div className="space-y-2">
                         <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
                           <Layers className="h-3.5 w-3.5" />
-                          Local Domains
+                          {t("card.localDomains")}
                         </div>
                         <div className="space-y-1 text-sm">
                           <div className="flex items-center justify-between">
                             <span className="flex items-center gap-2 text-muted-foreground">
                               <Activity className="h-3.5 w-3.5" />
-                              Agent
+                              {t("card.agent")}
                             </span>
                             <span className="font-mono">{formatNumber(app.agent_memories)}</span>
                           </div>
                           <div className="flex items-center justify-between">
                             <span className="flex items-center gap-2 text-muted-foreground">
                               <Users className="h-3.5 w-3.5" />
-                              User
+                              {t("card.user")}
                             </span>
                             <span className="font-mono">{formatNumber(app.user_memories)}</span>
                           </div>
@@ -268,20 +268,20 @@ export default function AppsPage() {
                       <div className="space-y-2">
                         <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
                           <Share2 className="h-3.5 w-3.5" />
-                          Shared Domains
+                          {t("card.sharedDomains")}
                         </div>
                         <div className="space-y-1 text-sm">
                           <div className="flex items-center justify-between">
                             <span className="flex items-center gap-2 text-muted-foreground">
                               <Package className="h-3.5 w-3.5" />
-                              App
+                              {t("card.app")}
                             </span>
                             <span className="font-mono">{formatNumber(app.shared_app_memories)}</span>
                           </div>
                           <div className="flex items-center justify-between">
                             <span className="flex items-center gap-2 text-muted-foreground">
                               <Database className="h-3.5 w-3.5" />
-                              Org
+                              {t("card.org")}
                             </span>
                             <span className="font-mono">{formatNumber(app.shared_org_memories)}</span>
                           </div>

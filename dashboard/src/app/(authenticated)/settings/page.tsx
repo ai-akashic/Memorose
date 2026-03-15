@@ -29,6 +29,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { motion } from "framer-motion";
+import { useTranslations } from "next-intl";
 
 const sectionIcon: Record<string, React.ElementType> = {
   Raft: Server,
@@ -38,6 +39,7 @@ const sectionIcon: Record<string, React.ElementType> = {
 };
 
 function ConfigSection({ title, data, delay }: { title: string; data: Record<string, unknown>; delay: number }) {
+  const t = useTranslations("Settings");
   const Icon = sectionIcon[title] ?? SettingsIcon;
   return (
     <motion.div
@@ -48,7 +50,7 @@ function ConfigSection({ title, data, delay }: { title: string; data: Record<str
       <div className="mb-8">
         <div className="flex items-center gap-2 mb-4">
           <Icon className="w-4 h-4 text-muted-foreground" />
-          <h2 className="text-[13px] font-semibold text-foreground tracking-tight">{title} Configuration</h2>
+          <h2 className="text-[13px] font-semibold text-foreground tracking-tight">{t("sections.configTitle", { title })}</h2>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {Object.entries(data).map(([key, value]) => (
@@ -68,6 +70,7 @@ function ConfigSection({ title, data, delay }: { title: string; data: Record<str
 }
 
 function PasswordForm({ onSuccess }: { onSuccess?: () => void }) {
+  const t = useTranslations("Settings");
   const [current, setCurrent] = useState("");
   const [newPw, setNewPw] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -78,22 +81,22 @@ function PasswordForm({ onSuccess }: { onSuccess?: () => void }) {
     e.preventDefault();
     setMessage(null);
     if (newPw !== confirm) {
-      setMessage({ type: "error", text: "Passwords do not match" });
+      setMessage({ type: "error", text: t("security.errorMismatch") });
       return;
     }
     if (newPw.length < 8) {
-      setMessage({ type: "error", text: "Password must be at least 8 characters" });
+      setMessage({ type: "error", text: t("security.errorTooShort") });
       return;
     }
     setLoading(true);
     try {
       await api.changePassword(current, newPw);
       setMustChangePassword(false);
-      setMessage({ type: "success", text: "Password updated successfully" });
+      setMessage({ type: "success", text: t("security.success") });
       setCurrent(""); setNewPw(""); setConfirm("");
       setTimeout(() => onSuccess?.(), 1500);
     } catch (err: unknown) {
-      setMessage({ type: "error", text: err instanceof Error ? err.message : "Failed" });
+      setMessage({ type: "error", text: err instanceof Error ? err.message : t("security.errorFailed") });
     } finally {
       setLoading(false);
     }
@@ -102,9 +105,9 @@ function PasswordForm({ onSuccess }: { onSuccess?: () => void }) {
   return (
     <form onSubmit={handleSubmit} className="space-y-4 py-2">
       {[
-        { id: "current-pw", label: "Current Password", value: current, onChange: setCurrent },
-        { id: "new-pw", label: "New Password", value: newPw, onChange: setNewPw },
-        { id: "confirm-pw", label: "Confirm New Password", value: confirm, onChange: setConfirm },
+        { id: "current-pw", label: t("security.currentPassword"), value: current, onChange: setCurrent },
+        { id: "new-pw", label: t("security.newPassword"), value: newPw, onChange: setNewPw },
+        { id: "confirm-pw", label: t("security.confirmPassword"), value: confirm, onChange: setConfirm },
       ].map(({ id, label, value, onChange }) => (
         <div key={id} className="space-y-1.5">
           <Label htmlFor={id} className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{label}</Label>
@@ -119,7 +122,7 @@ function PasswordForm({ onSuccess }: { onSuccess?: () => void }) {
         </div>
       ))}
       {message && (
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }}
           className={`text-xs font-medium rounded-md px-3 py-2 border flex items-center gap-2 ${
           message.type === "success"
@@ -133,7 +136,7 @@ function PasswordForm({ onSuccess }: { onSuccess?: () => void }) {
       <div className="pt-2">
         <Button type="submit" disabled={loading} className="w-full h-9">
           {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Shield className="w-4 h-4 mr-2" />}
-          Update Password
+          {t("security.submit")}
         </Button>
       </div>
     </form>
@@ -141,6 +144,7 @@ function PasswordForm({ onSuccess }: { onSuccess?: () => void }) {
 }
 
 export default function SettingsPage() {
+  const t = useTranslations("Settings");
   const mustChange = typeof window !== "undefined" && getMustChangePassword();
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -153,9 +157,9 @@ export default function SettingsPage() {
     <div className="space-y-8 relative max-w-4xl mx-auto pb-12">
       <div className="absolute top-0 right-0 w-[500px] h-[300px] blob-bg opacity-15 pointer-events-none -z-10" />
 
-      <motion.div 
-        initial={{ opacity: 0, y: 10 }} 
-        animate={{ opacity: 1, y: 0 }} 
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
         className="flex flex-col gap-2"
       >
@@ -164,10 +168,10 @@ export default function SettingsPage() {
             <SettingsIcon className="w-6 h-6 text-foreground/80" />
           </div>
           <div>
-            <h1 className="text-3xl font-extrabold tracking-tight bg-clip-text text-transparent">
-              Settings
+            <h1 className="text-2xl font-bold tracking-tight text-foreground">
+              {t("title")}
             </h1>
-            <p className="text-muted-foreground mt-1 text-sm font-medium">Manage system configuration and security credentials.</p>
+            <p className="text-muted-foreground mt-1 text-sm font-medium">{t("subtitle")}</p>
           </div>
         </div>
       </motion.div>
@@ -178,9 +182,9 @@ export default function SettingsPage() {
             <AlertTriangle className="w-5 h-5 text-warning" />
           </div>
           <div className="space-y-1">
-            <h4 className="font-semibold text-warning">Action Required</h4>
+            <h4 className="font-semibold text-warning">{t("mustChange.title")}</h4>
             <p className="text-sm text-warning/80">
-              You are currently using the default installation password. For security reasons, please change your password immediately.
+              {t("mustChange.description")}
             </p>
           </div>
         </motion.div>
@@ -189,9 +193,9 @@ export default function SettingsPage() {
       <div className="space-y-6">
         <div className="flex items-center gap-3 px-1">
           <div className="w-1 h-4 bg-primary/40 rounded-full" />
-          <h2 className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Configuration</h2>
+          <h2 className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("configuration")}</h2>
         </div>
-        
+
         <div className="space-y-5">
           {config ? (
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
@@ -211,25 +215,25 @@ export default function SettingsPage() {
       </div>
 
       {/* Low-profile Security Section at the bottom */}
-      <motion.div 
-        initial={{ opacity: 0 }} 
-        animate={{ opacity: 1 }} 
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
         transition={{ delay: 0.5 }}
         className="mt-12 pt-6 border-t border-border flex items-center justify-between"
       >
         <div>
           <h3 className="text-[11px] uppercase tracking-widest font-bold text-foreground/80 flex items-center gap-2">
             <Shield className="w-4 h-4 text-muted-foreground/60" />
-            Reset Password
+            {t("security.title")}
           </h3>
-          <p className="mt-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Authentication Management</p>
+          <p className="mt-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("security.subtitle")}</p>
         </div>
-        
+
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
             <Button variant="outline" size="sm" className="bg-transparent border-border hover:bg-card h-9 px-4 relative text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
               <Key className="w-3.5 h-3.5 mr-2 opacity-50" />
-              Change Credentials
+              {t("security.button")}
               {mustChange && <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5 rounded-full bg-warning animate-pulse" />}
             </Button>
           </DialogTrigger>
@@ -237,10 +241,10 @@ export default function SettingsPage() {
             <DialogHeader className="pb-4 border-b border-border">
               <DialogTitle className="flex items-center gap-2 text-xl">
                 <Key className="w-5 h-5 text-primary" />
-                Update Password
+                {t("security.dialogTitle")}
               </DialogTitle>
               <DialogDescription className="pt-2">
-                Enter your current password and choose a new secure password. Minimum 8 characters required.
+                {t("security.dialogDescription")}
               </DialogDescription>
             </DialogHeader>
             <PasswordForm onSuccess={() => setDialogOpen(false)} />

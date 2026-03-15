@@ -23,16 +23,7 @@ import {
 } from "lucide-react";
 import type { ReadyTask } from "@/lib/types";
 import { motion } from "framer-motion";
-
-function statusLabel(status: ReadyTask["status"]): string {
-  if (status === "Pending") return "Pending";
-  if (status === "InProgress") return "In Progress";
-  if (status === "Completed") return "Completed";
-  if (status === "Cancelled") return "Cancelled";
-  if (typeof status === "object" && "Blocked" in status) return `Blocked: ${status.Blocked}`;
-  if (typeof status === "object" && "Failed" in status) return `Failed: ${status.Failed}`;
-  return String(status);
-}
+import { useTranslations } from "next-intl";
 
 function statusBadgeClass(status: ReadyTask["status"]): string {
   if (status === "Completed") return "border-success/30 bg-success/5 text-success";
@@ -48,7 +39,16 @@ function statusBadgeClass(status: ReadyTask["status"]): string {
 }
 
 function StatusBadge({ status }: { status: ReadyTask["status"] }) {
-  const label = statusLabel(status);
+  const t = useTranslations("Tasks");
+  let label: string;
+  if (status === "Pending") label = t("status.Pending");
+  else if (status === "InProgress") label = t("status.InProgress");
+  else if (status === "Completed") label = t("status.Completed");
+  else if (status === "Cancelled") label = t("status.Cancelled");
+  else if (typeof status === "object" && "Blocked" in status) label = t("status.Blocked", { reason: status.Blocked });
+  else if (typeof status === "object" && "Failed" in status) label = t("status.Failed", { reason: status.Failed });
+  else label = String(status);
+
   return (
     <Badge
       variant="outline"
@@ -70,6 +70,7 @@ function ReadyTaskRow({
   onUpdated: () => void;
   index: number;
 }) {
+  const t = useTranslations("Tasks");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState("");
 
@@ -115,7 +116,7 @@ function ReadyTaskRow({
         <div className="flex items-start justify-between gap-3 lg:min-w-[180px] lg:flex-col lg:items-end">
           <StatusBadge status={task.status} />
           <div className="text-right text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-            ready task
+            {t("ready.label")}
           </div>
         </div>
       </div>
@@ -136,7 +137,7 @@ function ReadyTaskRow({
         <Input
           value={result}
           onChange={(e) => setResult(e.target.value)}
-          placeholder="Add result summary before closing this task"
+          placeholder={t("ready.resultPlaceholder")}
           className="h-10 bg-background/70 border-border/80 focus:border-primary/40 text-sm text-foreground"
         />
         <div className="flex flex-wrap gap-2 lg:justify-end">
@@ -148,7 +149,7 @@ function ReadyTaskRow({
             onClick={() => markStatus("Completed")}
           >
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-            Complete
+            {t("ready.complete")}
           </Button>
           <Button
             size="sm"
@@ -158,7 +159,7 @@ function ReadyTaskRow({
             onClick={() => markStatus("Cancelled")}
           >
             <XCircle className="h-3.5 w-3.5" />
-            Cancel
+            {t("ready.cancel")}
           </Button>
         </div>
       </div>
@@ -167,6 +168,7 @@ function ReadyTaskRow({
 }
 
 export default function TasksPage() {
+  const t = useTranslations("Tasks");
   const [userIdInput, setUserIdInput] = useStoredString("memorose-dashboard-tasks-user");
   const userId = userIdInput.trim();
   const scopedUserId = userId || undefined;
@@ -195,17 +197,17 @@ export default function TasksPage() {
             </div>
             <div>
               <p className="text-[11px] font-medium uppercase tracking-[0.24em] text-muted-foreground">
-                Goal Memory
+                {t("sectionLabel")}
               </p>
               <h1 className="text-3xl font-bold tracking-tight text-foreground">
-                Tasks
+                {t("title")}
               </h1>
             </div>
           </div>
           <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
             {userId
-              ? `Review the current task tree and resolve executable work for ${userId}.`
-              : "Set a user scope to inspect goal decomposition, dependency state, and ready work."}
+              ? t("description", { userId })
+              : t("descriptionEmpty")}
           </p>
         </div>
         <Button
@@ -215,7 +217,7 @@ export default function TasksPage() {
           onClick={() => { mutateTree(); mutateReady(); }}
         >
           <RefreshCw className="w-3.5 h-3.5" />
-          Refresh
+          {t("refresh")}
         </Button>
       </motion.div>
 
@@ -223,19 +225,19 @@ export default function TasksPage() {
         <CardContent className="flex flex-col gap-4 pt-6 sm:flex-row sm:items-end">
           <div className="flex-1 space-y-1.5">
             <p className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
-              Task User Scope
+              {t("scope.label")}
             </p>
             <Input
               value={userIdInput}
               onChange={(e) => setUserIdInput(e.target.value)}
-              placeholder="Enter user_id to load task trees and ready tasks"
+              placeholder={t("scope.placeholder")}
               className="h-11 font-mono bg-background/70 border-border/80"
             />
           </div>
           {userId && (
             <div className="rounded-2xl border border-border/70 bg-background/60 px-4 py-3 text-right">
               <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                Active Scope
+                {t("scope.active")}
               </p>
               <p className="mt-1 font-mono text-sm text-foreground/80">{userId}</p>
             </div>
@@ -254,9 +256,9 @@ export default function TasksPage() {
             <AlertCircle className="h-7 w-7 opacity-20" />
           </div>
           <div>
-            <p className="text-sm font-medium text-foreground/60">No user selected</p>
+            <p className="text-sm font-medium text-foreground/60">{t("empty.title")}</p>
             <p className="mt-1 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-              Set a task user scope above to load task views
+              {t("empty.description")}
             </p>
           </div>
         </motion.div>
@@ -265,11 +267,11 @@ export default function TasksPage() {
           <TabsList className="h-auto rounded-2xl border border-border/70 bg-background/70 p-1">
             <TabsTrigger value="tree" className="gap-1.5 rounded-xl px-4 py-2 text-xs font-medium uppercase tracking-[0.16em]">
               <GitBranch className="w-3.5 h-3.5" />
-              Task Tree
+              {t("tabs.tree")}
             </TabsTrigger>
             <TabsTrigger value="ready" className="gap-1.5 rounded-xl px-4 py-2 text-xs font-medium uppercase tracking-[0.16em]">
               <Zap className="w-3.5 h-3.5" />
-              Ready
+              {t("tabs.ready")}
               {ready && ready.length > 0 && (
                 <Badge className="ml-1 h-5 rounded-full bg-primary/80 px-1.5 text-[11px] text-primary-foreground">
                   {ready.length}
@@ -296,7 +298,7 @@ export default function TasksPage() {
                     <CheckCircle2 className="h-3 w-3 text-primary" />
                   </div>
                   <span className="font-bold uppercase tracking-[0.18em] text-muted-foreground/70">
-                    Ready to Execute
+                    {t("ready.sectionTitle")}
                   </span>
                 </CardTitle>
               </CardHeader>
@@ -310,9 +312,9 @@ export default function TasksPage() {
                     <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-border bg-background/70">
                       <CheckCircle2 className="h-6 w-6 opacity-20" />
                     </div>
-                    <p className="text-sm font-medium text-muted-foreground/60">No ready tasks</p>
+                    <p className="text-sm font-medium text-muted-foreground/60">{t("ready.empty")}</p>
                     <p className="mt-1 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                      Tasks with no pending dependencies will appear here
+                      {t("ready.emptyDescription")}
                     </p>
                   </div>
                 ) : (

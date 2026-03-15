@@ -13,6 +13,7 @@ import { Loader2, Send, Bot, Sparkles, Search, SlidersHorizontal } from "lucide-
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import type { RetrieveResponse } from "@/lib/types";
+import { useTranslations } from "next-intl";
 
 interface Message {
   id: string;
@@ -44,6 +45,7 @@ function TypingIndicator() {
 }
 
 function ChatPanel() {
+  const t = useTranslations("Playground");
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -191,22 +193,22 @@ function ChatPanel() {
         className="flex gap-6 p-4 glass-card rounded-2xl mb-4 self-end"
       >
         <div className="flex flex-col gap-1.5">
-          <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Session</label>
+          <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("chat.session")}</label>
           <Input
             type="text"
             value={userId}
             onChange={(e) => setUserId(e.target.value)}
-            placeholder="User ID"
+            placeholder={t("chat.userId")}
             className="w-40 h-9 text-[13px] font-mono bg-card border-border"
           />
         </div>
         <div className="flex flex-col gap-1.5">
-          <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Scope</label>
+          <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("chat.scope")}</label>
           <Input
             type="text"
             value={appId}
             onChange={(e) => setAppId(e.target.value)}
-            placeholder="App ID"
+            placeholder={t("chat.appId")}
             className="w-40 h-9 text-[13px] font-mono bg-card border-border"
           />
         </div>
@@ -214,12 +216,11 @@ function ChatPanel() {
 
       {scopedOrgId && (
         <div className="mb-4 self-end rounded-lg border border-border/70 bg-background/50 px-3 py-2 text-[11px] font-mono text-muted-foreground">
-          org scope: {scopedOrgId}
+          {t("chat.orgScope", { orgId: scopedOrgId })}
         </div>
       )}
 
       <Card className="flex-1 flex flex-col overflow-hidden glass-card rounded-3xl relative">
-        
 
         <div className="flex-1 overflow-y-auto p-8 z-10 scroll-smooth" ref={scrollRef}>
           <div className="space-y-8 max-w-3xl mx-auto">
@@ -234,13 +235,13 @@ function ChatPanel() {
                   <div className="w-20 h-20 rounded-[40px] bg-card border border-border flex items-center justify-center mb-8">
                     <Bot className="w-10 h-10 opacity-30" />
                   </div>
-                  <h3 className="text-xl font-bold tracking-tight text-foreground/80 mb-3 uppercase tracking-[0.2em]">Initialize Stream</h3>
+                  <h3 className="text-xl font-bold tracking-tight text-foreground/80 mb-3 uppercase tracking-[0.2em]">{t("chat.welcomeTitle")}</h3>
                   <p className="text-sm opacity-50 max-w-xs text-center leading-relaxed">
-                    Persistent encoding active. Data flowing to L0/L1/L2 memory hierarchy.
+                    {t("chat.welcomeDesc")}
                   </p>
                   {(!userId.trim() || !appId.trim()) && (
                     <p className="mt-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
-                      Set user_id and app_id to start a session
+                      {t("chat.setCredentials")}
                     </p>
                   )}
                 </motion.div>
@@ -274,7 +275,7 @@ function ChatPanel() {
                   >
                     <p className="whitespace-pre-wrap">{message.content}</p>
                     {message.role === "assistant" && message.content === "" && !streaming && (
-                      <span className="opacity-40 italic text-sm">Failed to retrieve neural signal.</span>
+                      <span className="opacity-40 italic text-sm">{t("chat.emptyResponse")}</span>
                     )}
                     {message.role === "assistant" && message.content === "" && streaming && (
                       <TypingIndicator />
@@ -296,7 +297,7 @@ function ChatPanel() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyPress={handleKeyPress}
-                placeholder="Send neural pulse..."
+                placeholder={t("chat.placeholder")}
                 disabled={loading}
                 className="flex-1 bg-transparent border-none focus:ring-0 text-[16px] h-14 px-5 placeholder:text-muted-foreground/20"
               />
@@ -324,6 +325,7 @@ function ChatPanel() {
 }
 
 function RetrievePanel() {
+  const t = useTranslations("Playground");
   const [userId, setUserId] = useStoredString("memorose-playground-retrieve-user");
   const [appId, setAppId] = useStoredString("memorose-playground-retrieve-app");
   const [streamId, setStreamId] = useStoredString("memorose-playground-retrieve-stream", "chat");
@@ -379,32 +381,32 @@ function RetrievePanel() {
         <div className="space-y-6">
           <div className="grid grid-cols-3 gap-6">
             <div className="space-y-2">
-              <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">User ID</label>
-              <Input 
-                value={userId} 
-                onChange={(e) => setUserId(e.target.value)} 
-                className="h-11 text-[13px] font-mono bg-card border-border" 
+              <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("retrieve.userId")}</label>
+              <Input
+                value={userId}
+                onChange={(e) => setUserId(e.target.value)}
+                className="h-11 text-[13px] font-mono bg-card border-border"
               />
             </div>
             <div className="space-y-2">
-              <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">App ID</label>
-              <Input 
+              <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("retrieve.appId")}</label>
+              <Input
                 list="app-suggestions"
-                value={appId} 
-                onChange={(e) => setAppId(e.target.value)} 
-                className="h-11 text-[13px] font-mono bg-card border-border" 
+                value={appId}
+                onChange={(e) => setAppId(e.target.value)}
+                className="h-11 text-[13px] font-mono bg-card border-border"
               />
               <datalist id="app-suggestions">
                 {apps.map(a => <option key={a} value={a} />)}
               </datalist>
             </div>
             <div className="space-y-2">
-              <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Stream ID</label>
-              <Input 
+              <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("retrieve.streamId")}</label>
+              <Input
                 list="stream-suggestions"
-                value={streamId} 
-                onChange={(e) => setStreamId(e.target.value)} 
-                className="h-11 text-[13px] font-mono bg-card border-border" 
+                value={streamId}
+                onChange={(e) => setStreamId(e.target.value)}
+                className="h-11 text-[13px] font-mono bg-card border-border"
               />
               <datalist id="stream-suggestions">
                 {streams.map(s => <option key={s} value={s} />)}
@@ -414,7 +416,7 @@ function RetrievePanel() {
 
           {scopedOrgId && (
             <div className="rounded-lg border border-border/70 bg-background/50 px-3 py-2 text-[11px] font-mono text-muted-foreground">
-              org scope: {scopedOrgId}
+              {t("retrieve.orgScope", { orgId: scopedOrgId })}
             </div>
           )}
 
@@ -422,7 +424,7 @@ function RetrievePanel() {
             <Input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Query memory matrix..."
+              placeholder={t("retrieve.queryPlaceholder")}
               className="flex-1 h-14 bg-card border-border text-base px-6 placeholder:text-muted-foreground/10"
               onKeyDown={(e) => e.key === "Enter" && handleRetrieve()}
             />
@@ -432,7 +434,7 @@ function RetrievePanel() {
               className="h-14 px-8 gap-3 rounded-2xl text-[11px] font-medium uppercase tracking-widest text-muted-foreground"
             >
               {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
-              Retrieve
+              {t("retrieve.button")}
             </Button>
           </div>
         </div>
@@ -443,16 +445,16 @@ function RetrievePanel() {
         <div className="space-y-4">
           <div className="flex items-center gap-2 mb-2">
             <SlidersHorizontal className="w-3.5 h-3.5 text-muted-foreground/40" />
-            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Parameters</span>
+            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("retrieve.parameters")}</span>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
             {[
-              { label: "Limit", value: limit, setter: setLimit, placeholder: "10" },
-              { label: "Score", value: minScore, setter: setMinScore, placeholder: "0.0" },
-              { label: "Depth", value: graphDepth, setter: setGraphDepth, placeholder: "1" },
-              { label: "From", value: validTimeStart, setter: setValidTimeStart, placeholder: "ISO" },
-              { label: "To", value: validTimeEnd, setter: setValidTimeEnd, placeholder: "ISO" },
-              { label: "As Of", value: asOf, setter: setAsOf, placeholder: "NOW" },
+              { label: t("retrieve.params.limit"), value: limit, setter: setLimit, placeholder: "10" },
+              { label: t("retrieve.params.score"), value: minScore, setter: setMinScore, placeholder: "0.0" },
+              { label: t("retrieve.params.depth"), value: graphDepth, setter: setGraphDepth, placeholder: "1" },
+              { label: t("retrieve.params.from"), value: validTimeStart, setter: setValidTimeStart, placeholder: "ISO" },
+              { label: t("retrieve.params.to"), value: validTimeEnd, setter: setValidTimeEnd, placeholder: "ISO" },
+              { label: t("retrieve.params.asOf"), value: asOf, setter: setAsOf, placeholder: "NOW" },
             ].map((p) => (
               <div key={p.label} className="space-y-2">
                 <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{p.label}</label>
@@ -474,12 +476,12 @@ function RetrievePanel() {
       {results && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <span className="text-sm font-medium">{results.results.length} results</span>
+            <span className="text-sm font-medium">{t("retrieve.results", { count: results.results.length })}</span>
             <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{results.query_time_ms.toFixed(1)}ms</span>
           </div>
           {results.results.length === 0 ? (
             <Card>
-              <div className="p-6 text-center text-muted-foreground text-sm">No matching memories found</div>
+              <div className="p-6 text-center text-muted-foreground text-sm">{t("retrieve.noResults")}</div>
             </Card>
           ) : (
             results.results.map((r, i) => (
@@ -511,6 +513,7 @@ function RetrievePanel() {
 }
 
 export default function PlaygroundPage() {
+  const t = useTranslations("Playground");
   return (
     <div className="flex flex-col h-[calc(100vh-6rem)] max-w-5xl mx-auto w-full relative">
       <div className="mb-4">
@@ -521,10 +524,10 @@ export default function PlaygroundPage() {
         >
           <div className="flex items-center gap-2 mb-1">
             <Sparkles className="w-5 h-5 text-primary" />
-            <h1 className="text-2xl font-semibold tracking-tight">Interactive Canvas</h1>
+            <h1 className="text-2xl font-bold tracking-tight">{t("title")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            Engage with your memory-augmented agent or retrieve memories directly
+            {t("subtitle")}
           </p>
         </motion.div>
       </div>
@@ -533,11 +536,11 @@ export default function PlaygroundPage() {
         <TabsList className="grid w-full max-w-xs grid-cols-2 mb-4">
           <TabsTrigger value="chat" className="gap-1.5">
             <Bot className="w-3.5 h-3.5" />
-            Chat
+            {t("tabs.chat")}
           </TabsTrigger>
           <TabsTrigger value="retrieve" className="gap-1.5">
             <Search className="w-3.5 h-3.5" />
-            Retrieve
+            {t("tabs.retrieve")}
           </TabsTrigger>
         </TabsList>
 

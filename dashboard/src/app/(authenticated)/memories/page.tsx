@@ -44,6 +44,7 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { useTranslations } from "next-intl";
 
 function LevelBadge({ level }: { level: number }) {
   const colors: Record<number, string> = {
@@ -79,33 +80,34 @@ function MemoryDetailSheet({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const t = useTranslations("Memories");
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="overflow-y-auto sm:max-w-md glass-card border-l">
         <SheetHeader className="pb-6">
-          <SheetTitle className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Memory Entry</SheetTitle>
+          <SheetTitle className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("detail.title")}</SheetTitle>
         </SheetHeader>
 
         {memory && (
           <div className="space-y-6 px-2">
             <div className="flex flex-col gap-1.5">
-              <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Identifier</span>
+              <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("detail.identifier")}</span>
               <p className="font-mono text-[11px] text-foreground/70 break-all">{memory.id}</p>
             </div>
-            
+
             <div className="grid grid-cols-2 gap-4">
               <div className="flex flex-col gap-1.5">
-                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">User</span>
+                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("detail.user")}</span>
                 <p className="font-mono text-[11px] text-foreground/70">{memory.user_id}</p>
               </div>
               <div className="flex flex-col gap-1.5">
-                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Application</span>
+                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("detail.application")}</span>
                 <p className="font-mono text-[11px] text-foreground/70">{memory.app_id}</p>
               </div>
             </div>
 
             <div className="flex flex-col gap-2">
-              <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Payload</span>
+              <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("detail.payload")}</span>
               <div className="bg-card border border-border rounded-xl p-4">
                 <p className="text-xs text-foreground/90 leading-relaxed whitespace-pre-wrap">{memory.content}</p>
               </div>
@@ -113,25 +115,25 @@ function MemoryDetailSheet({
 
             <div className="grid grid-cols-2 gap-6 py-2">
               <div className="flex flex-col gap-2">
-                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Hierarchy</span>
+                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("detail.hierarchy")}</span>
                 <LevelBadge level={memory.level} />
               </div>
               <div className="flex flex-col gap-2">
-                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Significance</span>
+                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("detail.significance")}</span>
                 <ImportanceBar value={memory.importance} />
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4 opacity-60">
               <div className="flex flex-col gap-1">
-                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Telemetry</span>
+                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("detail.telemetry")}</span>
                 <p className="text-[11px] font-mono text-muted-foreground">ACC: {memory.access_count} · STRM: {memory.stream_id}</p>
               </div>
             </div>
 
             {memory.keywords.length > 0 && (
               <div className="flex flex-col gap-2">
-                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Keywords</span>
+                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("detail.keywords")}</span>
                 <div className="flex flex-wrap gap-1.5">
                   {memory.keywords.map((kw) => (
                     <span key={kw} className="bg-card px-2 py-0.5 rounded-full border border-border text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{kw}</span>
@@ -156,6 +158,7 @@ const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), {
 });
 
 function KnowledgeGraph({ userId, orgId }: { userId?: string; orgId?: string }) {
+  const t = useTranslations("Memories");
   const { data, isLoading } = useGraph(200, userId, orgId);
 
   const graphData = useMemo(() => {
@@ -191,15 +194,15 @@ function KnowledgeGraph({ userId, orgId }: { userId?: string; orgId?: string }) 
     if (!link.source || !link.target) return;
     const start = link.source;
     const end = link.target;
-    
+
     ctx.beginPath();
     ctx.moveTo(start.x, start.y);
     ctx.lineTo(end.x, end.y);
-    
+
     const isLevel2 = start.level === 2 || end.level === 2;
     const color = isLevel2 ? 'rgba(34, 197, 94, 0.4)' : 'rgba(56, 125, 255, 0.4)';
     const glowColor = isLevel2 ? 'rgba(34, 197, 94, 0.8)' : 'rgba(56, 125, 255, 0.8)';
-    
+
     ctx.strokeStyle = color;
     ctx.lineWidth = ((link.weight ?? 0.5) * 2) / scale;
     ctx.shadowColor = glowColor;
@@ -214,13 +217,13 @@ function KnowledgeGraph({ userId, orgId }: { userId?: string; orgId?: string }) 
     const fontSize = 12 / globalScale;
     ctx.font = `${fontSize}px Sans-Serif`;
     const r = Math.sqrt(Math.max(0, nodeVal(node)));
-    
+
     // Add breathing glow effect using Date.now()
     const t = Date.now() / 1000;
     const pulse = Math.sin(t * 2 + node.id.charCodeAt(0)) * 0.5 + 0.5;
-    
+
     const color = nodeColor(node);
-    
+
     ctx.beginPath();
     ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
     ctx.fillStyle = color;
@@ -241,7 +244,7 @@ function KnowledgeGraph({ userId, orgId }: { userId?: string; orgId?: string }) 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-[500px] text-muted-foreground glass-card rounded-xl">
-        <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading neural graph...
+        <Loader2 className="w-5 h-5 animate-spin mr-2" /> {t("graph.loading")}
       </div>
     );
   }
@@ -249,7 +252,7 @@ function KnowledgeGraph({ userId, orgId }: { userId?: string; orgId?: string }) 
   if (!data || data.nodes.length === 0) {
     return (
       <div className="flex items-center justify-center h-[500px] text-muted-foreground glass-card rounded-xl">
-        <Network className="w-5 h-5 mr-2 opacity-50" /> No neural pathways established yet
+        <Network className="w-5 h-5 mr-2 opacity-50" /> {t("graph.empty")}
       </div>
     );
   }
@@ -257,8 +260,8 @@ function KnowledgeGraph({ userId, orgId }: { userId?: string; orgId?: string }) 
   return (
     <div className="flex flex-col h-full relative group">
       <div className="absolute top-4 left-4 z-10 flex gap-3 text-[11px] font-mono uppercase tracking-wider text-muted-foreground bg-background/40 px-3 py-1.5 rounded-full border border-border">
-        <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" /> {data.stats.node_count} nodes</span>
-        <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-primary/50" /> {data.stats.edge_count} edges</span>
+        <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" /> {data.stats.node_count} {t("graph.nodes")}</span>
+        <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-primary/50" /> {data.stats.edge_count} {t("graph.edges")}</span>
       </div>
       <div className="flex-1 min-h-[500px] rounded-xl glass-card overflow-hidden">
         <ForceGraph2D
@@ -282,6 +285,7 @@ function SearchPlayground({
   globalUserId?: string;
   orgId?: string;
 }) {
+  const t = useTranslations("Memories");
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState("hybrid");
   const [searchUserId, setSearchUserId] = useState(globalUserId || "");
@@ -299,7 +303,7 @@ function SearchPlayground({
     e.preventDefault();
     if (!query.trim()) return;
     if (!searchUserId.trim()) {
-      setSearchError("Search requires a user_id because shared retrieval depends on that user's share policy.");
+      setSearchError(t("search.noUserId"));
       setResults([]);
       setQueryTime(null);
       return;
@@ -338,7 +342,7 @@ function SearchPlayground({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               className="pl-9 bg-card border-border focus:border-primary/40"
-              placeholder="Search memories…"
+              placeholder={t("search.placeholder")}
             />
           </div>
           <Select value={mode} onValueChange={setMode}>
@@ -346,9 +350,9 @@ function SearchPlayground({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="hybrid">Hybrid</SelectItem>
-              <SelectItem value="text">Text</SelectItem>
-              <SelectItem value="vector">Vector</SelectItem>
+              <SelectItem value="hybrid">{t("search.hybrid")}</SelectItem>
+              <SelectItem value="text">{t("search.text")}</SelectItem>
+              <SelectItem value="vector">{t("search.vector")}</SelectItem>
             </SelectContent>
           </Select>
           <Button type="submit" disabled={loading} size="icon" className="shrink-0">
@@ -360,14 +364,14 @@ function SearchPlayground({
             type="text"
             value={searchUserId}
             onChange={(e) => setSearchUserId(e.target.value)}
-            placeholder="user_id (required)"
+            placeholder={t("search.userIdPlaceholder")}
             className="flex-1 h-8 font-mono bg-card border-border focus:border-primary/40 text-[11px] font-medium uppercase tracking-widest text-muted-foreground"
           />
           <Input
             type="text"
             value={appId}
             onChange={(e) => setAppId(e.target.value)}
-            placeholder="app_id (optional)"
+            placeholder={t("search.appIdPlaceholder")}
             className="flex-1 h-8 font-mono bg-card border-border focus:border-primary/40 text-[11px] font-medium uppercase tracking-widest text-muted-foreground"
           />
         </div>
@@ -390,9 +394,9 @@ function SearchPlayground({
             <div className="flex items-center gap-2 mb-1.5">
               <LevelBadge level={r.unit.level} />
               {r.unit.memory_type === "procedural" ? (
-                <Badge variant="outline" className="text-[11px] h-5 px-1.5 text-accent border-accent/30 bg-accent/5">Procedural</Badge>
+                <Badge variant="outline" className="text-[11px] h-5 px-1.5 text-accent border-accent/30 bg-accent/5">{t("types.procedural")}</Badge>
               ) : (
-                <Badge variant="outline" className="text-[11px] h-5 px-1.5 text-primary border-primary/30 bg-primary/5">Factual</Badge>
+                <Badge variant="outline" className="text-[11px] h-5 px-1.5 text-primary border-primary/30 bg-primary/5">{t("types.factual")}</Badge>
               )}
               <span className="ml-auto font-mono text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
                 {(r.score * 100).toFixed(1)}%
@@ -407,6 +411,7 @@ function SearchPlayground({
 }
 
 function MemoryContent({ content }: { content: string }) {
+  const t = useTranslations("Memories");
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -432,14 +437,14 @@ function MemoryContent({ content }: { content: string }) {
           onClick={handleToggle}
           className="text-[11px] text-primary hover:text-primary/80 hover:underline whitespace-nowrap bg-transparent border-none cursor-pointer p-0 font-normal"
         >
-          {expanded ? "collapse" : "view"}
+          {expanded ? t("actions.collapse") : t("actions.view")}
         </button>
         <span className="text-muted-foreground/30">·</span>
         <button
           onClick={handleCopy}
           className="text-[11px] text-primary hover:text-primary/80 hover:underline whitespace-nowrap bg-transparent border-none cursor-pointer p-0 font-normal"
         >
-          {copied ? "copied!" : "copy"}
+          {copied ? t("actions.copied") : t("actions.copy")}
         </button>
       </div>
     </div>
@@ -447,6 +452,7 @@ function MemoryContent({ content }: { content: string }) {
 }
 
 function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
+  const t = useTranslations("Memories");
   const [levelFilter, setLevelFilter] = useState<string>("all");
   const [agentId, setAgentId] = useState<string>("all");
   const [page, setPage] = useState(1);
@@ -488,7 +494,7 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
         >
           {["all", "0", "1", "2", "3"].map(v => (
             <ToggleGroupItem key={v} value={v} className="h-7 px-3 data-[state=on]:bg-white/10 data-[state=on]:text-white transition-all text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
-              {v === "all" ? "ALL" : `L${v}`}
+              {v === "all" ? t("filters.allLevels") : `L${v}`}
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
@@ -500,7 +506,7 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
             <SelectValue placeholder="AGENT" />
           </SelectTrigger>
           <SelectContent className="glass-card">
-            <SelectItem value="all" className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">ALL AGENTS</SelectItem>
+            <SelectItem value="all" className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("filters.allAgents")}</SelectItem>
             {agentsData?.agents.map((a) => (
               <SelectItem key={a.agent_id} value={a.agent_id} className="text-[11px] font-mono">{a.agent_id}</SelectItem>
             ))}
@@ -512,9 +518,9 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
             <SelectValue />
           </SelectTrigger>
           <SelectContent className="glass-card">
-            <SelectItem value="importance" className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">IMPORTANCE</SelectItem>
-            <SelectItem value="recent" className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">RECENT</SelectItem>
-            <SelectItem value="access_count" className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">ACCESS</SelectItem>
+            <SelectItem value="importance" className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("filters.importance")}</SelectItem>
+            <SelectItem value="recent" className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("filters.recent")}</SelectItem>
+            <SelectItem value="access_count" className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("filters.accessCount")}</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -524,13 +530,13 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
         <Table>
           <TableHeader>
             <TableRow className="border-border hover:bg-transparent bg-card">
-              <TableHead className="w-24 px-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">USR</TableHead>
-              <TableHead className="w-24 px-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">AGT</TableHead>
-              <TableHead className="text-center w-14 px-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">LVL</TableHead>
-              <TableHead className="w-28 px-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">IMP</TableHead>
-              <TableHead className="text-center w-16 px-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">ACC</TableHead>
-              <TableHead className="text-center w-14 px-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">REF</TableHead>
-              <TableHead className="px-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">PAYLOAD</TableHead>
+              <TableHead className="w-24 px-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("table.user")}</TableHead>
+              <TableHead className="w-24 px-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("table.agent")}</TableHead>
+              <TableHead className="text-center w-14 px-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("table.level")}</TableHead>
+              <TableHead className="w-28 px-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("table.score")}</TableHead>
+              <TableHead className="text-center w-16 px-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("table.access")}</TableHead>
+              <TableHead className="text-center w-14 px-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("table.refs")}</TableHead>
+              <TableHead className="px-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("table.content")}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -549,7 +555,7 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
                     <div className="w-12 h-12 rounded-2xl bg-card border border-border flex items-center justify-center">
                       <List className="w-6 h-6 opacity-20" />
                     </div>
-                    <p className="text-sm font-medium">No memories found</p>
+                    <p className="text-sm font-medium">{t("empty")}</p>
                   </div>
                 </TableCell>
               </TableRow>
@@ -587,9 +593,9 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
                       <div className="flex flex-col items-center gap-1">
                         <LevelBadge level={m.level} />
                         {m.memory_type === "procedural" ? (
-                          <span className="text-accent/80 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Procedural</span>
+                          <span className="text-accent/80 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("types.procedural")}</span>
                         ) : m.memory_type === "factual" ? (
-                          <span className="text-primary/80 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Factual</span>
+                          <span className="text-primary/80 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("types.factual")}</span>
                         ) : null}
                       </div>
                     </TableCell>
@@ -617,7 +623,7 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
         {memories && memories.total > 20 && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-card">
             <span className="font-medium text-[11px] uppercase tracking-widest text-muted-foreground">
-              Showing {(page - 1) * 20 + 1}-{Math.min(page * 20, memories.total)} of {memories.total}
+              {t("pagination.showing", { from: (page - 1) * 20 + 1, to: Math.min(page * 20, memories.total), total: memories.total })}
             </span>
             <div className="flex gap-1">
               <Button
@@ -652,17 +658,18 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
 }
 
 function TasksTab({ userId }: { userId?: string }) {
+  const t = useTranslations("Memories");
   const { data: trees, isLoading, error } = useTaskTree(userId);
-  
+
   if (!userId || userId === "all") {
     return (
       <div className="flex flex-col items-center justify-center p-8 text-center text-muted-foreground border rounded-lg bg-muted/5 border-dashed mt-4">
-        <p>Please set a specific user scope above to view task trees.</p>
+        <p>{t("taskScope")}</p>
       </div>
     );
   }
 
-  if (isLoading) return <div className="p-4 text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading tasks...</div>;
+  if (isLoading) return <div className="p-4 text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> {t("graph.loading")}</div>;
   if (error) return <div className="p-4 text-sm text-red-500 border border-red-200 bg-red-50/50 rounded-lg">Error loading tasks: {error.message}</div>;
 
   return (
@@ -673,6 +680,7 @@ function TasksTab({ userId }: { userId?: string }) {
 }
 
 export default function MemoriesPage() {
+  const t = useTranslations("Memories");
   const [userIdInput, setUserIdInput] = useStoredString("memorose-dashboard-memories-user");
   const { orgId } = useOrgScope();
   const userId = userIdInput.trim();
@@ -682,28 +690,18 @@ export default function MemoriesPage() {
     <div className="space-y-6 h-full flex flex-col relative">
       <div className="absolute top-0 right-0 w-[500px] h-[250px] blob-bg opacity-20 pointer-events-none -z-10 mix-blend-screen" />
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-1 h-6 bg-primary/40 rounded-full" />
-          <div>
-            <h1 className="text-sm font-bold tracking-[0.3em] uppercase text-muted-foreground/60">
-              Explorer
-            </h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Use a page-local user scope for list, graph, search, and task exploration.
-            </p>
-            {scopedOrgId && (
-              <p className="mt-1 text-xs font-mono text-muted-foreground">
-                org scope: {scopedOrgId}
-              </p>
-            )}
-          </div>
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">{t("title")}</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            {scopedOrgId ? t("subtitleOrg", { orgId: scopedOrgId }) : t("subtitle")}
+          </p>
         </div>
 
         <div className="flex w-full max-w-xl flex-col gap-2 sm:flex-row sm:items-center">
           <Input
             value={userIdInput}
             onChange={(e) => setUserIdInput(e.target.value)}
-            placeholder="Set explorer user_id"
+            placeholder={t("setUserId")}
             className="h-10 font-mono bg-card border-border"
           />
         </div>
@@ -712,16 +710,16 @@ export default function MemoriesPage() {
       <Tabs defaultValue="list" className="flex-1 flex flex-col min-h-0">
         <TabsList className="bg-card border border-border self-start p-1 rounded-xl">
           <TabsTrigger value="list" className="gap-2 px-4 data-[state=active]:bg-white/5 data-[state=active]:text-white transition-all text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
-            <List className="w-3 h-3 opacity-60" /> List
+            <List className="w-3 h-3 opacity-60" /> {t("tabs.list")}
           </TabsTrigger>
           <TabsTrigger value="graph" className="gap-2 px-4 data-[state=active]:bg-white/5 data-[state=active]:text-white transition-all text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
-            <Network className="w-3 h-3 opacity-60" /> Graph
+            <Network className="w-3 h-3 opacity-60" /> {t("tabs.graph")}
           </TabsTrigger>
           <TabsTrigger value="search" className="gap-2 px-4 data-[state=active]:bg-white/5 data-[state=active]:text-white transition-all text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
-            <Search className="w-3 h-3 opacity-60" /> Search
+            <Search className="w-3 h-3 opacity-60" /> {t("tabs.search")}
           </TabsTrigger>
           <TabsTrigger value="tasks" className="gap-2 px-4 data-[state=active]:bg-white/5 data-[state=active]:text-white transition-all text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
-            <CheckSquare className="w-3 h-3 opacity-60" /> Tasks
+            <CheckSquare className="w-3 h-3 opacity-60" /> {t("tabs.tasks")}
           </TabsTrigger>
         </TabsList>
 

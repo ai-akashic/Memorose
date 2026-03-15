@@ -44,13 +44,13 @@ export default function AuthenticatedLayout({
 
   const navItems = [
     { href: "/cluster/", label: t("cluster"), icon: LayoutDashboard },
-    { href: "/organizations/", label: "Organizations", icon: Building2 },
+    { href: "/organizations/", label: t("organizations"), icon: Building2 },
     { href: "/apps/", label: t("apps"), icon: Package },
     { href: "/memories/", label: t("memories"), icon: Database },
-    { href: "/playground/", label: "Playground", icon: MessageSquare },
+    { href: "/playground/", label: t("playground"), icon: MessageSquare },
     { href: "/agents/", label: t("agents"), icon: Bot },
     { href: "/tasks/", label: t("tasks"), icon: CheckSquare },
-    { href: "/metrics/", label: "Metrics", icon: BarChart3 },
+    { href: "/metrics/", label: t("metrics"), icon: BarChart3 },
     { href: "/settings/", label: t("settings"), icon: Settings },
   ];
 
@@ -86,7 +86,7 @@ export default function AuthenticatedLayout({
           <CommandPalette />
           <aside
             className={cn(
-              "flex flex-col shrink-0 border-r border-border bg-card transition-all duration-300 z-30 h-full overflow-hidden",
+              "flex flex-col shrink-0 border-r border-border/60 bg-card/40 backdrop-blur-sm transition-all duration-300 z-30 h-full overflow-hidden",
               collapsed ? "w-[72px]" : "w-[220px]"
             )}
           >
@@ -102,11 +102,14 @@ export default function AuthenticatedLayout({
                     className={cn(
                       "relative flex items-center gap-3 px-3 py-2 rounded-md text-[13.5px] transition-colors duration-200 group overflow-hidden",
                       isActive
-                        ? "text-primary-foreground font-medium bg-primary/10 border border-primary/20"
-                        : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                        ? "text-foreground font-medium bg-white/[0.06] border border-white/[0.08]"
+                        : "text-muted-foreground hover:text-foreground hover:bg-white/[0.04] border border-transparent"
                     )}
                   >
-                    <item.icon className={cn("w-4 h-4 shrink-0", isActive ? "text-primary" : "opacity-70 group-hover:opacity-100")} />
+                    {isActive && (
+                      <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 bg-primary rounded-r-full" />
+                    )}
+                    <item.icon className={cn("w-4 h-4 shrink-0", isActive ? "text-primary" : "opacity-50 group-hover:opacity-100")} />
                     {!collapsed && <span className="truncate">{item.label}</span>}
                   </Link>
                 );
@@ -164,7 +167,7 @@ export default function AuthenticatedLayout({
                 )}
               >
                 <LogOut className="w-4 h-4 shrink-0 group-hover:-translate-x-0.5 transition-transform" />
-                {!collapsed && <span className="text-[13px] font-medium">Logout</span>}
+                {!collapsed && <span className="text-[13px] font-medium">{t("logout")}</span>}
               </Button>
             </div>
           </aside>
