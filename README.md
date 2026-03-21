@@ -310,6 +310,23 @@ Two implementation details matter:
 - **L0 is not yet a memory unit**. It is the append-only event layer.
 - **L3 is not merely "a bigger memory"**. In the current implementation it behaves primarily as a task and planning system, then sediments outcomes back into `L0`.
 
+### What Is a MemoryUnit?
+
+`MemoryUnit` is the kernel's canonical memory record. It is the object the runtime stores, indexes, links, reflects on, projects into shared scopes, decays, and prunes.
+
+| Field family | What it represents | Examples |
+|--------------|--------------------|----------|
+| **Identity and scope** | Where the memory belongs | `org_id`, `user_id`, `agent_id`, `app_id`, `domain`, `namespace_key` |
+| **Content and type** | What the memory says | `content`, `memory_type` (`factual` / `procedural`), `keywords`, `assets` |
+| **Lifecycle and retrieval** | How the memory behaves over time | `level`, `importance`, `transaction_time`, `valid_time`, `last_accessed_at`, `access_count` |
+| **Structure and lineage** | How the memory connects to others | `references`, `projected_from`, `share_policy`, `task_metadata` |
+
+Three boundaries matter:
+
+- **`Event` is raw input; `MemoryUnit` is stabilized memory.** Events are append-only source material. Memory units are compressed, indexed, and retrieval-ready.
+- **`MemoryUnit` is the main retrieval object.** Hybrid search, graph linking, reflection, community synthesis, forgetting, and shared projection all operate on memory units.
+- **`L3Task` is not the same thing as a memory unit.** It coordinates goals, milestones, and execution state, even if task outcomes may later sediment back into memory.
+
 ---
 
 ## Multi-Dimensional Memory

@@ -308,6 +308,23 @@ flowchart TD
 - **L0 还不是 MemoryUnit**，它是 append-only 的事件层
 - **L3 不只是“更高一级的记忆”**，在当前实现中它更像任务与规划系统，执行结果再回流沉积到 `L0`
 
+### 什么是 MemoryUnit？
+
+`MemoryUnit` 是内核里的标准记忆记录。运行时真正会存储、索引、关联、反思、投影、衰减、遗忘的，都是这个对象。
+
+| Field family / 字段族 | What it represents / 它表达什么 | Examples / 例子 |
+|--------------|--------------------|----------|
+| **Identity and scope / 身份与作用域** | 这条记忆属于谁、处在哪个域里 | `org_id`, `user_id`, `agent_id`, `app_id`, `domain`, `namespace_key` |
+| **Content and type / 内容与类型** | 这条记忆说了什么 | `content`, `memory_type`（`factual` / `procedural`）, `keywords`, `assets` |
+| **Lifecycle and retrieval / 生命周期与检索属性** | 这条记忆会如何随时间演化和被访问 | `level`, `importance`, `transaction_time`, `valid_time`, `last_accessed_at`, `access_count` |
+| **Structure and lineage / 结构与来源链路** | 这条记忆如何与其他对象连接 | `references`, `projected_from`, `share_policy`, `task_metadata` |
+
+有三个边界需要明确：
+
+- **`Event` 是原始输入，`MemoryUnit` 是稳定记忆。** Event 是 append-only 的原材料；MemoryUnit 是已经压缩、可检索、可复用的记忆对象。
+- **`MemoryUnit` 是主检索对象。** Hybrid search、图关联、反思、community synthesis、遗忘、共享投影都围绕它展开。
+- **`L3Task` 不等于 MemoryUnit。** 它更偏向目标、里程碑和执行状态管理，虽然任务结果后续也可能再次沉积回记忆层。
+
 ---
 
 ## 多维记忆模型
