@@ -268,7 +268,7 @@ flowchart TD
         E3["Align / 对齐"]
         E4["Associate / 关联"]
         E5["Reflect / 反思"]
-        E6["Forget / 遗忘"]
+        E6["Forget / 遗忘<br/>decay + prune on L1-L3"]
     end
 
     subgraph Domains["Memory Domains / 记忆领域"]
@@ -287,10 +287,9 @@ flowchart TD
     L1 -. local native memory / 本地原生记忆 .-> D2
     L2 -. projected shared memory / 投影共享记忆 .-> D3
     L2 -. projected shared memory / 投影共享记忆 .-> D4
-    E6 -. runs across all tiers / 贯穿所有层级 .-> L0
-    E6 -. runs across all tiers / 贯穿所有层级 .-> L1
-    E6 -. runs across all tiers / 贯穿所有层级 .-> L2
-    E6 -. runs across all tiers / 贯穿所有层级 .-> L3
+    E6 -. affects memory units only / 作用于记忆单元层 .-> L1
+    E6 -. affects memory units only / 作用于记忆单元层 .-> L2
+    E6 -. affects memory units only / 作用于记忆单元层 .-> L3
 ```
 
 ### 分层记忆模型
