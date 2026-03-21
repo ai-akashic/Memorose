@@ -96,15 +96,15 @@
   <line x1="778" y1="356" x2="846" y2="329" stroke="#475569" stroke-width="3" marker-end="url(#arrow)"/>
   <line x1="778" y1="356" x2="846" y2="399" stroke="#475569" stroke-width="3" marker-end="url(#arrow)"/>
   <line x1="778" y1="498" x2="846" y2="469" stroke="#475569" stroke-width="3" marker-end="url(#arrow)"/>
-  <line x1="952" y1="566" x2="730" y2="386" stroke="#475569" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrow)"/>
-  <line x1="998" y1="566" x2="730" y2="528" stroke="#475569" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrow)"/>
-  <line x1="1044" y1="566" x2="730" y2="670" stroke="#475569" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrow)"/>
+  <line x1="860" y1="526" x2="790" y2="356" stroke="#475569" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrow)"/>
+  <line x1="860" y1="539" x2="790" y2="498" stroke="#475569" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrow)"/>
+  <line x1="860" y1="552" x2="790" y2="640" stroke="#475569" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrow)"/>
 
   <line x1="536" y1="408" x2="184" y2="770" stroke="#475569" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrow)"/>
   <line x1="600" y1="408" x2="454" y2="770" stroke="#475569" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrow)"/>
   <line x1="660" y1="550" x2="724" y2="770" stroke="#475569" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrow)"/>
   <line x1="718" y1="550" x2="994" y2="770" stroke="#475569" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrow)"/>
 
-  <text x="880" y="604" class="small">acts on memory units, not raw events</text>
+  <text x="876" y="604" class="small">acts on L1-L3 memory units, not raw events</text>
   <text x="64" y="900" class="small">Static fallback for environments where Mermaid rendering is unavailable.</text>
 </svg>
