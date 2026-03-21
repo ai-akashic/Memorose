@@ -22,11 +22,11 @@
 set -euo pipefail
 
 # Color output
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly NC='\033[0m' # No Color
+readonly RED=$'\033[0;31m'
+readonly GREEN=$'\033[0;32m'
+readonly YELLOW=$'\033[1;33m'
+readonly BLUE=$'\033[0;34m'
+readonly NC=$'\033[0m' # No Color
 
 # Script directories
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -38,19 +38,19 @@ CLEAN_BUILD=false
 
 # Logging functions
 log_info() {
-    echo "${BLUE}==>${NC} $*"
+    printf '%s\n' "${BLUE}==>${NC} $*"
 }
 
 log_success() {
-    echo "${GREEN}✓${NC} $*"
+    printf '%s\n' "${GREEN}✓${NC} $*"
 }
 
 log_warn() {
-    echo "${YELLOW}⚠${NC} $*"
+    printf '%s\n' "${YELLOW}⚠${NC} $*"
 }
 
 log_error() {
-    echo "${RED}✗${NC} $*" >&2
+    printf '%s\n' "${RED}✗${NC} $*" >&2
 }
 
 show_help() {

@@ -1,0 +1,137 @@
+<svg width="1440" height="900" viewBox="0 0 1440 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1440" y2="900" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F8FAFC"/>
+      <stop offset="0.55" stop-color="#F1F5F9"/>
+      <stop offset="1" stop-color="#E0E7FF"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="580" y2="580" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#F8FAFC"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="320" y2="120" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#DBEAFE"/>
+      <stop offset="1" stop-color="#E0E7FF"/>
+    </linearGradient>
+    <filter id="shadow" x="0" y="0" width="1440" height="900" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="28" flood-color="#0F172A" flood-opacity="0.08"/>
+    </filter>
+    <style>
+      .title { font: 700 42px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #0F172A; }
+      .subtitle { font: 500 20px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #334155; }
+      .section { font: 700 18px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #1E293B; letter-spacing: 0.4px; }
+      .chip { font: 700 14px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #1D4ED8; }
+      .label { font: 700 16px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #0F172A; }
+      .body { font: 500 14px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #475569; }
+      .small { font: 600 13px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #64748B; }
+    </style>
+  </defs>
+
+  <rect width="1440" height="900" rx="32" fill="url(#bg)"/>
+
+  <g opacity="0.55">
+    <circle cx="1180" cy="140" r="180" fill="#BFDBFE"/>
+    <circle cx="1260" cy="740" r="220" fill="#C7D2FE"/>
+    <circle cx="220" cy="720" r="170" fill="#DBEAFE"/>
+  </g>
+
+  <text x="84" y="92" class="title">Memorose</text>
+  <text x="84" y="128" class="subtitle">Product-facing memory runtime with a dashboard layer, hybrid retrieval, and a layered memory kernel.</text>
+
+  <g filter="url(#shadow)">
+    <rect x="72" y="172" width="760" height="620" rx="28" fill="url(#panel)" stroke="#CBD5E1" stroke-width="1.5"/>
+  </g>
+  <circle cx="108" cy="206" r="7" fill="#FCA5A5"/>
+  <circle cx="132" cy="206" r="7" fill="#FCD34D"/>
+  <circle cx="156" cy="206" r="7" fill="#86EFAC"/>
+  <rect x="190" y="190" width="250" height="32" rx="16" fill="#EFF6FF"/>
+  <text x="214" y="211" class="chip">Memorose Dashboard</text>
+
+  <rect x="96" y="252" width="164" height="508" rx="22" fill="#0F172A"/>
+  <text x="122" y="292" fill="#FFFFFF" class="label">Navigation</text>
+  <rect x="116" y="318" width="124" height="34" rx="12" fill="#1E3A8A"/>
+  <text x="136" y="340" fill="#DBEAFE" class="small">Memories</text>
+  <rect x="116" y="364" width="124" height="34" rx="12" fill="#1E293B"/>
+  <text x="136" y="386" fill="#CBD5E1" class="small">Graph</text>
+  <rect x="116" y="410" width="124" height="34" rx="12" fill="#1E293B"/>
+  <text x="136" y="432" fill="#CBD5E1" class="small">Agents</text>
+  <rect x="116" y="456" width="124" height="34" rx="12" fill="#1E293B"/>
+  <text x="136" y="478" fill="#CBD5E1" class="small">Cluster</text>
+  <rect x="116" y="502" width="124" height="34" rx="12" fill="#1E293B"/>
+  <text x="136" y="524" fill="#CBD5E1" class="small">Settings</text>
+
+  <rect x="286" y="252" width="518" height="94" rx="22" fill="url(#accent)" stroke="#BFDBFE"/>
+  <text x="316" y="286" class="section">Memory Overview</text>
+  <text x="316" y="314" class="body">Hybrid retrieval, layered memory, graph associations, and shared memory domains in one operational view.</text>
+  <rect x="316" y="326" width="92" height="8" rx="4" fill="#2563EB"/>
+  <rect x="418" y="326" width="74" height="8" rx="4" fill="#60A5FA"/>
+  <rect x="502" y="326" width="58" height="8" rx="4" fill="#93C5FD"/>
+
+  <rect x="286" y="368" width="246" height="170" rx="22" fill="#FFFFFF" stroke="#CBD5E1"/>
+  <text x="314" y="402" class="section">Memory Browser</text>
+  <rect x="314" y="420" width="190" height="30" rx="12" fill="#F1F5F9"/>
+  <text x="330" y="440" class="small">query: rust preferences</text>
+  <rect x="314" y="466" width="190" height="18" rx="9" fill="#DBEAFE"/>
+  <rect x="314" y="492" width="160" height="12" rx="6" fill="#CBD5E1"/>
+  <rect x="314" y="514" width="176" height="12" rx="6" fill="#CBD5E1"/>
+  <text x="314" y="528" class="body">Dense factual + procedural recall</text>
+
+  <rect x="558" y="368" width="246" height="170" rx="22" fill="#FFFFFF" stroke="#CBD5E1"/>
+  <text x="586" y="402" class="section">Graph View</text>
+  <circle cx="632" cy="470" r="18" fill="#2563EB"/>
+  <circle cx="694" cy="438" r="14" fill="#60A5FA"/>
+  <circle cx="734" cy="494" r="14" fill="#93C5FD"/>
+  <circle cx="598" cy="520" r="12" fill="#BFDBFE"/>
+  <line x1="632" y1="470" x2="694" y2="438" stroke="#64748B" stroke-width="3"/>
+  <line x1="632" y1="470" x2="734" y2="494" stroke="#64748B" stroke-width="3"/>
+  <line x1="632" y1="470" x2="598" y2="520" stroke="#64748B" stroke-width="3"/>
+  <text x="586" y="528" class="body">RelatedTo, DerivedFrom, IsSubTaskOf</text>
+
+  <rect x="286" y="560" width="518" height="176" rx="22" fill="#FFFFFF" stroke="#CBD5E1"/>
+  <text x="314" y="594" class="section">Operational Signals</text>
+  <rect x="314" y="616" width="144" height="84" rx="18" fill="#EFF6FF"/>
+  <text x="336" y="646" class="small">Search p99</text>
+  <text x="336" y="682" class="label">&lt; 10 ms</text>
+  <rect x="474" y="616" width="144" height="84" rx="18" fill="#EEF2FF"/>
+  <text x="496" y="646" class="small">Memory tiers</text>
+  <text x="496" y="682" class="label">L0 → L3</text>
+  <rect x="634" y="616" width="144" height="84" rx="18" fill="#ECFDF5"/>
+  <text x="656" y="646" class="small">Shared scopes</text>
+  <text x="656" y="682" class="label">Agent → Org</text>
+
+  <g filter="url(#shadow)">
+    <rect x="872" y="172" width="496" height="620" rx="28" fill="url(#panel)" stroke="#CBD5E1" stroke-width="1.5"/>
+  </g>
+  <text x="908" y="220" class="section">Architecture Snapshot</text>
+  <text x="908" y="248" class="body">A compact view of the runtime path from ingest to retrieval, reflection, and planning.</text>
+
+  <rect x="908" y="282" width="424" height="76" rx="20" fill="#FFFFFF" stroke="#CBD5E1"/>
+  <text x="936" y="314" class="label">HTTP API + Shard Manager</text>
+  <text x="936" y="340" class="body">Routes events and retrieval across shards and Raft-backed workers</text>
+
+  <rect x="908" y="386" width="424" height="116" rx="20" fill="#FFFFFF" stroke="#CBD5E1"/>
+  <text x="936" y="418" class="label">Core Runtime</text>
+  <text x="936" y="446" class="body">Background worker, memory engine, hybrid search, graph operations, reflection, forgetting</text>
+  <rect x="936" y="460" width="88" height="10" rx="5" fill="#2563EB"/>
+  <rect x="1036" y="460" width="72" height="10" rx="5" fill="#60A5FA"/>
+  <rect x="1120" y="460" width="96" height="10" rx="5" fill="#93C5FD"/>
+
+  <rect x="908" y="530" width="128" height="112" rx="20" fill="#FFFFFF" stroke="#CBD5E1"/>
+  <text x="934" y="564" class="label">RocksDB</text>
+  <text x="934" y="590" class="body">events</text>
+  <text x="934" y="612" class="body">units</text>
+
+  <rect x="1056" y="530" width="128" height="112" rx="20" fill="#FFFFFF" stroke="#CBD5E1"/>
+  <text x="1082" y="564" class="label">LanceDB</text>
+  <text x="1082" y="590" class="body">vectors</text>
+  <text x="1082" y="612" class="body">hybrid recall</text>
+
+  <rect x="1204" y="530" width="128" height="112" rx="20" fill="#FFFFFF" stroke="#CBD5E1"/>
+  <text x="1230" y="564" class="label">Tantivy</text>
+  <text x="1230" y="590" class="body">text index</text>
+  <text x="1230" y="612" class="body">bm25</text>
+
+  <rect x="908" y="670" width="424" height="92" rx="20" fill="#FFFFFF" stroke="#CBD5E1"/>
+  <text x="936" y="704" class="label">Memory Model</text>
+  <text x="936" y="732" class="body">L0 raw events → L1 stable memory → L2 insights → L3 goals, scoped across Agent, User, App, Organization</text>
+</svg>

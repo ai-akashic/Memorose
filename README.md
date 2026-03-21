@@ -4,8 +4,11 @@
     <img src=".github/assets/logo-512.png" alt="Memorose" width="160" />
   </a>
   <h1>Memorose</h1>
-  <p><b>The open-source memory layer for AI agents.</b></p>
-  <p>Give your agents persistent, structured memory that learns, connects, and forgets — just like humans do.</p>
+  <p><b>The open-source memory runtime for AI agents.</b></p>
+  <p>Persistent memory, procedural recall, shared knowledge, and forgetting in one Rust-native stack.</p>
+  <p>
+    <a href="./README-zh.md"><b>简体中文</b></a>
+  </p>
   <br />
   <p>
     <a href="https://memorose.io/docs"><b>Documentation</b></a> &nbsp;&bull;&nbsp;
@@ -25,32 +28,94 @@
 
 <!-- GIF demo placeholder — replace with actual recording -->
 <!-- <p align="center"><img src=".github/assets/demo.gif" alt="Memorose Demo" width="720" /></p> -->
+<p align="center">
+  <img src=".github/assets/hero-overview.svg" alt="Memorose dashboard and architecture overview" width="960" />
+</p>
+<p align="center"><sub>Memorose is not a vector wrapper. It is a memory runtime for agents: ingest, consolidate, retrieve, reflect, share, and forget in one system.</sub></p>
 
 ---
 
-## The Problem
+## Why Memorose
 
-AI agents are **goldfish**. Every session starts from zero. RAG retrieves text chunks, but it doesn't understand what matters, what changed, or what to forget. Your agents deserve a brain, not a filing cabinet.
+Most agent memory systems are still vector stores with nicer branding.
 
-**Memorose** is a cognitive memory engine that:
+Real agents need a memory runtime that can remember facts and procedures, evolve memory over time, and enforce boundaries across user, agent, app, and organization scopes.
 
-- **Compresses** verbose conversations into dense factual/procedural memories
-- **Connects** related memories into a traversable knowledge graph
-- **Reflects** on interaction patterns and generates higher-order insights
-- **Forgets** stale information through importance decay — just like humans
-- **Embeds** text, images, audio, and video natively in a unified vector space
+Memorose is built for that job: a self-hosted Rust system that ingests, consolidates, retrieves, reflects, shares, and forgets in one runtime.
 
-One binary. Sub-10ms retrieval. Zero Python dependencies.
+**Memorose** is a memory runtime built for that job:
+
+- **Layered memory** from raw events to stable memory, insights, and goals
+- **Factual + procedural memory** instead of plain text chunk storage
+- **Domain-aware memory** across agent, user, app, and organization scopes
+- **Hybrid retrieval** with vectors, text search, graph expansion, and reranking
+- **Continuous memory evolution** through denoising, compression, linking, reflection, and forgetting
+- **Multimodal input** across text, image, audio, and video
+- **Rust-native deployment** with embedded storage and no Python dependency chain
+
+One binary. Self-hosted. Sub-10ms retrieval target. Built for agents that need a real memory system.
+
+## Why Developers Star It
+
+- **Not a vector wrapper.** A real memory model with layers, domains, evolution, and forgetting.
+- **Built like infrastructure.** Rust, embedded storage, sharding, Raft, and a built-in dashboard.
+- **Different where it matters.** Hybrid search, graph memory, multimodal input, and shared scopes in one stack.
+- **Easy to reason about.** L0-L3 plus Agent/User/App/Organization is a model developers can explain and extend.
+
+## Highlights
+
+<table>
+  <tr>
+    <td valign="top" width="25%">
+      <strong>Layered Memory</strong><br />
+      Raw events become stable memory, insights, and goals through a clear L0-L3 pipeline.
+    </td>
+    <td valign="top" width="25%">
+      <strong>Scoped by Design</strong><br />
+      Memory is isolated across agent, user, app, and organization scopes before it is shared upward.
+    </td>
+    <td valign="top" width="25%">
+      <strong>Facts + Procedures</strong><br />
+      Store both what happened and how work gets done.
+    </td>
+    <td valign="top" width="25%">
+      <strong>Hybrid Retrieval</strong><br />
+      Vectors, full-text, graph expansion, and reranking work together in one stack.
+    </td>
+  </tr>
+  <tr>
+    <td valign="top" width="25%">
+      <strong>Memory Evolution</strong><br />
+      Denoise, compress, align, associate, reflect, and forget are built into the runtime.
+    </td>
+    <td valign="top" width="25%">
+      <strong>Multimodal Native</strong><br />
+      Text, image, audio, and video can enter the same memory system.
+    </td>
+    <td valign="top" width="25%">
+      <strong>Rust-Native Stack</strong><br />
+      Embedded storage, self-hosting simplicity, and a production-oriented architecture.
+    </td>
+    <td valign="top" width="25%">
+      <strong>Built for Agents</strong><br />
+      Designed for copilots, autonomous agents, support systems, and multi-tenant AI products.
+    </td>
+  </tr>
+</table>
 
 ---
 
 <details>
 <summary><b>Table of Contents</b></summary>
 
+- [Why Memorose](#why-memorose)
+- [Why Developers Star It](#why-developers-star-it)
 - [Quick Start](#quick-start)
+- [What You Can Build](#what-you-can-build)
 - [How It Works](#how-it-works)
 - [Multi-Dimensional Memory](#multi-dimensional-memory)
 - [Memory Domains](#memory-domains)
+- [Domain boundaries](#domain-boundaries)
 - [Six Cognitive Operations](#six-cognitive-operations)
 - [Native Multimodal Embedding](#native-multimodal-embedding)
 - [Feature Comparison](#feature-comparison)
@@ -59,6 +124,7 @@ One binary. Sub-10ms retrieval. Zero Python dependencies.
 - [Dashboard](#dashboard)
 - [Configuration](#configuration)
 - [API Reference](#api-reference)
+- [Roadmap](#roadmap)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -68,44 +134,48 @@ One binary. Sub-10ms retrieval. Zero Python dependencies.
 
 ## Quick Start
 
-### Option 1: Docker (recommended)
-
-```bash
-docker run -d -p 3000:3000 \
+<table>
+  <tr>
+    <td valign="top" width="33%">
+      <strong>Step 1. Run Memorose</strong><br />
+      Start with Docker, or build from source if you want the full local stack.
+      <pre lang="bash"><code>docker run -d -p 3000:3000 \
   -e GOOGLE_API_KEY=your_key \
   -e MEMOROSE__LLM__MODEL=gemini-2.0-flash \
   -e MEMOROSE__LLM__EMBEDDING_MODEL=gemini-embedding-2-preview \
-  akashic/memorose:latest
-```
-
-### Option 2: Build from source
-
-```bash
-git clone https://github.com/ai-akashic/Memorose.git
+  akashic/memorose:latest</code></pre>
+      <details>
+        <summary><b>Build from source</b></summary>
+        <pre lang="bash"><code>git clone https://github.com/ai-akashic/Memorose.git
 cd Memorose
 cargo build --release
-./target/release/memorose-server
-```
+./target/release/memorose-server</code></pre>
+      </details>
+    </td>
+    <td valign="top" width="33%">
+      <strong>Step 2. Ingest an event</strong><br />
+      Send one interaction, observation, or tool result into the memory runtime.
+      <pre lang="bash"><code>export STREAM=$(uuidgen)
 
-### Store a memory
-
-```bash
-export STREAM=$(uuidgen)
-
-# Your agent observes something
 curl -s -X POST http://localhost:3000/v1/users/dylan/apps/assistant/streams/$STREAM/events \
   -H "Content-Type: application/json" \
-  -d '{"content": "I prefer Rust over Python. I hate unnecessary meetings. My dog is named Rosie."}'
-```
-
-### Retrieve with context
-
-```bash
-# Later, in a new session — the agent remembers
-curl -s -X POST http://localhost:3000/v1/users/dylan/apps/assistant/streams/$STREAM/retrieve \
+  -d '{"content": "I prefer Rust over Python. I hate unnecessary meetings. My dog is named Rosie."}'</code></pre>
+    </td>
+    <td valign="top" width="33%">
+      <strong>Step 3. Retrieve with memory</strong><br />
+      Ask a new query and let the agent recall stable memory, not just the latest context window.
+      <pre lang="bash"><code>curl -s -X POST http://localhost:3000/v1/users/dylan/apps/assistant/streams/$STREAM/retrieve \
   -H "Content-Type: application/json" \
-  -d '{"query": "What should I keep in mind when working with Dylan?"}'
-```
+  -d '{"query": "What should I keep in mind when working with Dylan?"}'</code></pre>
+      <details>
+        <summary><b>Cross-modal query</b></summary>
+        <pre lang="bash"><code>curl -s -X POST http://localhost:3000/v1/users/dylan/apps/assistant/streams/$STREAM/retrieve \
+  -H "Content-Type: application/json" \
+  -d '{"query": "what is this?", "image": "'$(base64 -i photo.jpg)'"}'</code></pre>
+      </details>
+    </td>
+  </tr>
+</table>
 
 ```json
 {
@@ -115,14 +185,20 @@ curl -s -X POST http://localhost:3000/v1/users/dylan/apps/assistant/streams/$STR
 }
 ```
 
-### Cross-modal retrieval
+In a few calls, you already have:
 
-```bash
-# Find memories related to an image — no text conversion needed
-curl -s -X POST http://localhost:3000/v1/users/dylan/apps/assistant/streams/$STREAM/retrieve \
-  -H "Content-Type: application/json" \
-  -d '{"query": "what is this?", "image": "'$(base64 -i photo.jpg)'"}'
-```
+- persistent memory across sessions
+- compression from raw interaction into stable memory
+- hybrid retrieval over structured agent memory
+- a path to multimodal recall and shared memory
+
+## What You Can Build
+
+- **Coding copilots** that remember developer preferences, prior fixes, repo conventions, and tool strategies
+- **Support agents** that combine user history with app-level and org-level shared knowledge
+- **Autonomous agents** that retain procedural memory, decompose goals, and learn from completed milestones
+- **Multimodal assistants** that retrieve from screenshots, voice notes, and video context
+- **Multi-tenant AI products** that need strict user, app, and organization memory boundaries
 
 ---
 
@@ -169,6 +245,72 @@ Memorose processes memories through a 4-tier cognitive pipeline, modeled after h
     importance decay + threshold pruning + deduplication
 ```
 
+### Unified Memory Map
+
+If Mermaid does not render in your GitHub client, use this static diagram:
+
+![Unified Memory Map](.github/assets/unified-memory-map.svg)
+
+```mermaid
+flowchart TD
+    subgraph Input["Input / 输入"]
+        I["Events / 事件<br/>text · image · audio · video · json"]
+    end
+
+    subgraph Layers["L0-L3 Layered Memory / 分层记忆"]
+        L0["L0 Raw Events / 原始事件<br/>append-only event log"]
+        L1["L1 Stable Memory / 稳定记忆<br/>facts + procedures"]
+        L2["L2 Insights / 洞察层<br/>topics + clusters + reflections"]
+        L3["L3 Goals & Tasks / 目标与任务<br/>goals + milestones + dependencies"]
+    end
+
+    subgraph Evolution["Memory Evolution / 记忆演化"]
+        E1["Denoise / 降噪"]
+        E2["Compress / 压缩"]
+        E3["Align / 对齐"]
+        E4["Associate / 关联"]
+        E5["Reflect / 反思"]
+        E6["Forget / 遗忘"]
+    end
+
+    subgraph Domains["Memory Domains / 记忆领域"]
+        D1["Agent / Agent"]
+        D2["User / 用户"]
+        D3["App / 应用"]
+        D4["Organization / 组织"]
+    end
+
+    I --> L0
+    L0 --> E1 --> E2 --> L1
+    L1 --> E3 --> E4 --> L1
+    L1 --> E5 --> L2
+    L2 --> L3
+    L1 -. local native memory / 本地原生记忆 .-> D1
+    L1 -. local native memory / 本地原生记忆 .-> D2
+    L2 -. projected shared memory / 投影共享记忆 .-> D3
+    L2 -. projected shared memory / 投影共享记忆 .-> D4
+    E6 -. runs across all tiers / 贯穿所有层级 .-> L0
+    E6 -. runs across all tiers / 贯穿所有层级 .-> L1
+    E6 -. runs across all tiers / 贯穿所有层级 .-> L2
+    E6 -. runs across all tiers / 贯穿所有层级 .-> L3
+```
+
+### Layered Memory Model
+
+The tiers are not just marketing labels. In the current kernel, each tier maps to a distinct runtime object and job:
+
+| Tier | Runtime object | Meaning | Typical content | Produced by | Main role |
+|------|----------------|---------|-----------------|-------------|-----------|
+| **L0** | `Event` | Raw experience stream | Dialogue turns, tool results, image/audio/video/json inputs, task completion events | Direct ingest | Source material for consolidation |
+| **L1** | `MemoryUnit (level=1)` | Stable first-order memory | Compressed facts, preferences, procedural traces, grounded summaries | Consolidation worker | Primary retrieval layer |
+| **L2** | `MemoryUnit (level=2)` | Reflective or clustered memory | Session topics, community summaries, higher-order insights | Reflection and community synthesis | Long-horizon abstraction layer |
+| **L3** | `L3Task` and goal-like units | Future-oriented planning layer | Goals, milestones, dependencies, execution state | Goal decomposition and task system | Planning and execution coordination |
+
+Two implementation details matter:
+
+- **L0 is not yet a memory unit**. It is the append-only event layer.
+- **L3 is not merely "a bigger memory"**. In the current implementation it behaves primarily as a task and planning system, then sediments outcomes back into `L0`.
+
 ---
 
 ## Multi-Dimensional Memory
@@ -209,6 +351,15 @@ This keeps execution experience, personal context, product-level knowledge, and 
 | **App Memory** | _What is shared inside this product context?_ | Reusable workflows, shared vocabulary, app-specific conventions, common cases, patterns contributed from agents and users | Shared within one `app_id`, subject to user opt-in for contributed memory |
 | **Organization Memory** | _What knowledge should be reusable across apps?_ | Policies, organizational terminology, company-wide knowledge, cross-app best practices, higher-level insights | Shared within one `org_id`, subject to user opt-in for contributed memory |
 
+### Domain Model At A Glance
+
+| Domain | Scope key | Design purpose | Native or projected | Typical examples |
+|--------|-----------|----------------|---------------------|------------------|
+| **Agent** | `user_id + app_id + agent_id` | Preserve how a specific agent learns to act | Native | Tool traces, execution heuristics, recovery paths |
+| **User** | `user_id` | Preserve who the user is and what they prefer | Native | Preferences, identity facts, personal constraints |
+| **App** | `org_id + app_id` | Share reusable knowledge inside one product surface | Projected | Shared workflows, app conventions, common resolutions |
+| **Organization** | `org_id` | Share broader knowledge across apps and teams | Projected | Policies, terminology, cross-app best practices |
+
 ### Domain boundaries
 
 - **Agent memory** is primarily procedural. It should capture how an agent performs work, not who the user is.
@@ -235,6 +386,8 @@ In short:
 
 ## Six Cognitive Operations
 
+These six operations form the memory evolution pipeline:
+
 | | Operation | What it does | When it runs |
 |-|-----------|-------------|--------------|
 | 1 | **Align** | Map multimodal input (text, image, audio, video) to structured events | On ingest |
@@ -243,6 +396,36 @@ In short:
 | 4 | **Insight** | Community detection (Louvain/LPA) + LLM synthesis of abstract knowledge | Periodic L2 cycle |
 | 5 | **Reflect** | Per-session retrospective: what happened, what was learned | Post-session |
 | 6 | **Forget** | Importance decay + threshold pruning + semantic deduplication | Continuous background |
+
+### Concept Mapping
+
+If you prefer the conceptual language often used in memory-system design, the mapping is:
+
+| Concept | In Memorose | Kernel behavior |
+|---------|-------------|-----------------|
+| **Denoise** | Input validation, retry/failed handling, batching, semantic dedup | Removes empty, broken, or redundant raw input before memory formation |
+| **Compress** | LLM consolidation into `MemoryUnit` | Converts verbose events into dense factual or procedural memories |
+| **Align** | Domain inference, timestamps, task metadata, namespace assignment | Forces memories into a retrievable and shareable schema |
+| **Associate** | Auto-linking, semantic relation extraction, graph edges | Connects memory units into traversable structure |
+| **Reflect** | Session topic extraction, community summarization, feedback reinforcement | Produces higher-order structure from many lower-level memories |
+| **Forget** | Importance decay, pruning, store compaction | Keeps the system bounded and biases toward useful memory |
+
+### Tier x Domain Matrix
+
+The layered model and the domain model are independent by design:
+
+| | Agent | User | App | Organization |
+|---|---|---|---|---|
+| **L0** | Raw agent/tool events | Raw user events | Not a primary storage domain | Not a primary storage domain |
+| **L1** | Procedural memory | Factual/personal memory | Usually reached by projection | Usually reached by projection |
+| **L2** | Agent-level reflective summaries | User-level themes and long-term insights | Shared app insights | Shared org insights |
+| **L3** | Agent plans and milestones | User-facing goals | Rare as a direct domain | Rare as a direct domain |
+
+In practice:
+
+- **L0-L3 answers "how abstract is this memory?"**
+- **Agent/User/App/Organization answers "whose memory is this, and who may reuse it?"**
+- The system first forms local memories in **agent** or **user** space, then projects them upward into **app** or **organization** space when sharing policy allows it.
 
 ---
 
