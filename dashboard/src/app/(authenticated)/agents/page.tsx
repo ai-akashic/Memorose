@@ -16,9 +16,11 @@ import { formatNumber } from "@/lib/utils";
 import type { AgentSummary } from "@/lib/types";
 import { motion } from "framer-motion";
 import { useTranslations } from "next-intl";
+import { useEffect, useState } from "react";
 
-function formatRelativeTime(timestamp: number | null, now: number, t: ReturnType<typeof useTranslations>): string {
+function formatRelativeTime(timestamp: number | null, now: number | null, t: ReturnType<typeof useTranslations>): string {
   if (!timestamp) return t("time.never");
+  if (!now) return t("time.justNow");
   const diff = now - timestamp * 1000;
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return t("time.justNow");
@@ -66,10 +68,10 @@ function KpiCard({
   );
 }
 
-function AgentRow({ agent, index, now }: { agent: AgentSummary; index: number; now: number }) {
+function AgentRow({ agent, index, now }: { agent: AgentSummary; index: number; now: number | null }) {
   const t = useTranslations("Agents");
   const relTime = formatRelativeTime(agent.last_activity, now, t);
-  const isRecent = agent.last_activity && now - agent.last_activity * 1000 < 3600000;
+  const isRecent = Boolean(agent.last_activity && now && now - agent.last_activity * 1000 < 3600000);
 
   return (
     <motion.tr
@@ -111,7 +113,12 @@ function AgentRow({ agent, index, now }: { agent: AgentSummary; index: number; n
 export default function AgentsPage() {
   const t = useTranslations("Agents");
   const { data, isLoading, error } = useAgents();
-  const now = Date.now();
+  const [now, setNow] = useState<number>(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const totalMemories = data?.agents.reduce((sum, a) => sum + a.total_memories, 0) ?? 0;
   const totalEvents = data?.agents.reduce((sum, a) => sum + a.total_events, 0) ?? 0;

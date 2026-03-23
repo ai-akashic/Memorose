@@ -1,8 +1,8 @@
-import React from 'react';
-import { L3TaskTree, GoalTree, L3Task } from '@/lib/types';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { CheckCircle2, Circle, Loader2, AlertCircle, XCircle } from 'lucide-react';
+import { useTranslations } from "next-intl";
+import type { GoalTree, L3Task, L3TaskTree } from "@/lib/types";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { AlertCircle, CheckCircle2, Circle, Loader2, XCircle } from "lucide-react";
 
 function StatusIcon({ status }: { status: L3Task['status'] }) {
   if (status === 'Completed') return <CheckCircle2 className="w-4 h-4 text-green-500" />;
@@ -16,18 +16,21 @@ function StatusIcon({ status }: { status: L3Task['status'] }) {
 }
 
 function StatusBadge({ status }: { status: L3Task['status'] }) {
-  if (status === 'Completed') return <Badge variant="outline" className="text-green-500 border-green-500/30">Completed</Badge>;
-  if (status === 'InProgress') return <Badge variant="outline" className="text-blue-500 border-blue-500/30">In Progress</Badge>;
+  const t = useTranslations("Memories.tasks");
+
+  if (status === 'Completed') return <Badge variant="outline" className="text-green-500 border-green-500/30">{t("status.Completed")}</Badge>;
+  if (status === 'InProgress') return <Badge variant="outline" className="text-blue-500 border-blue-500/30">{t("status.InProgress")}</Badge>;
   if (typeof status === 'object' && status !== null) {
-    if ('Blocked' in status) return <Badge variant="outline" className="text-orange-500 border-orange-500/30">Blocked: {status.Blocked}</Badge>;
-    if ('Failed' in status) return <Badge variant="outline" className="text-red-500 border-red-500/30">Failed: {status.Failed}</Badge>;
+    if ('Blocked' in status) return <Badge variant="outline" className="text-orange-500 border-orange-500/30">{t("status.Blocked", { reason: status.Blocked })}</Badge>;
+    if ('Failed' in status) return <Badge variant="outline" className="text-red-500 border-red-500/30">{t("status.Failed", { reason: status.Failed })}</Badge>;
   }
-  if (status === 'Cancelled') return <Badge variant="outline" className="text-gray-500 border-gray-500/30">Cancelled</Badge>;
-  return <Badge variant="outline" className="text-gray-400 border-gray-400/30">Pending</Badge>;
+  if (status === 'Cancelled') return <Badge variant="outline" className="text-gray-500 border-gray-500/30">{t("status.Cancelled")}</Badge>;
+  return <Badge variant="outline" className="text-gray-400 border-gray-400/30">{t("status.Pending")}</Badge>;
 }
 
 function TaskNode({ node }: { node: L3TaskTree }) {
   const { task, children } = node;
+  const t = useTranslations("Memories.tasks.tree");
   return (
     <div className="pl-6 border-l border-muted-foreground/20 ml-3 relative mt-4">
       <div className="absolute w-6 h-[1px] bg-muted-foreground/20 left-0 top-3"></div>
@@ -47,7 +50,7 @@ function TaskNode({ node }: { node: L3TaskTree }) {
         {task.result_summary && (
           <div className="pl-6 mt-1">
             <div className="bg-background/50 rounded p-2 border border-muted text-xs text-muted-foreground">
-              <span className="font-medium text-foreground mr-1">Result:</span>
+              <span className="font-medium text-foreground mr-1">{t("resultLabel")}</span>
               {task.result_summary}
             </div>
           </div>
@@ -77,11 +80,13 @@ function TaskNode({ node }: { node: L3TaskTree }) {
 }
 
 export function TaskTreeViewer({ trees }: { trees: GoalTree[] }) {
+  const t = useTranslations("Memories.tasks.tree");
+
   if (!trees || trees.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center p-8 text-center border rounded-lg bg-muted/5 border-dashed">
-        <p className="text-sm text-muted-foreground">No L3 Task Trees found for this context.</p>
-        <p className="text-xs text-muted-foreground mt-1">Goals decomposed into L3Tasks will appear here.</p>
+        <p className="text-sm text-muted-foreground">{t("empty")}</p>
+        <p className="text-xs text-muted-foreground mt-1">{t("emptyDescription")}</p>
       </div>
     );
   }
@@ -93,7 +98,7 @@ export function TaskTreeViewer({ trees }: { trees: GoalTree[] }) {
           <CardHeader className="bg-muted/30 pb-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Badge className="bg-purple-500 hover:bg-purple-600">Goal (L3)</Badge>
+                <Badge className="bg-purple-500 hover:bg-purple-600">{t("goalBadge")}</Badge>
                 <CardTitle className="text-lg">{tree.goal.content}</CardTitle>
               </div>
             </div>
@@ -112,7 +117,7 @@ export function TaskTreeViewer({ trees }: { trees: GoalTree[] }) {
               </div>
             ) : (
               <div className="py-4 pl-4 text-sm text-muted-foreground italic">
-                This goal has not been decomposed into tasks yet.
+                {t("goalEmpty")}
               </div>
             )}
           </CardContent>

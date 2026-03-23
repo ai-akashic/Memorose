@@ -248,7 +248,7 @@ mod tests {
 
     #[test]
     fn test_embed_input_text_conversion() {
-        use crate::llm::{EmbedInput, EmbedPart};
+        use crate::llm::EmbedInput;
         let input = EmbedInput::Text("hello".to_string());
         assert!(!input.has_multimodal_parts());
         assert_eq!(input.as_text(), "hello");

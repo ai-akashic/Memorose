@@ -14,7 +14,6 @@ async fn main() -> Result<()> {
     let engine = MemoroseEngine::new_with_default_threshold(&data_dir, 1000, true, true).await?;
     let stream_id = Uuid::new_v4();
     let user_id = "example_user".to_string();
-    let app_id = "example_app".to_string();
 
     println!("🧪 --- Memorose Graph Structure Storage Concept ---");
     println!("Goal: Build and query a knowledge graph of memories");
@@ -40,7 +39,6 @@ async fn main() -> Result<()> {
             None,
             user_id.clone(),
             None,
-            app_id.clone(),
             stream_id,
             memorose_common::MemoryType::Factual,
             content.to_string(),

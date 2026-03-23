@@ -33,7 +33,6 @@ impl TextIndex {
         schema_builder.add_text_field("id", STRING | STORED);
         schema_builder.add_text_field("org_id", STRING | STORED);
         schema_builder.add_text_field("user_id", STRING | STORED);
-        schema_builder.add_text_field("app_id", STRING | STORED);
         schema_builder.add_text_field("agent_id", STRING | STORED);
         schema_builder.add_text_field("domain", STRING | STORED);
         schema_builder.add_text_field("namespace_key", STRING | STORED);
@@ -126,7 +125,6 @@ impl TextIndex {
         let id_field = schema.get_field("id").unwrap();
         let org_id_field = schema.get_field("org_id").unwrap();
         let user_id_field = schema.get_field("user_id").unwrap();
-        let app_id_field = schema.get_field("app_id").unwrap();
         let agent_id_field = schema.get_field("agent_id").unwrap();
         let domain_field = schema.get_field("domain").unwrap();
         let namespace_key_field = schema.get_field("namespace_key").unwrap();
@@ -140,7 +138,6 @@ impl TextIndex {
         doc.add_text(id_field, &unit.id.to_string());
         doc.add_text(org_id_field, unit.org_id.as_deref().unwrap_or(""));
         doc.add_text(user_id_field, &unit.user_id);
-        doc.add_text(app_id_field, &unit.app_id);
         doc.add_text(agent_id_field, unit.agent_id.as_deref().unwrap_or(""));
         doc.add_text(domain_field, unit.domain.as_str());
         doc.add_text(namespace_key_field, &unit.namespace_key);
@@ -195,10 +192,9 @@ impl TextIndex {
         time_range: Option<memorose_common::TimeRange>,
         org_id: Option<&str>,
         user_id: Option<&str>,
-        app_id: Option<&str>,
     ) -> Result<Vec<String>> {
         self.search_bitemporal(
-            query_str, limit, time_range, None, org_id, user_id, app_id, None, None,
+            query_str, limit, time_range, None, org_id, user_id, None, None,
         )
     }
 
@@ -210,7 +206,6 @@ impl TextIndex {
         transaction_time: Option<memorose_common::TimeRange>,
         org_id: Option<&str>,
         user_id: Option<&str>,
-        app_id: Option<&str>,
         agent_id: Option<&str>,
         domain: Option<&str>,
     ) -> Result<Vec<String>> {
@@ -248,14 +243,6 @@ impl TextIndex {
         if let Some(uid) = user_id {
             let user_id_field = schema.get_field("user_id").unwrap();
             let term = tantivy::Term::from_field_text(user_id_field, uid);
-            let term_query =
-                tantivy::query::TermQuery::new(term, tantivy::schema::IndexRecordOption::Basic);
-            sub_queries.push((tantivy::query::Occur::Must, Box::new(term_query)));
-        }
-
-        if let Some(aid) = app_id {
-            let app_id_field = schema.get_field("app_id").unwrap();
-            let term = tantivy::Term::from_field_text(app_id_field, aid);
             let term_query =
                 tantivy::query::TermQuery::new(term, tantivy::schema::IndexRecordOption::Basic);
             sub_queries.push((tantivy::query::Occur::Must, Box::new(term_query)));
@@ -342,7 +329,6 @@ mod tests {
                 None,
                 "u1".into(),
                 None,
-                "a1".into(),
                 stream_id,
                 memorose_common::MemoryType::Factual,
                 "The quick brown fox jumps".to_string(),
@@ -354,7 +340,7 @@ mod tests {
             index.commit()?;
             index.reload()?;
 
-            let results = index.search("fox", 10, None, None, None, None)?;
+            let results = index.search("fox", 10, None, None, None)?;
 
             assert!(!results.is_empty());
             assert_eq!(results[0], unit.id.to_string());

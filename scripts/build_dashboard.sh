@@ -32,6 +32,7 @@ readonly NC=$'\033[0m' # No Color
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 readonly DASHBOARD_DIR="${ROOT_DIR}/dashboard"
+readonly DASHBOARD_STANDALONE_DIR="${DASHBOARD_DIR}/.next/standalone"
 # Options
 SKIP_INSTALL=false
 CLEAN_BUILD=false
@@ -100,11 +101,11 @@ build_dashboard() {
     # Install dependencies
     if [[ "${SKIP_INSTALL}" != "true" ]]; then
         log_info "Installing dependencies..."
-        if pnpm install --frozen-lockfile 2>/dev/null; then
+        if CI=1 pnpm install --frozen-lockfile 2>/dev/null; then
             log_success "Dependencies installed (frozen-lockfile)"
         else
             log_warn "Frozen lockfile failed, installing with regular install..."
-            pnpm install
+            CI=1 pnpm install
         fi
     else
         log_info "Skipping dependency installation"
@@ -124,6 +125,23 @@ build_dashboard() {
         log_error "Build output '.next/BUILD_ID' not found"
         exit 1
     fi
+
+    if [[ ! -f "${DASHBOARD_STANDALONE_DIR}/server.js" ]]; then
+        log_error "Standalone server entry not found: ${DASHBOARD_STANDALONE_DIR}/server.js"
+        exit 1
+    fi
+
+    log_info "Syncing static assets into standalone bundle..."
+    mkdir -p "${DASHBOARD_STANDALONE_DIR}/.next"
+    rm -rf "${DASHBOARD_STANDALONE_DIR}/.next/static"
+    cp -R ".next/static" "${DASHBOARD_STANDALONE_DIR}/.next/static"
+
+    if [[ -d "public" ]]; then
+        rm -rf "${DASHBOARD_STANDALONE_DIR}/public"
+        cp -R "public" "${DASHBOARD_STANDALONE_DIR}/public"
+    fi
+
+    log_success "Standalone assets synced"
 }
 
 main() {
@@ -159,7 +177,7 @@ main() {
     log_success "Dashboard build complete!"
     echo ""
     echo "  Build output: ${DASHBOARD_DIR}/.next"
-    echo "  Start app:     cd ${DASHBOARD_DIR} && pnpm start --port 3100"
+    echo "  Start app:     cd ${DASHBOARD_DIR} && PORT=3100 HOSTNAME=127.0.0.1 node .next/standalone/server.js"
     echo "  Dashboard URL: http://localhost:3100/dashboard"
     echo ""
 }

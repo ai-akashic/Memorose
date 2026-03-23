@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useTranslations } from "next-intl";
 import { Building2, Check, ChevronsUpDown, Loader2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -10,6 +11,7 @@ import { useOrganizations } from "@/lib/hooks";
 import { DEFAULT_ORG_ID, useOrgScope } from "@/lib/org-scope";
 
 export function OrgSwitcher({ collapsed }: { collapsed?: boolean }) {
+  const t = useTranslations("Organizations");
   const { orgId, setOrgId } = useOrgScope();
   const { data, mutate } = useOrganizations();
   const [open, setOpen] = useState(false);
@@ -22,8 +24,8 @@ export function OrgSwitcher({ collapsed }: { collapsed?: boolean }) {
     const items = data?.organizations ?? [];
     return items.length > 0
       ? items
-      : [{ org_id: DEFAULT_ORG_ID, name: "Default", created_at: new Date(0).toISOString() }];
-  }, [data]);
+      : [{ org_id: DEFAULT_ORG_ID, name: t("defaultName"), created_at: new Date(0).toISOString() }];
+  }, [data, t]);
 
   const activeOrg =
     organizations.find((organization) => organization.org_id === orgId) ??
@@ -33,7 +35,7 @@ export function OrgSwitcher({ collapsed }: { collapsed?: boolean }) {
   async function handleCreate() {
     const normalizedOrgId = createId.trim();
     if (!normalizedOrgId) {
-      setError("org_id is required");
+      setError(t("switcher.errorOrgIdRequired"));
       return;
     }
 
@@ -51,7 +53,7 @@ export function OrgSwitcher({ collapsed }: { collapsed?: boolean }) {
       setCreateName("");
       setOpen(false);
     } catch (createError) {
-      setError(createError instanceof Error ? createError.message : "Failed to create organization");
+      setError(createError instanceof Error ? createError.message : t("switcher.errorCreateFailed"));
     } finally {
       setCreating(false);
     }
@@ -61,7 +63,7 @@ export function OrgSwitcher({ collapsed }: { collapsed?: boolean }) {
     <button
       type="button"
       className="flex h-8 w-8 items-center justify-center rounded-md border border-primary/20 bg-primary/10 text-xs font-bold text-primary"
-      aria-label="Switch organization"
+      aria-label={t("switcher.ariaLabel")}
     >
       {activeOrg.org_id.charAt(0).toUpperCase()}
     </button>
@@ -90,14 +92,14 @@ export function OrgSwitcher({ collapsed }: { collapsed?: boolean }) {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base">
               <Building2 className="h-4 w-4 text-primary" />
-              Organizations
+              {t("panel.title")}
             </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-5">
             <div className="space-y-2">
               <p className="text-sm text-muted-foreground">
-                The active organization controls which apps and organization memory you are viewing.
+                {t("switcher.description")}
               </p>
               <div className="grid gap-2">
                 {organizations.map((organization) => {
@@ -132,19 +134,19 @@ export function OrgSwitcher({ collapsed }: { collapsed?: boolean }) {
             <div className="space-y-3 rounded-2xl border border-border/70 bg-background/50 p-4">
               <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
                 <Plus className="h-3.5 w-3.5" />
-                Create Organization
+                {t("switcher.createTitle")}
               </div>
               <div className="grid gap-3 md:grid-cols-2">
                 <Input
                   value={createId}
                   onChange={(event) => setCreateId(event.target.value)}
-                  placeholder="org_id"
+                  placeholder={t("createOrg.orgIdPlaceholder")}
                   className="font-mono"
                 />
                 <Input
                   value={createName}
                   onChange={(event) => setCreateName(event.target.value)}
-                  placeholder="Display name"
+                  placeholder={t("createOrg.displayName")}
                 />
               </div>
               {error ? (
@@ -154,7 +156,7 @@ export function OrgSwitcher({ collapsed }: { collapsed?: boolean }) {
               ) : null}
               <Button type="button" onClick={handleCreate} disabled={creating} className="w-full">
                 {creating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
-                Create And Switch
+                {t("switcher.createAndSwitch")}
               </Button>
             </div>
           </div>

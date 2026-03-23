@@ -39,7 +39,7 @@
 
 Most agent memory systems are still vector stores with nicer branding.
 
-Real agents need a memory runtime that can remember facts and procedures, evolve memory over time, and enforce boundaries across user, agent, app, and organization scopes.
+Real agents need a memory runtime that can remember facts and procedures, evolve memory over time, and enforce boundaries across agent, user, and organization scopes.
 
 Memorose is built for that job: a self-hosted Rust system that ingests, consolidates, retrieves, reflects, shares, and forgets in one runtime.
 
@@ -47,7 +47,7 @@ Memorose is built for that job: a self-hosted Rust system that ingests, consolid
 
 - **Layered memory** from raw events to stable memory, insights, and goals
 - **Factual + procedural memory** instead of plain text chunk storage
-- **Domain-aware memory** across agent, user, app, and organization scopes
+- **Domain-aware memory** across agent, user, and organization scopes
 - **Hybrid retrieval** with vectors, text search, graph expansion, and reranking
 - **Continuous memory evolution** through denoising, compression, linking, reflection, and forgetting
 - **Multimodal input** across text, image, audio, and video
@@ -60,7 +60,7 @@ One binary. Self-hosted. Sub-10ms retrieval target. Built for agents that need a
 - **Not a vector wrapper.** A real memory model with layers, domains, evolution, and forgetting.
 - **Built like infrastructure.** Rust, embedded storage, sharding, Raft, and a built-in dashboard.
 - **Different where it matters.** Hybrid search, graph memory, multimodal input, and shared scopes in one stack.
-- **Easy to reason about.** L0-L3 plus Agent/User/App/Organization is a model developers can explain and extend.
+- **Easy to reason about.** L0-L3 plus Agent/User/Organization is a model developers can explain and extend.
 
 ## Highlights
 
@@ -72,7 +72,7 @@ One binary. Self-hosted. Sub-10ms retrieval target. Built for agents that need a
     </td>
     <td valign="top" width="25%">
       <strong>Scoped by Design</strong><br />
-      Memory is isolated across agent, user, app, and organization scopes before it is shared upward.
+      Memory is isolated across agent, user, and organization scopes before it is shared upward.
     </td>
     <td valign="top" width="25%">
       <strong>Facts + Procedures</strong><br />
@@ -157,19 +157,19 @@ cargo build --release
       Send one interaction, observation, or tool result into the memory runtime.
       <pre lang="bash"><code>export STREAM=$(uuidgen)
 
-curl -s -X POST http://localhost:3000/v1/users/dylan/apps/assistant/streams/$STREAM/events \
+curl -s -X POST http://localhost:3000/v1/users/dylan/streams/$STREAM/events \
   -H "Content-Type: application/json" \
   -d '{"content": "I prefer Rust over Python. I hate unnecessary meetings. My dog is named Rosie."}'</code></pre>
     </td>
     <td valign="top" width="33%">
       <strong>Step 3. Retrieve with memory</strong><br />
       Ask a new query and let the agent recall stable memory, not just the latest context window.
-      <pre lang="bash"><code>curl -s -X POST http://localhost:3000/v1/users/dylan/apps/assistant/streams/$STREAM/retrieve \
+      <pre lang="bash"><code>curl -s -X POST http://localhost:3000/v1/users/dylan/streams/$STREAM/retrieve \
   -H "Content-Type: application/json" \
   -d '{"query": "What should I keep in mind when working with Dylan?"}'</code></pre>
       <details>
         <summary><b>Cross-modal query</b></summary>
-        <pre lang="bash"><code>curl -s -X POST http://localhost:3000/v1/users/dylan/apps/assistant/streams/$STREAM/retrieve \
+        <pre lang="bash"><code>curl -s -X POST http://localhost:3000/v1/users/dylan/streams/$STREAM/retrieve \
   -H "Content-Type: application/json" \
   -d '{"query": "what is this?", "image": "'$(base64 -i photo.jpg)'"}'</code></pre>
       </details>
@@ -195,10 +195,10 @@ In a few calls, you already have:
 ## What You Can Build
 
 - **Coding copilots** that remember developer preferences, prior fixes, repo conventions, and tool strategies
-- **Support agents** that combine user history with app-level and org-level shared knowledge
+- **Support agents** that combine user history with organization-level shared knowledge
 - **Autonomous agents** that retain procedural memory, decompose goals, and learn from completed milestones
 - **Multimodal assistants** that retrieve from screenshots, voice notes, and video context
-- **Multi-tenant AI products** that need strict user, app, and organization memory boundaries
+- **Multi-tenant AI products** that need strict agent, user, and organization memory boundaries
 
 ---
 
@@ -276,8 +276,7 @@ flowchart TD
     subgraph Domains["Memory Domains / 记忆领域"]
         D1["Agent / Agent"]
         D2["User / 用户"]
-        D3["App / 应用"]
-        D4["Organization / 组织"]
+        D3["Organization / 组织"]
     end
 
     I --> L0
@@ -287,8 +286,7 @@ flowchart TD
     L2 --> L3
     L1 -. local native memory / 本地原生记忆 .-> D1
     L1 -. local native memory / 本地原生记忆 .-> D2
-    L2 -. projected shared memory / 投影共享记忆 .-> D3
-    L2 -. projected shared memory / 投影共享记忆 .-> D4
+    L2 -. projected organizational memory / 组织共享记忆 .-> D3
     E6 -. affects memory units only / 作用于记忆单元层 .-> L1
     E6 -. affects memory units only / 作用于记忆单元层 .-> L2
     E6 -. affects memory units only / 作用于记忆单元层 .-> L3
@@ -316,10 +314,11 @@ Two implementation details matter:
 
 | Field family | What it represents | Examples |
 |--------------|--------------------|----------|
-| **Identity and scope** | Where the memory belongs | `org_id`, `user_id`, `agent_id`, `app_id`, `domain`, `namespace_key` |
+| **Identity and scope** | Where the memory canonically belongs | `org_id`, `user_id`, `agent_id`, `domain`, `namespace_key` |
+| **Source metadata** | Where the memory came from | `stream_id` |
 | **Content and type** | What the memory says | `content`, `memory_type` (`factual` / `procedural`), `keywords`, `assets` |
 | **Lifecycle and retrieval** | How the memory behaves over time | `level`, `importance`, `transaction_time`, `valid_time`, `last_accessed_at`, `access_count` |
-| **Structure and lineage** | How the memory connects to others | `references`, `projected_from`, `share_policy`, `task_metadata` |
+| **Structure and lineage** | How the memory connects to others | `references`, `share_policy`, `task_metadata` |
 
 Three boundaries matter:
 
@@ -331,23 +330,21 @@ Three boundaries matter:
 
 ## Multi-Dimensional Memory
 
-Every memory is indexed across four orthogonal dimensions:
+Every memory is indexed across three core dimensions:
 
 ```
-Organization (org_id)          ← Multi-tenant SaaS isolation
-  └─ Application (app_id)     ← Per-app memory separation
-       ├─ User (user_id)      ← Factual: preferences, facts, profile
-       └─ Agent (agent_id)    ← Procedural: tool usage, strategies, reflections
+Organization (org_id)    ← Shared organizational boundary
+  ├─ User (user_id)      ← Factual: preferences, facts, profile
+  └─ Agent (agent_id)    ← Procedural: tool usage, strategies, reflections
 ```
 
 | Dimension | What it captures | Example |
 |-----------|-----------------|---------|
-| **Organization** | Tenant boundary for SaaS platforms | `org: acme-corp` |
-| **Application** | Per-product memory separation | `app: coding-assistant` vs `app: support-bot` |
+| **Organization** | Shared boundary for reusable organizational knowledge | `org: acme-corp` |
 | **User** | Facts, preferences, personal context | _"Dylan prefers Rust and hates meetings"_ |
 | **Agent** | Execution trajectories, learned strategies, tool patterns | _"API X fails on large payloads — use streaming instead"_ |
 
-Query any combination: _"What has agent-X learned about user-Y within app-Z?"_
+Query combinations such as: _"What has agent-X learned?"_ or _"What should the system remember about user-Y?"_
 
 ---
 
@@ -356,47 +353,43 @@ Query any combination: _"What has agent-X learned about user-Y within app-Z?"_
 Memorose separates **cognitive tier** from **memory domain**:
 
 - **L0-L3** describes how memory is processed over time
-- **Agent / User / App / Organization** describes who a memory belongs to and who it should serve
+- **Agent / User / Organization** describes who a memory belongs to and who it should serve
 
-This keeps execution experience, personal context, product-level knowledge, and organization-wide knowledge from collapsing into a single undifferentiated memory pool.
+This keeps execution experience, personal context, and organization-wide knowledge from collapsing into a single undifferentiated memory pool.
 
 | Domain | Primary question | Typical content | Default sharing boundary |
 |--------|------------------|-----------------|--------------------------|
 | **Agent Memory** | _How does this agent do the work?_ | Tool usage patterns, execution traces, recovery strategies, planning heuristics, procedural reflections | Private to one `agent_id` unless explicitly projected upward |
 | **User Memory** | _Who is this user and what do they want?_ | Preferences, identity, goals, constraints, long-lived personal context, user-specific facts | Shared across agents serving the same `user_id` |
-| **App Memory** | _What is shared inside this product context?_ | Reusable workflows, shared vocabulary, app-specific conventions, common cases, patterns contributed from agents and users | Shared within one `app_id`, subject to user opt-in for contributed memory |
-| **Organization Memory** | _What knowledge should be reusable across apps?_ | Policies, organizational terminology, company-wide knowledge, cross-app best practices, higher-level insights | Shared within one `org_id`, subject to user opt-in for contributed memory |
+| **Organization Memory** | _What knowledge should be reusable across this organization?_ | Policies, organizational terminology, shared workflows, generalized best practices, higher-level insights evolved from user memory | Shared within one `org_id`, subject to user opt-in for contributed memory |
 
 ### Domain Model At A Glance
 
 | Domain | Scope key | Design purpose | Native or projected | Typical examples |
 |--------|-----------|----------------|---------------------|------------------|
-| **Agent** | `user_id + app_id + agent_id` | Preserve how a specific agent learns to act | Native | Tool traces, execution heuristics, recovery paths |
-| **User** | `user_id` | Preserve who the user is and what they prefer | Native | Preferences, identity facts, personal constraints |
-| **App** | `org_id + app_id` | Share reusable knowledge inside one product surface | Projected | Shared workflows, app conventions, common resolutions |
-| **Organization** | `org_id` | Share broader knowledge across apps and teams | Projected | Policies, terminology, cross-app best practices |
+| **Agent** | `org_id + agent_id` | Preserve how a specific agent learns to act | Native | Tool traces, execution heuristics, recovery paths |
+| **User** | `org_id + user_id` | Preserve who the user is and what they prefer | Native | Preferences, identity facts, personal constraints |
+| **Organization** | `org_id` | Share broader knowledge evolved from user memory across the organization | Projected | Policies, terminology, shared workflows, generalized best practices |
 
 ### Domain boundaries
 
 - **Agent memory** is primarily procedural. It should capture how an agent performs work, not who the user is.
 - **User memory** is primarily factual and preferential. It should capture stable personal context that multiple agents may need when serving the same user.
-- **App memory** is not just the union of agent memories. It is the shared knowledge layer for one product surface: the workflows, conventions, and reusable context that make sense inside a single app.
-- **Organization memory** sits above app memory. It is the broadest reusable layer and should hold knowledge that remains useful across multiple apps, not just inside one product silo.
+- **Organization memory** is not a raw dump of shared events. It should be a de-userized organizational knowledge layer evolved from user memory and reusable across the organization.
 
 ### Sharing model
 
-Memorose treats `agent` and `user` as the **local domains** where new memories are formed first. `app` and `organization` are the **shared domains** that memories can be projected into later.
+Memorose treats `agent` and `user` as the **local domains** where new memories are formed first. `organization` is the **shared domain** that memories can be projected into later.
 
 - New experiences should first become local `agent` or `user` memories.
-- Shared `app` and `organization` memories should be built from authorized projections, not by directly mixing all raw events together.
+- Shared `organization` memory should be built from authorized projections, not by directly mixing all raw events together.
 - User-controlled sharing matters: enabling shared memory should be an explicit policy decision, and historical data should only be included when that policy allows it.
 
 In short:
 
 - **Agent Memory**: how one agent learns to act
 - **User Memory**: what the system should remember about one user
-- **App Memory**: what participants in one app should be able to reuse
-- **Organization Memory**: what the broader organization should be able to reuse
+- **Organization Memory**: what the broader organization should be able to reuse after memory evolution
 
 ---
 
@@ -430,18 +423,18 @@ If you prefer the conceptual language often used in memory-system design, the ma
 
 The layered model and the domain model are independent by design:
 
-| | Agent | User | App | Organization |
-|---|---|---|---|---|
-| **L0** | Raw agent/tool events | Raw user events | Not a primary storage domain | Not a primary storage domain |
-| **L1** | Procedural memory | Factual/personal memory | Usually reached by projection | Usually reached by projection |
-| **L2** | Agent-level reflective summaries | User-level themes and long-term insights | Shared app insights | Shared org insights |
-| **L3** | Agent plans and milestones | User-facing goals | Rare as a direct domain | Rare as a direct domain |
+| | Agent | User | Organization |
+|---|---|---|---|
+| **L0** | Raw agent/tool events | Raw user events | Not a primary storage domain |
+| **L1** | Procedural memory | Factual/personal memory | Usually not stored directly; mainly source material for shared evolution |
+| **L2** | Agent-level reflective summaries | User-level themes and long-term insights | Shared organizational knowledge |
+| **L3** | Agent plans and milestones | User-facing goals | Rare as a direct domain |
 
 In practice:
 
 - **L0-L3 answers "how abstract is this memory?"**
-- **Agent/User/App/Organization answers "whose memory is this, and who may reuse it?"**
-- The system first forms local memories in **agent** or **user** space, then projects them upward into **app** or **organization** space when sharing policy allows it.
+- **Agent/User/Organization answers "whose memory is this, and who may reuse it?"**
+- The system first forms local memories in **agent** or **user** space, then projects them upward into **organization** space when sharing policy allows it.
 
 ---
 
@@ -536,11 +529,32 @@ Memorose includes a Next.js dashboard that runs as a separate web app.
 - Local development: `http://localhost:3100/dashboard`
 - Backend API: `http://localhost:3000`
 - Docker Compose: expose the `dashboard` service on port `3100`
+- In cluster mode, `3000` / `3001` / `3002` are backend nodes. The dashboard itself runs on `3100`.
 
-- **Memory Browser** — search, filter by user/agent/app, inspect memories
+Recommended local startup:
+
+```bash
+./scripts/start_cluster.sh start --clean --build
+```
+
+Manual dashboard-only startup:
+
+```bash
+./scripts/build_dashboard.sh
+cd dashboard
+PORT=3100 HOSTNAME=127.0.0.1 node .next/standalone/server.js
+```
+
+Docker Compose:
+
+```bash
+docker compose up --build memorose-node-0 dashboard
+```
+
+- **Memory Browser** — search, filter by organization/user/agent, inspect memories
 - **Knowledge Graph** — interactive visualization of memory relationships
 - **Agent Metrics** — per-agent activity and memory statistics
-- **App Stats** — per-application memory distribution
+- **Organization Metrics** — shared organizational memory distribution
 - **Playground** — live query testing with real-time results
 - **Cluster Health** — multi-node Raft status monitoring
 - **Settings** — runtime configuration management
@@ -585,8 +599,8 @@ raft_addr = "127.0.0.1:5001"
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/v1/users/:uid/apps/:aid/streams/:sid/events` | Ingest event (text, image, audio, video, json) |
-| `POST` | `/v1/users/:uid/apps/:aid/streams/:sid/retrieve` | Hybrid search with optional cross-modal query |
+| `POST` | `/v1/users/:uid/streams/:sid/events` | Ingest event (text, image, audio, video, json) |
+| `POST` | `/v1/users/:uid/streams/:sid/retrieve` | Hybrid search with optional cross-modal query |
 | `GET` | `/v1/users/:uid/tasks/tree` | Get all goal/task hierarchies |
 | `GET` | `/v1/users/:uid/tasks/ready` | Get auto-executable tasks |
 | `PUT` | `/v1/users/:uid/tasks/:tid/status` | Update task status |
@@ -611,8 +625,7 @@ raft_addr = "127.0.0.1:5001"
   "graph_depth": 1,
   "start_time": "ISO8601 (optional — valid time filter)",
   "end_time": "ISO8601 (optional)",
-  "as_of": "ISO8601 (optional — bitemporal point-in-time query)",
-  "include_vector": false
+  "as_of": "ISO8601 (optional — bitemporal point-in-time query)"
 }
 ```
 

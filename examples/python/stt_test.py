@@ -31,8 +31,7 @@ def test_stt_ingest():
 
     # Retrieve
     search_payload = {
-        "query": "audio",
-        "include_vector": False
+        "query": "audio"
     }
     
     print("Searching...")

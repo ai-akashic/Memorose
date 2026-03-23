@@ -130,7 +130,7 @@ log_info "✓ 无 Raft 错误"
 log_info "测试 consolidation worker..."
 TEST_STREAM="00000000-0000-0000-0000-000000000001"
 
-curl -sf -X POST "http://localhost:3000/v1/users/test_user/apps/test_app/streams/${TEST_STREAM}/events" \
+curl -sf -X POST "http://localhost:3000/v1/users/test_user/streams/${TEST_STREAM}/events" \
     -H "Content-Type: application/json" \
     -d '{"content": "This is a test event for consolidation", "content_type": "text"}' \
     >/dev/null

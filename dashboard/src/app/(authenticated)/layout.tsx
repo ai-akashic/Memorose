@@ -11,9 +11,7 @@ import {
   LogOut,
   ChevronLeft,
   MessageSquare,
-  Package,
   Bot,
-  CheckSquare,
   Building2,
 } from "lucide-react";
 import Link from "next/link";
@@ -39,17 +37,16 @@ export default function AuthenticatedLayout({
   const router = useRouter();
   const pathname = usePathname();
   const t = useTranslations("Navigation");
+  const tLayout = useTranslations("Layout");
   const [collapsed, setCollapsed] = useState(false);
   const [mounted, setMounted] = useState(false);
 
   const navItems = [
     { href: "/cluster/", label: t("cluster"), icon: LayoutDashboard },
     { href: "/organizations/", label: t("organizations"), icon: Building2 },
-    { href: "/apps/", label: t("apps"), icon: Package },
     { href: "/memories/", label: t("memories"), icon: Database },
     { href: "/playground/", label: t("playground"), icon: MessageSquare },
     { href: "/agents/", label: t("agents"), icon: Bot },
-    { href: "/tasks/", label: t("tasks"), icon: CheckSquare },
     { href: "/metrics/", label: t("metrics"), icon: BarChart3 },
     { href: "/settings/", label: t("settings"), icon: Settings },
   ];
@@ -74,7 +71,7 @@ export default function AuthenticatedLayout({
   if (!mounted || !isAuthenticated()) {
     return (
       <div className="h-screen flex items-center justify-center bg-background">
-        <div className="animate-pulse text-muted-foreground text-sm">Loading...</div>
+        <div className="animate-pulse text-muted-foreground text-sm">{tLayout("loading")}</div>
       </div>
     );
   }

@@ -27,12 +27,11 @@ async fn main() -> Result<()> {
     let engine = MemoroseEngine::new_with_default_threshold(&data_dir, 1000, false, false).await?;
 
     let user_id = "demo_user";
-    let app_id = "demo_app";
     let stream_id = Uuid::new_v4();
 
     // 构建测试图：3个明显的社区
     println!("📊 Building test graph (3 communities, ~150 nodes, ~600 edges)...");
-    build_test_communities(&engine, user_id, app_id, stream_id).await?;
+    build_test_communities(&engine, user_id, stream_id).await?;
     println!("✅ Graph built\n");
 
     // === 测试 1: 基础 LPA ===
@@ -93,7 +92,6 @@ async fn main() -> Result<()> {
 async fn build_test_communities(
     engine: &MemoroseEngine,
     user_id: &str,
-    app_id: &str,
     stream_id: Uuid,
 ) -> Result<()> {
     // 创建 3 个社区，每个社区 50 个节点
@@ -110,7 +108,6 @@ async fn build_test_communities(
                 None,
                 user_id.to_string(),
                 None,
-                app_id.to_string(),
                 stream_id,
                 memorose_common::MemoryType::Factual,
                 content,

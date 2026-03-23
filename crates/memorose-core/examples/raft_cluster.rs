@@ -79,7 +79,6 @@ async fn main() -> anyhow::Result<()> {
             None,
             "example_user".into(),
             None,
-            "example_app".into(),
             Uuid::new_v4(),
             EventContent::Text("Distributed Consensus Test".into()),
         );

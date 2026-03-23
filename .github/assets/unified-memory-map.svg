@@ -77,13 +77,9 @@
   <text x="364" y="826" class="label">User</text>
   <text x="364" y="852" class="body">local native memory</text>
 
-  <rect x="604" y="784" width="240" height="84" class="card"/>
-  <text x="634" y="826" class="label">App</text>
-  <text x="634" y="852" class="body">projected shared memory</text>
-
-  <rect x="874" y="784" width="240" height="84" class="card"/>
-  <text x="904" y="826" class="label">Organization</text>
-  <text x="904" y="852" class="body">projected shared memory</text>
+  <rect x="604" y="784" width="360" height="84" class="card"/>
+  <text x="634" y="826" class="label">Organization</text>
+  <text x="634" y="852" class="body">projected shared memory evolved from user memory</text>
 
   <line x1="324" y1="206" x2="404" y2="206" stroke="#475569" stroke-width="3" marker-end="url(#arrow)"/>
 
@@ -102,8 +98,7 @@
 
   <line x1="536" y1="408" x2="184" y2="770" stroke="#475569" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrow)"/>
   <line x1="600" y1="408" x2="454" y2="770" stroke="#475569" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrow)"/>
-  <line x1="660" y1="550" x2="724" y2="770" stroke="#475569" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrow)"/>
-  <line x1="718" y1="550" x2="994" y2="770" stroke="#475569" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrow)"/>
+  <line x1="690" y1="550" x2="784" y2="770" stroke="#475569" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrow)"/>
 
   <text x="876" y="604" class="small">acts on L1-L3 memory units, not raw events</text>
   <text x="64" y="900" class="small">Static fallback for environments where Mermaid rendering is unavailable.</text>

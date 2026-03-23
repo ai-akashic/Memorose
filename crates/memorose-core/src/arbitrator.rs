@@ -61,7 +61,6 @@ impl Arbitrator {
         org_id: Option<&str>,
         user_id: &str,
         agent_id: Option<&str>,
-        app_id: &str,
         _stream_id: uuid::Uuid,
         goal: &str,
     ) -> Result<Vec<memorose_common::L3Task>> {
@@ -108,7 +107,6 @@ impl Arbitrator {
                 org_id.map(|s| s.to_string()),
                 user_id.to_string(),
                 agent_id.map(|s| s.to_string()),
-                app_id.to_string(),
                 m.summary.clone(),
                 if m.description.is_empty() {
                     m.summary.clone()
@@ -300,7 +298,6 @@ impl Arbitrator {
     pub async fn extract_topics(
         &self,
         user_id: &str,
-        app_id: &str,
         stream_id: uuid::Uuid,
         memories: Vec<MemoryUnit>,
     ) -> Result<Vec<MemoryUnit>> {
@@ -380,7 +377,6 @@ impl Arbitrator {
                 None,
                 user_id.to_string(),
                 None, // agent_id
-                app_id.to_string(),
                 stream_id,
                 memorose_common::MemoryType::Factual,
                 dto.summary,

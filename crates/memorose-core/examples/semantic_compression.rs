@@ -40,7 +40,6 @@ async fn main() -> Result<()> {
 
     let stream_id = Uuid::new_v4();
     let user_id = "example_user".to_string();
-    let app_id = "example_app".to_string();
 
     println!("\n📥 Ingesting {} verbose events...", conversation.len());
     let start_size: usize = conversation.iter().map(|s| s.len()).sum();
@@ -50,7 +49,6 @@ async fn main() -> Result<()> {
             None,
             user_id.clone(),
             None,
-            app_id.clone(),
             stream_id,
             EventContent::Text(line.to_string()),
         );

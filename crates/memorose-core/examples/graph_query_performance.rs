@@ -23,12 +23,11 @@ async fn main() -> Result<()> {
     let engine = MemoroseEngine::new_with_default_threshold(&data_dir, 1000, true, true).await?;
 
     let user_id = "perf_test_user";
-    let app_id = "perf_test_app";
     let stream_id = Uuid::new_v4();
 
     // 构建测试图：100 个节点，平均每个节点 5 条边
     println!("📊 Building test graph (100 nodes, ~500 edges)...");
-    let nodes = build_test_graph(&engine, user_id, app_id, stream_id, 100, 5).await?;
+    let nodes = build_test_graph(&engine, user_id, stream_id, 100, 5).await?;
     println!("✅ Graph built\n");
 
     // === 测试 1: 单节点邻居查询 ===
@@ -70,7 +69,6 @@ async fn main() -> Result<()> {
 async fn build_test_graph(
     engine: &MemoroseEngine,
     user_id: &str,
-    app_id: &str,
     stream_id: Uuid,
     num_nodes: usize,
     avg_edges_per_node: usize,
@@ -85,7 +83,6 @@ async fn build_test_graph(
             None,
             user_id.to_string(),
             None,
-            app_id.to_string(),
             stream_id,
             memorose_common::MemoryType::Factual,
             content,
@@ -248,7 +245,7 @@ async fn test_cache_performance(
     };
 
     let start = Instant::now();
-    let edges = if let Some(cached) = cache.get_edges(&key).await {
+    let _edges = if let Some(cached) = cache.get_edges(&key).await {
         cached
     } else {
         let edges = graph.get_outgoing_edges(user_id, test_node).await?;

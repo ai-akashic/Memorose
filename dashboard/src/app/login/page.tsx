@@ -2,13 +2,15 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { LoginForm } from "@/components/login-form";
 import { isAuthenticated } from "@/lib/auth";
-import { MemoroseLogo } from "@/components/haku-logo";
+import { MemoroseLogo } from "@/components/memorose-logo";
 import { motion } from "framer-motion";
 
 export default function LoginPage() {
   const router = useRouter();
+  const t = useTranslations("Playground");
 
   useEffect(() => {
     if (isAuthenticated()) {
@@ -50,7 +52,7 @@ export default function LoginPage() {
             Memorose
           </h1>
           <p className="text-muted-foreground/70 mt-2 text-[0.8rem] font-medium tracking-[0.2em] uppercase">
-            Cognitive Infrastructure for AI
+            {t("tagline")}
           </p>
         </div>
 

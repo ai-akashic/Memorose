@@ -148,7 +148,6 @@ function HeartbeatCard({ cluster, onRemoveNode, t }: { cluster: ClusterStatusSin
   const config = cluster.config || {
     heartbeat_interval_ms: 500,
     election_timeout_min_ms: 1500,
-    election_timeout_max_ms: 3000,
   };
 
   return (

@@ -3,11 +3,12 @@ import useSWR from "swr";
 import { api } from "./api";
 import type {
   AgentListResponse,
-  AppListResponse,
   OrganizationListResponse,
+  OrganizationKnowledgeItem,
+  OrganizationKnowledgeListResponse,
+  OrganizationKnowledgeMetrics,
   ClusterStatus,
   GraphData,
-  MemorySharingState,
   MemoryListResponse,
   PendingCountResponse,
   Stats,
@@ -57,47 +58,52 @@ export function useOrganizations() {
   });
 }
 
-export function useApps(org_id?: string) {
-  return useSWR<AppListResponse>(`apps-list-${org_id ?? "_all"}`, () => api.list_apps(org_id), {
-    refreshInterval: 30000,
-  });
+export function useOrganizationKnowledge(
+  orgId: string | undefined,
+  params?: {
+    q?: string;
+    contributor?: string;
+    source_type?: string;
+    sort?: string;
+  }
+) {
+  return useSWR<OrganizationKnowledgeListResponse>(
+    orgId ? `organization-knowledge-${orgId}-${JSON.stringify(params ?? {})}` : null,
+    () => api.listOrganizationKnowledge(orgId!, params),
+    {
+      refreshInterval: 30000,
+    }
+  );
 }
 
-export function useAgentStats(agentId: string | undefined) {
-  return useSWR(
-    agentId ? `agent-stats-${agentId}` : null,
-    () => agentId ? api.agentStats(agentId) : null,
-    { refreshInterval: 30000 }
+export function useOrganizationKnowledgeDetail(
+  orgId: string | undefined,
+  knowledgeId: string | undefined
+) {
+  return useSWR<OrganizationKnowledgeItem>(
+    orgId && knowledgeId
+      ? `organization-knowledge-detail-${orgId}-${knowledgeId}`
+      : null,
+    () => api.getOrganizationKnowledge(orgId!, knowledgeId!),
+    {
+      refreshInterval: 30000,
+    }
+  );
+}
+
+export function useOrganizationKnowledgeMetrics(orgId: string | undefined) {
+  return useSWR<OrganizationKnowledgeMetrics>(
+    orgId ? `organization-knowledge-metrics-${orgId}` : null,
+    () => api.getOrganizationKnowledgeMetrics(orgId!),
+    {
+      refreshInterval: 30000,
+    }
   );
 }
 
 export function useTaskTree(user_id: string | undefined) {
   const key = user_id ? `tasks-tree-${user_id}` : null;
   return useSWR(key, () => api.getTaskTree(user_id!));
-}
-
-export function useAppStats(appId: string | undefined) {
-  return useSWR(
-    appId ? `app-stats-${appId}` : null,
-    () => appId ? api.appStats(appId) : null,
-    { refreshInterval: 30000 }
-  );
-}
-
-export function useMemorySharing(
-  userId: string | undefined,
-  appId: string | undefined,
-  orgId?: string | undefined
-) {
-  const key = userId && appId
-    ? `memory-sharing-${userId}-${appId}-${orgId ?? "_none"}`
-    : null;
-
-  return useSWR<MemorySharingState>(
-    key,
-    () => api.getMemorySharing(userId!, appId!, orgId),
-    { refreshInterval: 5000 }
-  );
 }
 
 export function useReadyTasks(user_id: string | undefined) {

@@ -16,6 +16,24 @@ pub struct VectorStore {
 }
 
 impl VectorStore {
+    fn expected_columns(&self) -> Vec<&'static str> {
+        vec![
+            "id",
+            "org_id",
+            "user_id",
+            "agent_id",
+            "stream_id",
+            "memory_type",
+            "domain",
+            "namespace_key",
+            "content",
+            "level",
+            "transaction_time",
+            "valid_time",
+            "vector",
+        ]
+    }
+
     pub async fn new(path: &str, dim: i32) -> Result<Self> {
         let conn = connect(path).execute().await?;
         Ok(Self { conn, dim })
@@ -26,14 +44,22 @@ impl VectorStore {
         if tables.contains(&table_name.to_string()) {
             let table = self.conn.open_table(table_name).execute().await?;
             let schema = table.schema().await?;
-            let required_columns = ["memory_type", "domain", "namespace_key"];
-            let has_required_columns = required_columns
+            let actual_columns: Vec<String> = schema
+                .fields()
                 .iter()
-                .all(|name| schema.fields().iter().any(|f| f.name() == *name));
-            if !has_required_columns {
+                .map(|field| field.name().to_string())
+                .collect();
+            let expected_columns: Vec<String> = self
+                .expected_columns()
+                .into_iter()
+                .map(|name| name.to_string())
+                .collect();
+            if actual_columns != expected_columns {
                 tracing::warn!(
-                    "LanceDB table '{}' missing scoped memory columns, recreating...",
-                    table_name
+                    "LanceDB table '{}' has legacy schema {:?}, recreating with {:?}",
+                    table_name,
+                    actual_columns,
+                    expected_columns
                 );
                 self.conn.drop_table(table_name).await?;
             } else {
@@ -46,7 +72,6 @@ impl VectorStore {
             Field::new("org_id", DataType::Utf8, true),
             Field::new("user_id", DataType::Utf8, false),
             Field::new("agent_id", DataType::Utf8, true),
-            Field::new("app_id", DataType::Utf8, false),
             Field::new("stream_id", DataType::Utf8, false),
             Field::new("memory_type", DataType::Utf8, false),
             Field::new("domain", DataType::Utf8, false),
@@ -91,7 +116,6 @@ impl VectorStore {
         let mut org_ids: Vec<Option<String>> = Vec::new();
         let mut user_ids = Vec::new();
         let mut agent_ids: Vec<Option<String>> = Vec::new();
-        let mut app_ids = Vec::new();
         let mut stream_ids = Vec::new();
         let mut memory_types = Vec::new();
         let mut domains = Vec::new();
@@ -107,7 +131,6 @@ impl VectorStore {
             org_ids.push(unit.org_id.clone());
             user_ids.push(unit.user_id.clone());
             agent_ids.push(unit.agent_id.clone());
-            app_ids.push(unit.app_id.clone());
             stream_ids.push(unit.stream_id.to_string());
 
             let m_type = match unit.memory_type {
@@ -140,7 +163,6 @@ impl VectorStore {
         let org_id_array = Arc::new(StringArray::from(org_ids));
         let user_id_array = Arc::new(StringArray::from(user_ids));
         let agent_id_array = Arc::new(StringArray::from(agent_ids));
-        let app_id_array = Arc::new(StringArray::from(app_ids));
         let stream_id_array = Arc::new(StringArray::from(stream_ids));
         let memory_type_array = Arc::new(StringArray::from(memory_types));
         let domain_array = Arc::new(StringArray::from(domains));
@@ -164,7 +186,6 @@ impl VectorStore {
                 org_id_array as Arc<dyn Array>,
                 user_id_array as Arc<dyn Array>,
                 agent_id_array as Arc<dyn Array>,
-                app_id_array as Arc<dyn Array>,
                 stream_id_array as Arc<dyn Array>,
                 memory_type_array as Arc<dyn Array>,
                 domain_array as Arc<dyn Array>,
@@ -292,7 +313,6 @@ mod tests {
             None,
             "u1".into(),
             None,
-            "a1".into(),
             stream_id,
             memorose_common::MemoryType::Factual,
             "Vector Test".to_string(),
@@ -326,7 +346,6 @@ mod tests {
             None,
             "u1".into(),
             None,
-            "a1".into(),
             stream_id,
             memorose_common::MemoryType::Factual,
             "Old info".into(),
@@ -340,7 +359,6 @@ mod tests {
             None,
             "u1".into(),
             None,
-            "a1".into(),
             stream_id,
             memorose_common::MemoryType::Factual,
             "New info".into(),

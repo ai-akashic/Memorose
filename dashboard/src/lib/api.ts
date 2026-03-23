@@ -97,8 +97,7 @@ export const api = {
     const qstr = qs.toString();
     return fetchAPI<import("./types").Stats>(`/stats${qstr ? `?${qstr}` : ""}`);
   },
-  config: () => fetchAPI<import("./types").AppConfig>("/config"),
-  version: () => fetchAPI<import("./types").VersionInfo>("/version"),
+  runtimeConfig: () => fetchAPI<import("./types").RuntimeConfig>("/config"),
 
   memories: (params: {
     level?: number;
@@ -121,7 +120,7 @@ export const api = {
   },
 
   memory: (id: string) => {
-    return fetchAPI<import("./types").MemoryUnit>(`/memories/${id}`);
+    return fetchAPI<import("./types").DashboardMemoryDetail>(`/memories/${id}`);
   },
 
   graph: (limit?: number, user_id?: string, org_id?: string) => {
@@ -138,7 +137,6 @@ export const api = {
     limit?: number;
     enable_arbitration?: boolean;
     user_id: string;
-    app_id?: string;
     org_id?: string;
     agent_id?: string;
   }) =>
@@ -149,14 +147,13 @@ export const api = {
 
   ingestEvent: (params: {
     user_id: string;
-    app_id: string;
     stream_id: string;
     content: {
       type: string;
       data: string;
     };
   }) => {
-    const { user_id, app_id, stream_id, content } = params;
+    const { user_id, stream_id, content } = params;
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -164,7 +161,7 @@ export const api = {
     if (token) {
       headers.Authorization = `Bearer ${token}`;
     }
-    return fetch(`${API_BASE}/v1/users/${user_id}/apps/${app_id}/streams/${stream_id}/events`, {
+    return fetch(`${API_BASE}/v1/users/${user_id}/streams/${stream_id}/events`, {
       method: "POST",
       headers,
       body: JSON.stringify({ content: content.data, content_type: content.type }),
@@ -183,67 +180,36 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  list_apps: (org_id?: string) => {
+  listOrganizationKnowledge: (orgId: string, params?: {
+    q?: string;
+    contributor?: string;
+    source_type?: string;
+    sort?: string;
+  }) => {
     const qs = new URLSearchParams();
-    if (org_id) qs.set("org_id", org_id);
+    if (params?.q) qs.set("q", params.q);
+    if (params?.contributor) qs.set("contributor", params.contributor);
+    if (params?.source_type) qs.set("source_type", params.source_type);
+    if (params?.sort) qs.set("sort", params.sort);
     const suffix = qs.toString();
-    return fetchAPI<import("./types").AppListResponse>(`/apps${suffix ? `?${suffix}` : ""}`);
+    return fetchAPI<import("./types").OrganizationKnowledgeListResponse>(
+      `/organizations/${encodeURIComponent(orgId)}/knowledge${suffix ? `?${suffix}` : ""}`
+    );
   },
 
-  createApp: (body: { app_id: string; org_id: string; name?: string }) =>
-    fetchAPI<import("./types").AppSummary>("/apps", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
+  getOrganizationKnowledge: (orgId: string, id: string) =>
+    fetchAPI<import("./types").OrganizationKnowledgeItem>(
+      `/organizations/${encodeURIComponent(orgId)}/knowledge/${encodeURIComponent(id)}`
+    ),
 
-  agentStats: (agentId: string) =>
-    fetchAPI<import("./types").AgentSummary & Record<string, unknown>>(`/agents/${encodeURIComponent(agentId)}/stats`),
+  getOrganizationKnowledgeMetrics: (orgId: string) =>
+    fetchAPI<import("./types").OrganizationKnowledgeMetrics>(
+      `/organizations/${encodeURIComponent(orgId)}/knowledge/metrics`
+    ),
 
   // Fixed: was using fetchAPI which adds /v1/dashboard prefix incorrectly
   getTaskTree: (user_id: string) =>
     fetchRaw<import("./types").GoalTree[]>(`/v1/users/${user_id}/tasks/tree`),
-
-  // App stats
-  appStats: (app_id: string) =>
-    fetchAPI<import("./types").AppStats>(`/apps/${encodeURIComponent(app_id)}/stats`),
-
-  listApiKeys: (app_id: string) =>
-    fetchAPI<import("./types").AppApiKeyListResponse>(`/apps/${encodeURIComponent(app_id)}/api-keys`),
-
-  createApiKey: (app_id: string, body: { name?: string }) =>
-    fetchAPI<import("./types").CreateApiKeyResponse>(`/apps/${encodeURIComponent(app_id)}/api-keys`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-
-  revokeApiKey: (app_id: string, key_id: string) =>
-    fetchAPI<{ status: string }>(`/apps/${encodeURIComponent(app_id)}/api-keys/${encodeURIComponent(key_id)}`, {
-      method: "DELETE",
-    }),
-
-  getMemorySharing: (user_id: string, app_id: string, org_id?: string) => {
-    const qs = new URLSearchParams();
-    if (org_id) {
-      qs.set("org_id", org_id);
-    }
-    const suffix = qs.toString();
-    return fetchRaw<import("./types").MemorySharingState>(
-      `/v1/users/${user_id}/apps/${app_id}/memory-sharing${suffix ? `?${suffix}` : ""}`
-    );
-  },
-
-  updateMemorySharing: (
-    user_id: string,
-    app_id: string,
-    body: import("./types").MemorySharingUpdateRequest
-  ) =>
-    fetchRaw<import("./types").MemorySharingState>(
-      `/v1/users/${user_id}/apps/${app_id}/memory-sharing`,
-      {
-        method: "PUT",
-        body: JSON.stringify(body),
-      }
-    ),
 
   // Task endpoints
   getReadyTasks: (user_id: string) =>
@@ -256,32 +222,15 @@ export const api = {
     }),
 
   // Retrieve endpoint
-  retrieve: (user_id: string, app_id: string, stream_id: string, body: import("./types").RetrieveRequest) =>
+  retrieve: (user_id: string, stream_id: string, body: import("./types").RetrieveRequest) =>
     fetchRaw<import("./types").RetrieveResponse>(
-      `/v1/users/${user_id}/apps/${app_id}/streams/${stream_id}/retrieve`,
+      `/v1/users/${user_id}/streams/${stream_id}/retrieve`,
       { method: "POST", body: JSON.stringify(body) }
     ),
-
-  // Graph edge
-  addEdge: (user_id: string, body: import("./types").AddEdgeRequest) =>
-    fetchRaw<{ status: string }>(`/v1/users/${user_id}/graph/edges`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
 
   // Status
   pendingCount: () =>
     fetchRaw<import("./types").PendingCountResponse>("/v1/status/pending"),
-
-  // Cluster management
-  initializeCluster: () =>
-    fetchRaw<import("./types").ClusterInitResponse>("/v1/cluster/initialize", { method: "POST" }),
-
-  joinCluster: (body: import("./types").ClusterJoinRequest) =>
-    fetchRaw<import("./types").ClusterJoinResponse>("/v1/cluster/join", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
 
   leaveCluster: (node_id: number) =>
     fetchRaw<{ status: string }>(`/v1/cluster/nodes/${node_id}`, { method: "DELETE" }),

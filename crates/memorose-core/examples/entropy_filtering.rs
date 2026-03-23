@@ -29,7 +29,6 @@ struct SmartIngestor {
     engine: MemoroseEngine,
     threshold: f64,
     user_id: String,
-    app_id: String,
 }
 
 impl SmartIngestor {
@@ -38,7 +37,6 @@ impl SmartIngestor {
             engine,
             threshold,
             user_id: "example_user".to_string(),
-            app_id: "example_app".to_string(),
         }
     }
 
@@ -59,7 +57,6 @@ impl SmartIngestor {
             None,
             self.user_id.clone(),
             None,
-            self.app_id.clone(),
             Uuid::new_v4(),
             EventContent::Text(content),
         );

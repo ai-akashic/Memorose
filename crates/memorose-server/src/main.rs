@@ -1,5 +1,5 @@
 use axum::{
-    extract::{OriginalUri, Path, Query, State},
+    extract::{OriginalUri, Path, State},
     middleware as axum_middleware,
     response::{IntoResponse, Redirect},
     routing::{delete, get, post, put},
@@ -8,7 +8,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use memorose_common::sharding::decode_raft_node_id;
 use memorose_common::{
-    config::AppConfig, Event, EventContent, GraphEdge, MemoryUnit, RelationType, SharePolicy,
+    config::AppConfig, Event, EventContent, GraphEdge, MemoryType, MemoryUnit, RelationType,
     TimeRange,
 };
 use memorose_core::{LLMClient, MemoroseEngine};
@@ -37,6 +37,44 @@ struct AppState {
     dashboard_cache: Cache<String, serde_json::Value>,
     /// Shared HTTP client for leader-forwarding; reusing it preserves connection pools.
     http_client: reqwest::Client,
+}
+
+#[derive(Clone, Serialize)]
+struct RetrievalMemoryUnitView {
+    id: Uuid,
+    memory_type: MemoryType,
+    content: String,
+    keywords: Vec<String>,
+    level: u8,
+}
+
+impl From<&MemoryUnit> for RetrievalMemoryUnitView {
+    fn from(unit: &MemoryUnit) -> Self {
+        Self {
+            id: unit.id,
+            memory_type: unit.memory_type.clone(),
+            content: unit.content.clone(),
+            keywords: unit.keywords.clone(),
+            level: unit.level,
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+struct GoalMemoryUnitView {
+    id: Uuid,
+    content: String,
+    transaction_time: DateTime<Utc>,
+}
+
+impl From<&MemoryUnit> for GoalMemoryUnitView {
+    fn from(unit: &MemoryUnit) -> Self {
+        Self {
+            id: unit.id,
+            content: unit.content.clone(),
+            transaction_time: unit.transaction_time,
+        }
+    }
 }
 
 #[tokio::main]
@@ -141,33 +179,24 @@ async fn main() {
         .route("/search", post(dashboard::handlers::search))
         .route("/chat", post(dashboard::handlers::chat))
         .route("/config", get(dashboard::handlers::get_config))
-        .route("/version", get(dashboard::handlers::version))
         .route(
             "/organizations",
             get(dashboard::handlers::list_organizations)
                 .post(dashboard::handlers::create_organization),
         )
         .route(
-            "/apps",
-            get(dashboard::handlers::list_apps).post(dashboard::handlers::create_app),
+            "/organizations/:org_id/knowledge",
+            get(dashboard::handlers::list_organization_knowledge),
         )
         .route(
-            "/apps/:app_id/stats",
-            get(dashboard::handlers::get_app_stats),
+            "/organizations/:org_id/knowledge/:id",
+            get(dashboard::handlers::get_organization_knowledge),
         )
         .route(
-            "/apps/:app_id/api-keys",
-            get(dashboard::handlers::list_api_keys).post(dashboard::handlers::create_api_key),
-        )
-        .route(
-            "/apps/:app_id/api-keys/:key_id",
-            delete(dashboard::handlers::revoke_api_key),
+            "/organizations/:org_id/knowledge/metrics",
+            get(dashboard::handlers::get_organization_knowledge_metrics),
         )
         .route("/agents", get(dashboard::handlers::list_agents))
-        .route(
-            "/agents/:agent_id/stats",
-            get(dashboard::handlers::get_agent_stats),
-        )
         .layer(axum_middleware::from_fn_with_state(
             state.clone(),
             dashboard::auth::auth_middleware,
@@ -183,19 +212,15 @@ async fn main() {
     // API routes that require optional key auth
     let v1_routes = Router::new()
         .route(
-            "/v1/users/:user_id/apps/:app_id/streams/:stream_id/events",
+            "/v1/users/:user_id/streams/:stream_id/events",
             post(ingest_event),
         )
         .route(
-            "/v1/users/:user_id/apps/:app_id/streams/:stream_id/retrieve",
+            "/v1/users/:user_id/streams/:stream_id/retrieve",
             post(retrieve_memory),
         )
         .route(
-            "/v1/users/:user_id/apps/:app_id/memory-sharing",
-            get(get_memory_sharing).put(update_memory_sharing),
-        )
-        .route(
-            "/v1/users/:user_id/apps/:app_id/streams/:stream_id/tasks/tree",
+            "/v1/users/:user_id/streams/:stream_id/tasks/tree",
             get(get_task_tree),
         )
         .route("/v1/users/:user_id/tasks/tree", get(get_all_task_trees))
@@ -206,6 +231,18 @@ async fn main() {
         )
         .route("/v1/users/:user_id/graph/edges", post(add_edge))
         .route("/v1/status/pending", get(pending_count))
+        .route(
+            "/v1/organizations/:org_id/knowledge",
+            get(dashboard::handlers::list_organization_knowledge),
+        )
+        .route(
+            "/v1/organizations/:org_id/knowledge/:id",
+            get(dashboard::handlers::get_organization_knowledge),
+        )
+        .route(
+            "/v1/organizations/:org_id/knowledge/metrics",
+            get(dashboard::handlers::get_organization_knowledge_metrics),
+        )
         .route("/v1/cluster/initialize", post(initialize_cluster))
         .route("/v1/cluster/join", post(join_cluster))
         .route("/v1/cluster/nodes/:node_id", delete(leave_cluster))
@@ -283,7 +320,7 @@ async fn redirect_dashboard_ui(uri: OriginalUri) -> Redirect {
 }
 
 /// Middleware: allow dashboard JWTs for internal UI calls, otherwise require a
-/// matching app API key on app-scoped `/v1/` routes.
+/// valid API key on `/v1/` routes.
 async fn api_key_auth(
     State(state): State<Arc<AppState>>,
     req: axum::extract::Request,
@@ -300,10 +337,6 @@ async fn api_key_auth(
         }
     }
 
-    let Some(app_id) = extract_app_id_from_path(req.uri().path()) else {
-        return next.run(req).await;
-    };
-
     let Some(raw_key) = req.headers().get("x-api-key").and_then(|v| v.to_str().ok()) else {
         return (
             axum::http::StatusCode::UNAUTHORIZED,
@@ -312,15 +345,12 @@ async fn api_key_auth(
             .into_response();
     };
 
-    match state.management_registry.authenticate_api_key(raw_key).await {
-        Ok(Some(access)) if access.app_id == app_id => next.run(req).await,
-        Ok(Some(_)) => (
-            axum::http::StatusCode::FORBIDDEN,
-            Json(serde_json::json!({
-                "error": "API key does not grant access to this application"
-            })),
-        )
-            .into_response(),
+    match state
+        .management_registry
+        .authenticate_api_key(raw_key)
+        .await
+    {
+        Ok(Some(_)) => next.run(req).await,
         Ok(None) => (
             axum::http::StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({ "error": "Invalid API key" })),
@@ -334,15 +364,7 @@ async fn api_key_auth(
     }
 }
 
-fn extract_app_id_from_path(path: &str) -> Option<&str> {
-    let segments: Vec<_> = path.split('/').filter(|segment| !segment.is_empty()).collect();
-    segments
-        .windows(2)
-        .find(|pair| pair[0] == "apps")
-        .map(|pair| pair[1])
-}
-
-/// Validate that a user_id or app_id supplied via URL path is within acceptable bounds.
+/// Validate that a path-supplied identifier is within acceptable bounds.
 /// Returns an error response if the value is too long or contains characters that
 /// would break the internal RocksDB key scheme.
 fn validate_id(value: &str, field: &str) -> Result<(), axum::response::Response> {
@@ -365,25 +387,6 @@ fn validate_id(value: &str, field: &str) -> Result<(), axum::response::Response>
             .into_response());
     }
     Ok(())
-}
-
-async fn resolve_registered_app(
-    state: &Arc<AppState>,
-    app_id: &str,
-) -> Result<dashboard::registry::AppRecord, axum::response::Response> {
-    match state.management_registry.get_app(app_id).await {
-        Ok(Some(app)) => Ok(app),
-        Ok(None) => Err((
-            axum::http::StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "application not found" })),
-        )
-            .into_response()),
-        Err(error) => Err((
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": error.to_string() })),
-        )
-            .into_response()),
-    }
 }
 
 /// Build a "Not Leader" response with shard info when applicable.
@@ -615,28 +618,15 @@ fn parse_ingest_content(
 
 async fn ingest_event(
     State(state): State<Arc<AppState>>,
-    Path((user_id, app_id, stream_id)): Path<(String, String, Uuid)>,
+    Path((user_id, stream_id)): Path<(String, Uuid)>,
     Json(payload): Json<IngestRequest>,
 ) -> axum::response::Response {
     if let Err(r) = validate_id(&user_id, "user_id") {
         return r;
     }
-    if let Err(r) = validate_id(&app_id, "app_id") {
-        return r;
-    }
-    let app = match resolve_registered_app(&state, &app_id).await {
-        Ok(app) => app,
-        Err(response) => return response,
-    };
-    if let Some(payload_org_id) = payload.org_id.as_deref() {
-        if payload_org_id != app.org_id {
-            return (
-                axum::http::StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": "org_id does not match the application's organization"
-                })),
-            )
-                .into_response();
+    if let Some(org_id) = payload.org_id.as_deref() {
+        if let Err(r) = validate_id(org_id, "org_id") {
+            return r;
         }
     }
     let shard = state.shard_manager.shard_for_user(&user_id);
@@ -647,10 +637,7 @@ async fn ingest_event(
     // Forward to leader if not leader
     if current_leader != Some(node_id) {
         if let Some(leader_id) = current_leader {
-            let path = format!(
-                "/v1/users/{}/apps/{}/streams/{}/events",
-                user_id, app_id, stream_id
-            );
+            let path = format!("/v1/users/{}/streams/{}/events", user_id, stream_id);
 
             tracing::info!(
                 "Not leader (I'm {}, leader is {}), forwarding request",
@@ -681,14 +668,7 @@ async fn ingest_event(
                 .into_response();
         }
     };
-    let mut event = Event::new(
-        Some(app.org_id),
-        user_id,
-        None,
-        app_id,
-        stream_id,
-        content,
-    );
+    let mut event = Event::new(payload.org_id.clone(), user_id, None, stream_id, content);
     if let Some(l) = payload.level {
         event.metadata["target_level"] = serde_json::json!(l);
     }
@@ -729,222 +709,11 @@ async fn ingest_event(
     }
 }
 
-async fn get_memory_sharing(
-    State(state): State<Arc<AppState>>,
-    Path((user_id, app_id)): Path<(String, String)>,
-    Query(query): Query<MemorySharingQuery>,
-) -> axum::response::Response {
-    if let Err(r) = validate_id(&user_id, "user_id") {
-        return r;
-    }
-    if let Err(r) = validate_id(&app_id, "app_id") {
-        return r;
-    }
-    let app = match resolve_registered_app(&state, &app_id).await {
-        Ok(app) => app,
-        Err(response) => return response,
-    };
-    if let Some(org_id) = query.org_id.as_deref() {
-        if let Err(r) = validate_id(org_id, "org_id") {
-            return r;
-        }
-        if org_id != app.org_id {
-            return (
-                axum::http::StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": "org_id does not match the application's organization"
-                })),
-            )
-                .into_response();
-        }
-    }
-
-    let shard = state.shard_manager.shard_for_user(&user_id);
-
-    let app_policy = match shard.engine.get_app_share_policy(&user_id, &app_id) {
-        Ok(policy) => policy,
-        Err(error) => {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": error.to_string() })),
-            )
-                .into_response();
-        }
-    };
-
-    let org_policy = match shard.engine.get_org_share_policy(&user_id, &app.org_id) {
-        Ok(policy) => Some(policy),
-        Err(error) => {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": error.to_string() })),
-            )
-                .into_response();
-        }
-    };
-
-    let app_backfill = match shard.engine.get_app_backfill_status(&user_id, &app_id) {
-        Ok(status) => status,
-        Err(error) => {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": error.to_string() })),
-            )
-                .into_response();
-        }
-    };
-
-    let org_backfill = match shard.engine.get_org_backfill_status(&user_id, &app.org_id) {
-        Ok(status) => status,
-        Err(error) => {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": error.to_string() })),
-            )
-                .into_response();
-        }
-    };
-
-    Json(serde_json::json!({
-        "user_id": user_id,
-        "app_id": app_id,
-        "org_id": app.org_id,
-        "app": app_policy,
-        "organization": org_policy,
-        "app_backfill": app_backfill,
-        "organization_backfill": org_backfill
-    }))
-    .into_response()
-}
-
-async fn update_memory_sharing(
-    State(state): State<Arc<AppState>>,
-    Path((user_id, app_id)): Path<(String, String)>,
-    Json(payload): Json<MemorySharingRequest>,
-) -> axum::response::Response {
-    if let Err(r) = validate_id(&user_id, "user_id") {
-        return r;
-    }
-    if let Err(r) = validate_id(&app_id, "app_id") {
-        return r;
-    }
-    let app = match resolve_registered_app(&state, &app_id).await {
-        Ok(app) => app,
-        Err(response) => return response,
-    };
-    if let Some(org_id) = payload.org_id.as_deref() {
-        if let Err(r) = validate_id(org_id, "org_id") {
-            return r;
-        }
-        if org_id != app.org_id {
-            return (
-                axum::http::StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": "org_id does not match the application's organization"
-                })),
-            )
-                .into_response();
-        }
-    }
-
-    let shard = state.shard_manager.shard_for_user(&user_id);
-
-    if let Some(policy) = payload.app.as_ref() {
-        if let Err(error) = shard.engine.set_app_share_policy(&user_id, &app_id, policy) {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": error.to_string() })),
-            )
-                .into_response();
-        }
-
-        if policy.contribute && policy.include_history {
-            if let Err(error) = shard.engine.schedule_share_backfill(
-                &user_id,
-                &app_id,
-                Some(app.org_id.as_str()),
-                memorose_common::MemoryDomain::App,
-            ) {
-                return (
-                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": error.to_string() })),
-                )
-                    .into_response();
-            }
-        }
-
-        if !policy.contribute {
-            if let Err(error) = shard
-                .engine
-                .disable_app_contribution(&user_id, &app_id)
-                .await
-            {
-                return (
-                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": error.to_string() })),
-                )
-                    .into_response();
-            }
-        }
-    }
-
-    if let Some(policy) = payload.organization.as_ref() {
-        if let Err(error) = shard
-            .engine
-            .set_org_share_policy(&user_id, &app.org_id, policy)
-        {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": error.to_string() })),
-            )
-                .into_response();
-        }
-
-        if policy.contribute && policy.include_history {
-            if let Err(error) = shard.engine.schedule_share_backfill(
-                &user_id,
-                &app_id,
-                Some(app.org_id.as_str()),
-                memorose_common::MemoryDomain::Organization,
-            ) {
-                return (
-                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": error.to_string() })),
-                )
-                    .into_response();
-            }
-        }
-
-        if !policy.contribute {
-            if let Err(error) = shard
-                .engine
-                .disable_org_contribution(&user_id, &app.org_id)
-                .await
-            {
-                return (
-                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": error.to_string() })),
-                )
-                    .into_response();
-            }
-        }
-    }
-
-    get_memory_sharing(
-        State(state),
-        Path((user_id, app_id)),
-        Query(MemorySharingQuery {
-            org_id: Some(app.org_id),
-        }),
-    )
-    .await
-}
-
 #[derive(Deserialize)]
 struct RetrieveRequest {
     query: String,
-    #[serde(default)]
-    include_vector: bool,
+    #[serde(default = "default_retrieve_limit")]
+    limit: usize,
     #[serde(default)]
     enable_arbitration: bool,
     #[serde(default)]
@@ -976,46 +745,22 @@ fn default_graph_depth() -> usize {
     1
 }
 
-#[derive(Deserialize)]
-struct MemorySharingRequest {
-    #[serde(default)]
-    org_id: Option<String>,
-    #[serde(default)]
-    app: Option<SharePolicy>,
-    #[serde(default)]
-    organization: Option<SharePolicy>,
-}
-
-#[derive(Deserialize)]
-struct MemorySharingQuery {
-    #[serde(default)]
-    org_id: Option<String>,
+fn default_retrieve_limit() -> usize {
+    10
 }
 
 async fn retrieve_memory(
     State(state): State<Arc<AppState>>,
-    Path((user_id, app_id, stream_id)): Path<(String, String, Uuid)>,
+    Path((user_id, stream_id)): Path<(String, Uuid)>,
     Json(payload): Json<RetrieveRequest>,
 ) -> axum::response::Response {
+    let start = std::time::Instant::now();
     if let Err(r) = validate_id(&user_id, "user_id") {
         return r;
     }
-    if let Err(r) = validate_id(&app_id, "app_id") {
-        return r;
-    }
-    let app = match resolve_registered_app(&state, &app_id).await {
-        Ok(app) => app,
-        Err(response) => return response,
-    };
     if let Some(org_id) = payload.org_id.as_deref() {
-        if org_id != app.org_id {
-            return (
-                axum::http::StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": "org_id does not match the application's organization"
-                })),
-            )
-                .into_response();
+        if let Err(r) = validate_id(org_id, "org_id") {
+            return r;
         }
     }
     let shard = state.shard_manager.shard_for_user(&user_id);
@@ -1089,12 +834,11 @@ async fn retrieve_memory(
                 .engine
                 .search_hybrid_with_shared(
                     &user_id,
-                    Some(&app_id),
-                    Some(app.org_id.as_str()),
+                    payload.org_id.as_deref(),
                     payload.agent_id.as_deref(),
                     &payload.query,
                     &embedding_f32,
-                    5,
+                    payload.limit.min(100),
                     payload.enable_arbitration,
                     payload.min_score,
                     payload.graph_depth,
@@ -1104,21 +848,34 @@ async fn retrieve_memory(
                 .await
             {
                 Ok(units) => {
-                    let processed_units: Vec<_> = units
+                    #[derive(Serialize)]
+                    struct RetrieveResultItem {
+                        unit: RetrievalMemoryUnitView,
+                        score: f32,
+                    }
+
+                    #[derive(Serialize)]
+                    struct RetrieveResponse {
+                        stream_id: Uuid,
+                        query: String,
+                        results: Vec<RetrieveResultItem>,
+                        query_time_ms: u128,
+                    }
+
+                    let processed_units = units
                         .into_iter()
-                        .map(|(mut u, score)| {
-                            if !payload.include_vector {
-                                u.embedding = None;
-                            }
-                            (u, score)
+                        .map(|(u, score)| RetrieveResultItem {
+                            unit: RetrievalMemoryUnitView::from(u.memory_unit()),
+                            score,
                         })
                         .collect();
 
-                    Json(serde_json::json!({
-                        "stream_id": stream_id,
-                        "query": payload.query,
-                        "results": processed_units
-                    }))
+                    Json(RetrieveResponse {
+                        stream_id,
+                        query: payload.query,
+                        results: processed_units,
+                        query_time_ms: start.elapsed().as_millis(),
+                    })
                     .into_response()
                 }
                 Err(e) => {
@@ -1172,7 +929,7 @@ async fn join_cluster(
             "shards": results,
         }))
     } else {
-        // Single-shard: legacy behavior with address field
+        // Single-shard: join the local raft group using the provided node address
         let shard = state.shard_manager.shard(0).unwrap();
         let node_id = payload.node_id as u64;
 
@@ -1273,7 +1030,7 @@ async fn leave_cluster(
 
 #[derive(serde::Serialize)]
 struct GoalTree {
-    goal: MemoryUnit,
+    goal: GoalMemoryUnitView,
     tasks: Vec<L3TaskTree>,
 }
 
@@ -1341,7 +1098,6 @@ async fn update_task_status(
                     task.org_id.clone(),
                     task.user_id.clone(),
                     task.agent_id.clone(),
-                    task.app_id.clone(),
                     Uuid::new_v4(), // Need stream context actually
                     memorose_common::EventContent::Text(event_content),
                 );
@@ -1386,7 +1142,10 @@ async fn get_all_task_trees(
     let mut root_nodes = Vec::new();
     for unit in all_units.into_iter().filter(|u| u.level == 3) {
         let tasks = build_l3_task_tree(unit.id, &all_tasks, &shard.engine, &user_id, 0).await;
-        root_nodes.push(GoalTree { goal: unit, tasks });
+        root_nodes.push(GoalTree {
+            goal: GoalMemoryUnitView::from(&unit),
+            tasks,
+        });
     }
 
     // Sort by transaction time descending
@@ -1397,7 +1156,7 @@ async fn get_all_task_trees(
 
 async fn get_task_tree(
     State(state): State<Arc<AppState>>,
-    Path((user_id, app_id, stream_id)): Path<(String, String, Uuid)>,
+    Path((user_id, stream_id)): Path<(String, Uuid)>,
 ) -> axum::response::Response {
     let shard = state.shard_manager.shard_for_user(&user_id);
     let kv = shard.engine.kv();
@@ -1412,7 +1171,7 @@ async fn get_task_tree(
     let all_units: Vec<MemoryUnit> = pairs
         .into_iter()
         .filter_map(|(_, v)| serde_json::from_slice::<MemoryUnit>(&v).ok())
-        .filter(|u| u.stream_id == stream_id && (app_id.is_empty() || u.app_id == app_id))
+        .filter(|u| u.stream_id == stream_id)
         .collect();
 
     let all_tasks = match shard.engine.list_l3_tasks(&user_id).await {
@@ -1425,7 +1184,10 @@ async fn get_task_tree(
     let mut root_nodes = Vec::new();
     for unit in all_units.into_iter().filter(|u| u.level == 3) {
         let tasks = build_l3_task_tree(unit.id, &all_tasks, &shard.engine, &user_id, 0).await;
-        root_nodes.push(GoalTree { goal: unit, tasks });
+        root_nodes.push(GoalTree {
+            goal: GoalMemoryUnitView::from(&unit),
+            tasks,
+        });
     }
 
     Json(root_nodes).into_response()

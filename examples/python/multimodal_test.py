@@ -40,8 +40,7 @@ def test_multimodal_ingest():
     # The Vision model should describe it as a red color or pixel.
     
     search_payload = {
-        "query": "red color",
-        "include_vector": False
+        "query": "red color"
     }
     
     print("Searching for 'red color'...")

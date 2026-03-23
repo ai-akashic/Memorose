@@ -51,7 +51,6 @@ function ChatPanel() {
   const [loading, setLoading] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [userId, setUserId] = useStoredString("memorose-playground-chat-user");
-  const [appId, setAppId] = useStoredString("memorose-playground-chat-app");
   const { orgId } = useOrgScope();
   const scrollRef = useRef<HTMLDivElement>(null);
   const streamingMessageRef = useRef<string>("");
@@ -65,7 +64,7 @@ function ChatPanel() {
 
   const handleSend = async () => {
     if (!input.trim() || loading) return;
-    if (!userId.trim() || !appId.trim()) return;
+    if (!userId.trim()) return;
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -84,7 +83,6 @@ function ChatPanel() {
     try {
       await api.ingestEvent({
         user_id: userId.trim(),
-        app_id: appId.trim(),
         stream_id: "chat",
         content: {
           type: "text",
@@ -101,7 +99,6 @@ function ChatPanel() {
         body: JSON.stringify({
           message: messageContent,
           user_id: userId.trim(),
-          app_id: appId.trim(),
           ...(scopedOrgId ? { org_id: scopedOrgId } : {}),
           context_limit: 5,
         }),
@@ -165,7 +162,7 @@ function ChatPanel() {
         {
           id: Date.now().toString(),
           role: "assistant",
-          content: `Error: ${error instanceof Error ? error.message : "Unknown error"}`,
+          content: `${t("chat.errorPrefix")}: ${error instanceof Error ? error.message : t("retrieve.unknownError")}`,
           timestamp: new Date(),
         },
       ]);
@@ -202,16 +199,6 @@ function ChatPanel() {
             className="w-40 h-9 text-[13px] font-mono bg-card border-border"
           />
         </div>
-        <div className="flex flex-col gap-1.5">
-          <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("chat.scope")}</label>
-          <Input
-            type="text"
-            value={appId}
-            onChange={(e) => setAppId(e.target.value)}
-            placeholder={t("chat.appId")}
-            className="w-40 h-9 text-[13px] font-mono bg-card border-border"
-          />
-        </div>
       </motion.div>
 
       {scopedOrgId && (
@@ -239,7 +226,7 @@ function ChatPanel() {
                   <p className="text-sm opacity-50 max-w-xs text-center leading-relaxed">
                     {t("chat.welcomeDesc")}
                   </p>
-                  {(!userId.trim() || !appId.trim()) && (
+                  {!userId.trim() && (
                     <p className="mt-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
                       {t("chat.setCredentials")}
                     </p>
@@ -303,7 +290,7 @@ function ChatPanel() {
               />
               <Button
                 onClick={handleSend}
-                disabled={loading || !input.trim() || !userId.trim() || !appId.trim()}
+                disabled={loading || !input.trim() || !userId.trim()}
                 size="icon"
                 className={cn(
                   "h-12 w-12 rounded-xl transition-all duration-500",
@@ -327,7 +314,6 @@ function ChatPanel() {
 function RetrievePanel() {
   const t = useTranslations("Playground");
   const [userId, setUserId] = useStoredString("memorose-playground-retrieve-user");
-  const [appId, setAppId] = useStoredString("memorose-playground-retrieve-app");
   const [streamId, setStreamId] = useStoredString("memorose-playground-retrieve-stream", "chat");
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState("10");
@@ -341,17 +327,10 @@ function RetrievePanel() {
   const [error, setError] = useState<string | null>(null);
   const { orgId } = useOrgScope();
   const scopedOrgId = orgId.trim();
-
-  // Suggestions
-  const [apps, setApps] = useState<string[]>([]);
   const [streams] = useState<string[]>(["chat", "system", "logs", "internal"]);
 
-  useEffect(() => {
-    api.list_apps(scopedOrgId).then(res => setApps(res.apps.map(a => a.app_id))).catch(() => {});
-  }, [scopedOrgId]);
-
   async function handleRetrieve() {
-    if (!query.trim() || !userId.trim() || !appId.trim() || !streamId.trim()) return;
+    if (!query.trim() || !userId.trim() || !streamId.trim()) return;
     setLoading(true);
     setError(null);
     setResults(null);
@@ -364,11 +343,12 @@ function RetrievePanel() {
         ...(validTimeStart ? { start_time: validTimeStart } : {}),
         ...(validTimeEnd ? { end_time: validTimeEnd } : {}),
         ...(asOf ? { as_of: asOf } : {}),
+        ...(scopedOrgId ? { org_id: scopedOrgId } : {}),
       };
-      const res = await api.retrieve(userId.trim(), appId.trim(), streamId.trim(), body);
+      const res = await api.retrieve(userId.trim(), streamId.trim(), body);
       setResults(res);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unknown error");
+      setError(e instanceof Error ? e.message : t("retrieve.unknownError"));
     } finally {
       setLoading(false);
     }
@@ -379,7 +359,7 @@ function RetrievePanel() {
       {/* Context + Query */}
       <Card className="glass-card p-6 rounded-3xl">
         <div className="space-y-6">
-          <div className="grid grid-cols-3 gap-6">
+          <div className="grid grid-cols-2 gap-6">
             <div className="space-y-2">
               <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("retrieve.userId")}</label>
               <Input
@@ -387,18 +367,6 @@ function RetrievePanel() {
                 onChange={(e) => setUserId(e.target.value)}
                 className="h-11 text-[13px] font-mono bg-card border-border"
               />
-            </div>
-            <div className="space-y-2">
-              <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("retrieve.appId")}</label>
-              <Input
-                list="app-suggestions"
-                value={appId}
-                onChange={(e) => setAppId(e.target.value)}
-                className="h-11 text-[13px] font-mono bg-card border-border"
-              />
-              <datalist id="app-suggestions">
-                {apps.map(a => <option key={a} value={a} />)}
-              </datalist>
             </div>
             <div className="space-y-2">
               <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("retrieve.streamId")}</label>
@@ -430,7 +398,7 @@ function RetrievePanel() {
             />
             <Button
               onClick={handleRetrieve}
-              disabled={loading || !query.trim() || !userId.trim() || !appId.trim() || !streamId.trim()}
+              disabled={loading || !query.trim() || !userId.trim() || !streamId.trim()}
               className="h-14 px-8 gap-3 rounded-2xl text-[11px] font-medium uppercase tracking-widest text-muted-foreground"
             >
               {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
@@ -491,7 +459,7 @@ function RetrievePanel() {
                     <p className="text-sm leading-relaxed flex-1">{r.unit.content}</p>
                     <div className="shrink-0 text-right">
                       <div className="text-sm font-mono font-semibold text-primary">{(r.score * 100).toFixed(1)}%</div>
-                      <div className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">score</div>
+                      <div className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("retrieve.scoreLabel")}</div>
                     </div>
                   </div>
                   <div className="flex items-center gap-3 flex-wrap text-[11px] font-medium uppercase tracking-widest text-muted-foreground">

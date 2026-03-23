@@ -847,7 +847,6 @@ mod tests {
             None,
             "test_user".into(),
             None,
-            "test_app".into(),
             Uuid::new_v4(),
             memorose_common::EventContent::Text("test".into()),
         );
@@ -887,7 +886,6 @@ mod tests {
             None,
             "test_user".into(),
             None,
-            "test_app".into(),
             Uuid::new_v4(),
             memorose_common::EventContent::Text("snapshot data".into()),
         );

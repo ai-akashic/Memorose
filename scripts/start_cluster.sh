@@ -14,6 +14,7 @@ readonly ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 readonly SERVER_BIN="${ROOT_DIR}/target/debug/memorose-server"
 readonly DASHBOARD_DIR="${ROOT_DIR}/dashboard"
 readonly BUILD_DASHBOARD_SCRIPT="${SCRIPT_DIR}/build_dashboard.sh"
+readonly DASHBOARD_SERVER_ENTRY="${DASHBOARD_DIR}/.next/standalone/server.js"
 readonly LOG_DIR="${ROOT_DIR}/logs"
 readonly DATA_DIR="${ROOT_DIR}/data"
 readonly PID_DIR="${ROOT_DIR}/.pids"
@@ -30,6 +31,7 @@ COMMAND=""
 MODE="cluster"
 CLEAN_DATA=false
 FORCE_BUILD=false
+CLUSTER_AUTH_ARGS=()
 
 log_info() {
     printf '%s\n' "${BLUE}==>${NC} $*"
@@ -92,6 +94,16 @@ trim() {
     local value="$1"
     value="${value#"${value%%[![:space:]]*}"}"
     value="${value%"${value##*[![:space:]]}"}"
+    printf '%s' "${value}"
+}
+
+json_escape() {
+    local value="$1"
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    value="${value//$'\n'/\\n}"
+    value="${value//$'\r'/\\r}"
+    value="${value//$'\t'/\\t}"
     printf '%s' "${value}"
 }
 
@@ -163,7 +175,10 @@ save_pid() {
 
 remove_pid_file() {
     local pid_file="$1"
-    [[ -f "${pid_file}" ]] && rm -f "${pid_file}"
+    if [[ -f "${pid_file}" ]]; then
+        rm -f "${pid_file}"
+    fi
+    return 0
 }
 
 wait_for_http() {
@@ -177,7 +192,7 @@ wait_for_http() {
             return 0
         fi
         sleep 1
-        ((attempt++))
+        ((attempt += 1))
     done
 
     log_error "${label} did not become ready: ${url}"
@@ -192,6 +207,11 @@ tail_log_file() {
     echo ""
     log_info "Last ${lines} lines from ${log_file##${ROOT_DIR}/}:"
     tail -n "${lines}" "${log_file}" || true
+}
+
+extract_json_string_field() {
+    local key="$1"
+    sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p"
 }
 
 wait_for_pid_and_http() {
@@ -214,7 +234,7 @@ wait_for_pid_and_http() {
         fi
 
         sleep 1
-        ((attempt++))
+        ((attempt += 1))
     done
 
     log_error "${label} did not become ready: ${url}"
@@ -222,10 +242,34 @@ wait_for_pid_and_http() {
     return 1
 }
 
+prepare_cluster_auth() {
+    local password response token escaped_password
+
+    password="${DASHBOARD_ADMIN_PASSWORD:-admin}"
+    escaped_password="$(json_escape "${password}")"
+
+    response="$(
+        curl -fsS --max-time 15 \
+            -X POST "http://127.0.0.1:3000/v1/dashboard/auth/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"admin\",\"password\":\"${escaped_password}\"}" 2>&1 || true
+    )"
+    token="$(printf '%s' "${response}" | extract_json_string_field "token")"
+
+    if [[ -z "${token}" ]]; then
+        log_error "Failed to obtain dashboard auth token for cluster bootstrap"
+        log_error "Login response: ${response}"
+        return 1
+    fi
+
+    CLUSTER_AUTH_ARGS=(-H "Authorization: Bearer ${token}")
+}
+
 check_prerequisites() {
     require_command cargo
     require_command curl
     require_command pnpm
+    require_command node
 
     local needs_rust_build=false
     local needs_ui_build=false
@@ -239,7 +283,7 @@ check_prerequisites() {
         needs_rust_build=true
     fi
 
-    if [[ ! -f "${DASHBOARD_DIR}/.next/BUILD_ID" ]]; then
+    if [[ ! -f "${DASHBOARD_DIR}/.next/BUILD_ID" || ! -f "${DASHBOARD_SERVER_ENTRY}" ]]; then
         needs_ui_build=true
     fi
 
@@ -292,7 +336,7 @@ stop_pid_file_if_running() {
             return 0
         fi
         sleep 1
-        ((waited++))
+        ((waited += 1))
     done
 
     log_warn "${label} did not exit gracefully, sending SIGKILL"
@@ -302,6 +346,42 @@ stop_pid_file_if_running() {
 
 stop_dashboard() {
     stop_pid_file_if_running "${DASHBOARD_PID_FILE}" "dashboard"
+}
+
+stop_untracked_processes() {
+    local pattern="$1"
+    local label="$2"
+
+    if pkill -f "${pattern}" 2>/dev/null; then
+        log_warn "Found untracked ${label} processes, stopping them"
+        sleep 1
+        pkill -9 -f "${pattern}" 2>/dev/null || true
+        return 0
+    fi
+
+    return 1
+}
+
+stop_port_listeners() {
+    local port="$1"
+    local label="$2"
+    local pids=()
+
+    command -v lsof >/dev/null 2>&1 || return 1
+
+    while IFS= read -r pid; do
+        [[ -n "${pid}" ]] && pids+=("${pid}")
+    done < <(lsof -tiTCP:"${port}" -sTCP:LISTEN 2>/dev/null || true)
+
+    if [[ ${#pids[@]} -eq 0 ]]; then
+        return 1
+    fi
+
+    log_warn "Found ${label} listeners on port ${port}, stopping them"
+    kill "${pids[@]}" 2>/dev/null || true
+    sleep 1
+    kill -9 "${pids[@]}" 2>/dev/null || true
+    return 0
 }
 
 stop_servers() {
@@ -322,9 +402,27 @@ stop_servers() {
 
     stop_dashboard
 
-    if pgrep -f "/memorose-server" >/dev/null 2>&1; then
-        log_warn "Found memorose-server processes outside tracked PID files, stopping them"
-        pkill -9 -f "/memorose-server" 2>/dev/null || true
+    if stop_untracked_processes "memorose-server" "memorose-server"; then
+        stopped_any=true
+    fi
+
+    if stop_untracked_processes "dashboard/.next/standalone/server.js" "dashboard"; then
+        stopped_any=true
+    fi
+
+    if stop_port_listeners 3000 "Memorose API"; then
+        stopped_any=true
+    fi
+
+    if stop_port_listeners 3001 "Memorose API"; then
+        stopped_any=true
+    fi
+
+    if stop_port_listeners 3002 "Memorose API"; then
+        stopped_any=true
+    fi
+
+    if stop_port_listeners "${DASHBOARD_PORT}" "dashboard"; then
         stopped_any=true
     fi
 
@@ -410,8 +508,8 @@ start_dashboard() {
 
     (
         cd "${DASHBOARD_DIR}"
-        PORT="${DASHBOARD_PORT}" HOSTNAME="127.0.0.1" pnpm start
-    ) >"${log_file}" 2>&1 &
+        exec nohup env PORT="${DASHBOARD_PORT}" HOSTNAME="127.0.0.1" node ".next/standalone/server.js"
+    ) >"${log_file}" 2>&1 </dev/null &
 
     local pid=$!
     save_pid "${DASHBOARD_PID_FILE}" "${pid}"
@@ -444,13 +542,13 @@ start_node() {
     log_info "Starting node ${node_id} on http://localhost:${port} (raft: ${raft_addr})..."
     (
         cd "${ROOT_DIR}"
-        env \
+        exec nohup env \
             NODE_ID="${node_id}" \
             RAFT_ADDR="${raft_addr}" \
             NO_PROXY="${NO_PROXY:-127.0.0.1,localhost}" \
             no_proxy="${no_proxy:-127.0.0.1,localhost}" \
             "${SERVER_BIN}"
-    ) >"${log_file}" 2>&1 &
+    ) >"${log_file}" 2>&1 </dev/null &
 
     pid=$!
     save_pid "${pid_file}" "${pid}"
@@ -471,7 +569,11 @@ start_node() {
 initialize_single_node() {
     log_info "Initializing single-node Raft cluster..."
     local response
-    response="$(curl -fsS -X POST "http://127.0.0.1:3000/v1/cluster/initialize" 2>&1 || true)"
+    response="$(
+        curl -fsS --max-time 15 \
+            "${CLUSTER_AUTH_ARGS[@]}" \
+            -X POST "http://127.0.0.1:3000/v1/cluster/initialize" 2>&1 || true
+    )"
     log_info "Initialize response: ${response}"
 }
 
@@ -483,6 +585,7 @@ join_cluster_node() {
     log_info "Joining node ${joiner_id} (${joiner_addr})..."
     response="$(
         curl -fsS --max-time 15 \
+            "${CLUSTER_AUTH_ARGS[@]}" \
             -X POST "http://127.0.0.1:3000/v1/cluster/join" \
             -H "Content-Type: application/json" \
             -d "{\"node_id\": ${joiner_id}, \"address\": \"${joiner_addr}\"}" 2>&1 || true
@@ -493,6 +596,7 @@ join_cluster_node() {
 start_standalone() {
     log_info "Starting Memorose in standalone mode"
     start_node 1 3000 "127.0.0.1:5001"
+    prepare_cluster_auth
     initialize_single_node
     start_dashboard
 
@@ -518,6 +622,8 @@ start_cluster() {
         IFS=':' read -r node_id port raft_addr <<< "${spec}"
         start_node "${node_id}" "${port}" "${raft_addr}"
     done
+
+    prepare_cluster_auth
 
     if [[ "${warm_restart}" == "true" ]]; then
         log_info "Waiting briefly for leader election..."

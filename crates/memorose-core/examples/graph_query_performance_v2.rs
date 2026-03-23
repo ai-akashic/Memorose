@@ -22,12 +22,11 @@ async fn main() -> Result<()> {
     let engine = MemoroseEngine::new_with_default_threshold(&data_dir, 1000, true, true).await?;
 
     let user_id = "perf_test_user";
-    let app_id = "perf_test_app";
     let stream_id = Uuid::new_v4();
 
     // 构建更大的测试图：1000 节点
     println!("📊 Building test graph (1000 nodes, ~5000 edges)...");
-    let nodes = build_test_graph(&engine, user_id, app_id, stream_id, 1000, 5).await?;
+    let nodes = build_test_graph(&engine, user_id, stream_id, 1000, 5).await?;
     println!("✅ Graph built\n");
 
     // === 测试 1: 批量查询性能 ===
@@ -58,7 +57,6 @@ async fn main() -> Result<()> {
 async fn build_test_graph(
     engine: &MemoroseEngine,
     user_id: &str,
-    app_id: &str,
     stream_id: Uuid,
     num_nodes: usize,
     avg_edges_per_node: usize,
@@ -73,7 +71,6 @@ async fn build_test_graph(
             None,
             user_id.to_string(),
             None,
-            app_id.to_string(),
             stream_id,
             memorose_common::MemoryType::Factual,
             content,

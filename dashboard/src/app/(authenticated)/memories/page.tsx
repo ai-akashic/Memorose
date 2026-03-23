@@ -2,12 +2,14 @@
 
 import { useState, useCallback, useEffect, useMemo } from "react";
 import dynamic from "next/dynamic";
-import { useAgents, useGraph, useMemories, useStoredString, useTaskTree } from "@/lib/hooks";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useAgents, useGraph, useMemories, useStoredString } from "@/lib/hooks";
 import { api } from "@/lib/api";
 import { useOrgScope } from "@/lib/org-scope";
 import { truncate } from "@/lib/utils";
-import type { MemoryUnit, SearchResult } from "@/lib/types";
-import { TaskTreeViewer } from "@/components/TaskTreeViewer";
+import type { DashboardMemoryDetail, SearchResult } from "@/lib/types";
+import { TaskWorkspace } from "@/components/task-workspace";
+import { OrganizationKnowledgeDetail } from "@/components/organization-knowledge-detail";
 import {
   Search,
   ChevronLeft,
@@ -76,7 +78,7 @@ function MemoryDetailSheet({
   open,
   onOpenChange,
 }: {
-  memory: MemoryUnit | null;
+  memory: DashboardMemoryDetail | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -98,11 +100,7 @@ function MemoryDetailSheet({
             <div className="grid grid-cols-2 gap-4">
               <div className="flex flex-col gap-1.5">
                 <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("detail.user")}</span>
-                <p className="font-mono text-[11px] text-foreground/70">{memory.user_id}</p>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("detail.application")}</span>
-                <p className="font-mono text-[11px] text-foreground/70">{memory.app_id}</p>
+                <p className="font-mono text-[11px] text-foreground/70">{memory.user_id || "—"}</p>
               </div>
             </div>
 
@@ -127,7 +125,9 @@ function MemoryDetailSheet({
             <div className="grid grid-cols-2 gap-4 opacity-60">
               <div className="flex flex-col gap-1">
                 <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("detail.telemetry")}</span>
-                <p className="text-[11px] font-mono text-muted-foreground">ACC: {memory.access_count} · STRM: {memory.stream_id}</p>
+                <p className="text-[11px] font-mono text-muted-foreground">
+                  {new Date(memory.transaction_time).toLocaleString()}
+                </p>
               </div>
             </div>
 
@@ -141,6 +141,22 @@ function MemoryDetailSheet({
                 </div>
               </div>
             )}
+
+            {memory.organization_knowledge ? (
+              <div className="flex flex-col gap-3">
+                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+                  {t("detail.organizationKnowledge")}
+                </span>
+                <OrganizationKnowledgeDetail
+                  orgId={memory.org_id ?? ""}
+                  knowledge={{ unit: memory, knowledge: memory.organization_knowledge }}
+                  showHeader={false}
+                  showPayload={false}
+                  showKeywords={false}
+                  showOpenDetailLink={Boolean(memory.org_id)}
+                />
+              </div>
+            ) : null}
           </div>
         )}
       </SheetContent>
@@ -289,7 +305,6 @@ function SearchPlayground({
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState("hybrid");
   const [searchUserId, setSearchUserId] = useState(globalUserId || "");
-  const [appId, setAppId] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [queryTime, setQueryTime] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
@@ -317,7 +332,6 @@ function SearchPlayground({
         mode,
         limit: 10,
         user_id: searchUserId.trim(),
-        app_id: appId || undefined,
         org_id: orgId || undefined,
       });
       setResults(res.results);
@@ -325,7 +339,7 @@ function SearchPlayground({
     } catch (error) {
       setResults([]);
       setQueryTime(null);
-      setSearchError(error instanceof Error ? error.message : "Search failed");
+      setSearchError(error instanceof Error ? error.message : t("search.failed"));
     } finally {
       setLoading(false);
     }
@@ -365,13 +379,6 @@ function SearchPlayground({
             value={searchUserId}
             onChange={(e) => setSearchUserId(e.target.value)}
             placeholder={t("search.userIdPlaceholder")}
-            className="flex-1 h-8 font-mono bg-card border-border focus:border-primary/40 text-[11px] font-medium uppercase tracking-widest text-muted-foreground"
-          />
-          <Input
-            type="text"
-            value={appId}
-            onChange={(e) => setAppId(e.target.value)}
-            placeholder={t("search.appIdPlaceholder")}
             className="flex-1 h-8 font-mono bg-card border-border focus:border-primary/40 text-[11px] font-medium uppercase tracking-widest text-muted-foreground"
           />
         </div>
@@ -457,7 +464,7 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
   const [agentId, setAgentId] = useState<string>("all");
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState("importance");
-  const [selectedMemory, setSelectedMemory] = useState<MemoryUnit | null>(null);
+  const [selectedMemory, setSelectedMemory] = useState<DashboardMemoryDetail | null>(null);
 
   const { data: agentsData } = useAgents();
   const parsedLevel = levelFilter === "all" ? undefined : Number(levelFilter);
@@ -580,7 +587,7 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
                     className={`border-white/5 transition-colors ${canOpenDetail ? "cursor-pointer group hover:bg-white/[0.03]" : "opacity-95"}`}
                   >
                     <TableCell>
-                      <span className="text-xs font-mono truncate block max-w-[100px] text-foreground/80">{m.user_id}</span>
+                      <span className="text-xs font-mono truncate block max-w-[100px] text-foreground/80">{m.user_id || "—"}</span>
                     </TableCell>
                     <TableCell>
                       {m.agent_id ? (
@@ -657,34 +664,28 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
   );
 }
 
-function TasksTab({ userId }: { userId?: string }) {
-  const t = useTranslations("Memories");
-  const { data: trees, isLoading, error } = useTaskTree(userId);
-
-  if (!userId || userId === "all") {
-    return (
-      <div className="flex flex-col items-center justify-center p-8 text-center text-muted-foreground border rounded-lg bg-muted/5 border-dashed mt-4">
-        <p>{t("taskScope")}</p>
-      </div>
-    );
-  }
-
-  if (isLoading) return <div className="p-4 text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> {t("graph.loading")}</div>;
-  if (error) return <div className="p-4 text-sm text-red-500 border border-red-200 bg-red-50/50 rounded-lg">Error loading tasks: {error.message}</div>;
-
-  return (
-    <div className="flex-1 overflow-auto pr-2 mt-4">
-      <TaskTreeViewer trees={trees || []} />
-    </div>
-  );
-}
-
 export default function MemoriesPage() {
   const t = useTranslations("Memories");
   const [userIdInput, setUserIdInput] = useStoredString("memorose-dashboard-memories-user");
   const { orgId } = useOrgScope();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const userId = userIdInput.trim();
   const scopedOrgId = orgId.trim();
+  const requestedTab = searchParams.get("tab");
+  const activeTab = requestedTab === "graph" || requestedTab === "search" || requestedTab === "tasks" ? requestedTab : "list";
+
+  function handleTabChange(nextTab: string) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (nextTab === "list") {
+      params.delete("tab");
+    } else {
+      params.set("tab", nextTab);
+    }
+    const nextUrl = params.toString() ? `${pathname}?${params.toString()}` : pathname;
+    router.replace(nextUrl);
+  }
 
   return (
     <div className="space-y-6 h-full flex flex-col relative">
@@ -707,7 +708,7 @@ export default function MemoriesPage() {
         </div>
       </div>
 
-      <Tabs defaultValue="list" className="flex-1 flex flex-col min-h-0">
+      <Tabs value={activeTab} onValueChange={handleTabChange} className="flex-1 flex flex-col min-h-0">
         <TabsList className="bg-card border border-border self-start p-1 rounded-xl">
           <TabsTrigger value="list" className="gap-2 px-4 data-[state=active]:bg-white/5 data-[state=active]:text-white transition-all text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
             <List className="w-3 h-3 opacity-60" /> {t("tabs.list")}
@@ -733,7 +734,7 @@ export default function MemoriesPage() {
           <SearchPlayground globalUserId={userId || undefined} orgId={scopedOrgId || undefined} />
         </TabsContent>
         <TabsContent value="tasks" className="flex-1 mt-0">
-          <TasksTab userId={userId || undefined} />
+          <TaskWorkspace userId={userId || undefined} />
         </TabsContent>
       </Tabs>
     </div>

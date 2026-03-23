@@ -47,7 +47,6 @@ pub struct Event {
     pub org_id: Option<String>,
     pub user_id: String,
     pub agent_id: Option<String>,
-    pub app_id: String,
     pub stream_id: Uuid,
     pub content: EventContent,
     pub transaction_time: DateTime<Utc>,
@@ -60,7 +59,6 @@ impl Event {
         org_id: Option<String>,
         user_id: String,
         agent_id: Option<String>,
-        app_id: String,
         stream_id: Uuid,
         content: EventContent,
     ) -> Self {
@@ -69,7 +67,6 @@ impl Event {
             org_id,
             user_id,
             agent_id,
-            app_id,
             stream_id,
             content,
             transaction_time: Utc::now(),
@@ -134,7 +131,6 @@ pub enum MemoryDomain {
     Agent,
     #[default]
     User,
-    App,
     Organization,
 }
 
@@ -143,7 +139,6 @@ impl MemoryDomain {
         match self {
             MemoryDomain::Agent => "agent",
             MemoryDomain::User => "user",
-            MemoryDomain::App => "app",
             MemoryDomain::Organization => "organization",
         }
     }
@@ -179,7 +174,6 @@ impl EdgeKind {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ShareTarget {
-    App,
     Organization,
 }
 
@@ -211,7 +205,6 @@ pub struct L3Task {
     pub org_id: Option<String>,
     pub user_id: String,
     pub agent_id: Option<String>,
-    pub app_id: String,
     pub parent_id: Option<Uuid>, // Hierarchy support
 
     pub title: String,
@@ -234,7 +227,6 @@ impl L3Task {
         org_id: Option<String>,
         user_id: String,
         agent_id: Option<String>,
-        app_id: String,
         title: String,
         description: String,
     ) -> Self {
@@ -244,7 +236,6 @@ impl L3Task {
             org_id,
             user_id,
             agent_id,
-            app_id,
             parent_id: None,
             title,
             description,
@@ -288,7 +279,7 @@ impl GraphEdge {
         weight: f32,
     ) -> Self {
         let namespace_key =
-            MemoryUnit::build_namespace_key(&MemoryDomain::User, None, Some(&user_id), None, None);
+            MemoryUnit::build_namespace_key(&MemoryDomain::User, None, Some(&user_id), None);
         Self::new_scoped(
             user_id,
             source,
@@ -363,15 +354,12 @@ pub struct MemoryUnit {
     pub org_id: Option<String>,
     pub user_id: String,
     pub agent_id: Option<String>,
-    pub app_id: String,
     pub stream_id: Uuid,
     pub memory_type: MemoryType,
     pub domain: MemoryDomain,
     pub namespace_key: String,
     #[serde(default)]
     pub share_policy: SharePolicy,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub projected_from: Vec<Uuid>,
 
     /// Semantic content (compressed/summarized text)
     pub content: String,
@@ -411,7 +399,6 @@ impl MemoryUnit {
         org_id: Option<String>,
         user_id: String,
         agent_id: Option<String>,
-        app_id: String,
         stream_id: Uuid,
         memory_type: MemoryType,
         content: String,
@@ -422,7 +409,6 @@ impl MemoryUnit {
             org_id,
             user_id,
             agent_id,
-            app_id,
             stream_id,
             memory_type,
             domain,
@@ -435,7 +421,6 @@ impl MemoryUnit {
         org_id: Option<String>,
         user_id: String,
         agent_id: Option<String>,
-        app_id: String,
         stream_id: Uuid,
         memory_type: MemoryType,
         domain: MemoryDomain,
@@ -447,7 +432,6 @@ impl MemoryUnit {
             &domain,
             org_id.as_deref(),
             Some(&user_id),
-            Some(&app_id),
             agent_id.as_deref(),
         );
         Self {
@@ -455,13 +439,11 @@ impl MemoryUnit {
             org_id,
             user_id,
             agent_id,
-            app_id,
             stream_id,
             memory_type,
             domain,
             namespace_key,
             share_policy: SharePolicy::default(),
-            projected_from: Vec::new(),
             content,
             embedding,
             keywords: Vec::new(),
@@ -489,21 +471,22 @@ impl MemoryUnit {
         domain: &MemoryDomain,
         org_id: Option<&str>,
         user_id: Option<&str>,
-        app_id: Option<&str>,
         agent_id: Option<&str>,
     ) -> String {
         match domain {
+            // Three-domain direction:
+            // - Agent memory is scoped to the agent itself (optionally under an org)
+            // - User memory is scoped to the user itself (optionally under an org)
             MemoryDomain::Agent => format!(
-                "agent:{}:{}:{}",
-                user_id.unwrap_or("_anonymous"),
-                app_id.unwrap_or("_app"),
+                "agent:{}:{}",
+                org_id.unwrap_or("_global"),
                 agent_id.unwrap_or("_agent")
             ),
-            MemoryDomain::User => format!("user:{}", user_id.unwrap_or("_anonymous")),
-            MemoryDomain::App => match org_id {
-                Some(org_id) => format!("app:{org_id}:{}", app_id.unwrap_or("_app")),
-                None => format!("app:{}", app_id.unwrap_or("_app")),
-            },
+            MemoryDomain::User => format!(
+                "user:{}:{}",
+                org_id.unwrap_or("_global"),
+                user_id.unwrap_or("_anonymous")
+            ),
             MemoryDomain::Organization => {
                 format!("org:{}", org_id.unwrap_or("_global"))
             }
@@ -519,14 +502,7 @@ mod tests {
     fn test_event_serialization() {
         let stream_id = Uuid::new_v4();
         let content = EventContent::Text("Hello World".to_string());
-        let event = Event::new(
-            None,
-            "user1".into(),
-            None,
-            "app1".into(),
-            stream_id,
-            content,
-        );
+        let event = Event::new(None, "user1".into(), None, stream_id, content);
 
         let json = serde_json::to_string(&event).expect("Failed to serialize");
         let deserialized: Event = serde_json::from_str(&json).expect("Failed to deserialize");
@@ -534,7 +510,6 @@ mod tests {
         assert_eq!(event.id, deserialized.id);
         assert_eq!(event.stream_id, deserialized.stream_id);
         assert_eq!(deserialized.user_id, "user1");
-        assert_eq!(deserialized.app_id, "app1");
     }
 
     #[test]
@@ -546,7 +521,6 @@ mod tests {
             None,
             "u1".into(),
             None,
-            "a1".into(),
             Uuid::new_v4(),
             MemoryType::Factual,
             "text".into(),
@@ -560,7 +534,6 @@ mod tests {
             None,
             "u1".into(),
             None,
-            "a1".into(),
             Uuid::new_v4(),
             EventContent::Text("test".into()),
         );
@@ -571,10 +544,9 @@ mod tests {
     #[test]
     fn test_memory_unit_new_infers_agent_domain() {
         let unit = MemoryUnit::new(
-            None,
+            Some("org1".into()),
             "u1".into(),
             Some("agent1".into()),
-            "a1".into(),
             Uuid::new_v4(),
             MemoryType::Procedural,
             "tool trace".into(),
@@ -582,6 +554,6 @@ mod tests {
         );
 
         assert_eq!(unit.domain, MemoryDomain::Agent);
-        assert_eq!(unit.namespace_key, "agent:u1:a1:agent1");
+        assert_eq!(unit.namespace_key, "agent:org1:agent1");
     }
 }

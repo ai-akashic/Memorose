@@ -5,8 +5,8 @@ import "./globals.css";
 import { ClientIntlProvider } from "@/components/ClientIntlProvider";
 
 export const metadata: Metadata = {
-  title: "Memorose Dashboard",
-  description: "Memorose - Memory graph visualization and management",
+  title: "Memorose Control Plane",
+  description: "Inspect cluster state, memories, tasks, and organization knowledge in Memorose.",
 };
 
 export default function RootLayout({
@@ -15,7 +15,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en" className="dark" suppressHydrationWarning>
       <body
         className={`${GeistSans.variable} ${GeistMono.variable} antialiased h-screen overflow-hidden`}
       >

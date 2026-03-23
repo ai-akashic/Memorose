@@ -40,13 +40,10 @@ async fn main() -> Result<()> {
     vec_c[10] = 1.0; // Orthogonal to A/B
 
     let user_id = "example_user".to_string();
-    let app_id = "example_app".to_string();
-
     let unit_a = MemoryUnit::new(
         None,
         user_id.clone(),
         None,
-        app_id.clone(),
         stream_id,
         memorose_common::MemoryType::Factual,
         "I like coding in Rust".into(),
@@ -56,7 +53,6 @@ async fn main() -> Result<()> {
         None,
         user_id.clone(),
         None,
-        app_id.clone(),
         stream_id,
         memorose_common::MemoryType::Factual,
         "Rust is a safe systems language".into(),
@@ -66,7 +62,6 @@ async fn main() -> Result<()> {
         None,
         user_id.clone(),
         None,
-        app_id.clone(),
         stream_id,
         memorose_common::MemoryType::Factual,
         "The weather is sunny today".into(),
@@ -81,9 +76,7 @@ async fn main() -> Result<()> {
 
     // 4. Vector Search (Simulate retrieving "Rust" related memories)
     println!("\n🔍 Searching for similar vectors (Query: Topic 1)...");
-    let results = engine
-        .search_similar(&user_id, Some(app_id.as_str()), &vec_a, 5, None)
-        .await?;
+    let results = engine.search_similar(&user_id, &vec_a, 5, None).await?;
     for (unit, score) in results {
         println!("   - Found: \"{}\" (Score: {:.4})", unit.content, score);
     }
@@ -91,7 +84,7 @@ async fn main() -> Result<()> {
     // 5. Full-text Search
     println!("\n🔎 Full-text Search (Query: 'weather')...");
     let text_results = engine
-        .search_text(&user_id, Some(app_id.as_str()), "weather", 5, false, None)
+        .search_text(&user_id, "weather", 5, false, None)
         .await?;
     for unit in text_results {
         println!("   - Found: \"{}\"", unit.content);

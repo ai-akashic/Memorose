@@ -8,7 +8,6 @@ import {
   Database,
   GitBranch,
   Layers,
-  Package,
   Share2,
   User,
 } from "lucide-react";
@@ -375,7 +374,6 @@ export default function MetricsPage() {
             rows={[
               { label: t("domainMix.agent"), value: stats?.memory_by_domain.agent ?? 0, tone: "text-primary" },
               { label: t("domainMix.user"), value: stats?.memory_by_domain.user ?? 0, tone: "text-success" },
-              { label: t("domainMix.app"), value: stats?.memory_by_domain.app ?? 0, tone: "text-warning" },
               {
                 label: t("domainMix.organization"),
                 value: stats?.memory_by_domain.organization ?? 0,
@@ -400,11 +398,10 @@ export default function MetricsPage() {
           />
         </motion.div>
 
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <StatCard label={t("stats.agentDomain")} value={stats?.memory_by_domain.agent ?? 0} icon={Bot} delay={0.35} />
           <StatCard label={t("stats.userDomain")} value={stats?.memory_by_domain.user ?? 0} icon={User} color="text-success" delay={0.4} />
-          <StatCard label={t("stats.appDomain")} value={stats?.memory_by_domain.app ?? 0} icon={Package} color="text-warning" delay={0.45} />
-          <StatCard label={t("stats.orgDomain")} value={stats?.memory_by_domain.organization ?? 0} icon={Database} delay={0.5} />
+          <StatCard label={t("stats.orgDomain")} value={stats?.memory_by_domain.organization ?? 0} icon={Database} delay={0.45} />
         </div>
       </div>
     </div>

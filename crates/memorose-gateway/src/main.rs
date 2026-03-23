@@ -326,7 +326,7 @@ mod tests {
     #[test]
     fn test_extract_user_id() {
         assert_eq!(
-            extract_user_id("v1/users/alice/apps/myapp/streams/123/events"),
+            extract_user_id("v1/users/alice/streams/123/events"),
             Some("alice")
         );
         assert_eq!(extract_user_id("v1/users/bob/graph/edges"), Some("bob"));
@@ -338,8 +338,8 @@ mod tests {
     fn test_shard_routing_determinism() {
         let shard_count = 3;
 
-        let uid1 = extract_user_id("v1/users/alice/apps/app1/streams/abc123/events").unwrap();
-        let uid2 = extract_user_id("v1/users/alice/apps/app2/streams/def456/retrieve").unwrap();
+        let uid1 = extract_user_id("v1/users/alice/streams/abc123/events").unwrap();
+        let uid2 = extract_user_id("v1/users/alice/streams/def456/retrieve").unwrap();
         assert_eq!(uid1, uid2);
 
         let shard_a = user_id_to_shard(uid1, shard_count);

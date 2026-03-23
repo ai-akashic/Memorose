@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { api } from "@/lib/api";
 import { getMustChangePassword, setMustChangePassword } from "@/lib/auth";
-import type { AppConfig } from "@/lib/types";
+import type { RuntimeConfig } from "@/lib/types";
 import {
   Settings as SettingsIcon,
   Shield,
@@ -146,11 +146,11 @@ function PasswordForm({ onSuccess }: { onSuccess?: () => void }) {
 export default function SettingsPage() {
   const t = useTranslations("Settings");
   const mustChange = typeof window !== "undefined" && getMustChangePassword();
-  const [config, setConfig] = useState<AppConfig | null>(null);
+  const [config, setConfig] = useState<RuntimeConfig | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
 
   useEffect(() => {
-    api.config().then(setConfig).catch(() => {});
+    api.runtimeConfig().then(setConfig).catch(() => {});
   }, []);
 
   return (

@@ -16,7 +16,6 @@ async fn main() -> Result<()> {
     let engine = MemoroseEngine::new_with_default_threshold(&data_dir, 1000, true, true).await?;
     let engine_clone = engine.clone();
     let user_id = "example_user".to_string();
-    let app_id = "example_app".to_string();
 
     // Start worker (Consolidation Cycle)
     tokio::spawn(async move {
@@ -38,7 +37,6 @@ async fn main() -> Result<()> {
             None,
             user_id.clone(),
             None,
-            app_id.clone(),
             stream_id,
             EventContent::Text(format!("Log entry #{}", i)),
         );

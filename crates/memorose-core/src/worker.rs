@@ -174,7 +174,6 @@ impl BackgroundWorker {
                     task.agent_id
                         .clone()
                         .or_else(|| Some("system_worker".to_string())),
-                    task.app_id.clone(),
                     uuid::Uuid::new_v4(),
                     memorose_common::EventContent::Text(format!(
                         "Completed Milestone '{}': {}",
@@ -510,7 +509,7 @@ impl BackgroundWorker {
         // 1.5 Batching / Prompt Packing (Group contiguous events)
         let mut packed_batches: Vec<Vec<memorose_common::Event>> = Vec::new();
         let mut current_batch: Vec<memorose_common::Event> = Vec::new();
-        let mut current_key: Option<(String, String, uuid::Uuid, Option<String>)> = None;
+        let mut current_key: Option<(String, uuid::Uuid, Option<String>)> = None;
 
         for event in valid_events {
             let is_agent = event.metadata.get("role").and_then(|v| v.as_str()) == Some("assistant")
@@ -526,12 +525,7 @@ impl BackgroundWorker {
                 None
             };
 
-            let key = (
-                event.user_id.clone(),
-                event.app_id.clone(),
-                event.stream_id,
-                agent_id,
-            );
+            let key = (event.user_id.clone(), event.stream_id, agent_id);
 
             if Some(&key) != current_key.as_ref() || current_batch.len() >= 10 {
                 // Max 10 events per packed prompt
@@ -584,7 +578,6 @@ impl BackgroundWorker {
                 // Metadata logic (merge simple fields or keep first)
                 let metadata = first_event.metadata.clone();
                 let user_id = first_event.user_id.clone();
-                let app_id = first_event.app_id.clone();
                 let stream_id = first_event.stream_id;
                 let is_agent = metadata.get("role").and_then(|v| v.as_str()) == Some("assistant")
                     || metadata.get("agent_id").is_some();
@@ -660,7 +653,7 @@ impl BackgroundWorker {
                         (compressed, valid)
                     };
 
-                    (event_ids, user_id, app_id, stream_id, summary, valid_at, assets, metadata, embed_input)
+                    (event_ids, user_id, stream_id, summary, valid_at, assets, metadata, embed_input)
                 });
             }
 
@@ -734,7 +727,6 @@ impl BackgroundWorker {
         batch: Vec<(
             Vec<uuid::Uuid>,
             String,
-            String,
             uuid::Uuid,
             String,
             Option<String>,
@@ -751,7 +743,7 @@ impl BackgroundWorker {
         let mut inputs_to_embed = Vec::new();
         let mut needs_embedding = Vec::new();
 
-        for (idx, (event_ids, _, _, _, summary, _, _, metadata, embed_input)) in
+        for (idx, (event_ids, _, _, summary, _, _, metadata, embed_input)) in
             batch.iter().enumerate()
         {
             match Self::parse_metadata_embedding(metadata) {
@@ -809,17 +801,7 @@ impl BackgroundWorker {
 
         for (
             idx,
-            (
-                event_ids,
-                user_id,
-                app_id,
-                stream_id,
-                summary,
-                valid_at,
-                assets,
-                metadata,
-                _embed_input,
-            ),
+            (event_ids, user_id, stream_id, summary, valid_at, assets, metadata, _embed_input),
         ) in batch.into_iter().enumerate()
         {
             let embedding = match Self::parse_metadata_embedding(&metadata) {
@@ -845,7 +827,6 @@ impl BackgroundWorker {
                 None,
                 user_id,
                 agent_id,
-                app_id,
                 stream_id,
                 memory_type,
                 summary,
@@ -1184,7 +1165,6 @@ mod tests {
     use uuid::Uuid;
 
     const TEST_USER: &str = "test_user";
-    const TEST_APP: &str = "test_app";
 
     struct MockLLM {
         fail_compress: bool,
@@ -1263,7 +1243,6 @@ mod tests {
             None,
             TEST_USER.into(),
             None,
-            TEST_APP.into(),
             Uuid::new_v4(),
             EventContent::Text("Hello".into()),
         );
@@ -1298,7 +1277,6 @@ mod tests {
             None,
             TEST_USER.into(),
             None,
-            TEST_APP.into(),
             Uuid::new_v4(),
             EventContent::Text("Success".into()),
         );
@@ -1314,7 +1292,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_consolidation_respects_app_and_stream_boundaries() -> Result<()> {
+    async fn test_consolidation_respects_stream_boundaries() -> Result<()> {
         let temp_dir = tempdir()?;
         let engine =
             MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
@@ -1333,17 +1311,15 @@ mod tests {
             None,
             TEST_USER.into(),
             None,
-            "app_a".into(),
             stream_a,
-            EventContent::Text("First app event".into()),
+            EventContent::Text("First stream event".into()),
         );
         let event_b = Event::new(
             None,
             TEST_USER.into(),
             None,
-            "app_b".into(),
             stream_b,
-            EventContent::Text("Second app event".into()),
+            EventContent::Text("Second stream event".into()),
         );
 
         engine.ingest_event_directly(event_a).await?;
@@ -1353,12 +1329,8 @@ mod tests {
 
         let l1s = engine.fetch_recent_l1_units(TEST_USER, 10).await?;
         assert_eq!(l1s.len(), 2);
-        assert!(l1s
-            .iter()
-            .any(|u| u.app_id == "app_a" && u.stream_id == stream_a));
-        assert!(l1s
-            .iter()
-            .any(|u| u.app_id == "app_b" && u.stream_id == stream_b));
+        assert!(l1s.iter().any(|u| u.stream_id == stream_a));
+        assert!(l1s.iter().any(|u| u.stream_id == stream_b));
 
         Ok(())
     }

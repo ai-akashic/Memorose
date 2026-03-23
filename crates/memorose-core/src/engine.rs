@@ -6,15 +6,19 @@ use crate::storage::kv::KvStore;
 use crate::storage::system_kv::SystemKvStore;
 use crate::storage::vector::VectorStore;
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use lancedb::connect;
 use memorose_common::{
-    Event, GraphEdge, MemoryDomain, MemoryUnit, RelationType, SharePolicy, ShareTarget, TimeRange,
+    Event, GraphEdge, MemoryDomain, MemoryType, MemoryUnit, RelationType, SharePolicy, ShareTarget,
+    TimeRange,
 };
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -39,7 +43,325 @@ pub struct MemoroseEngine {
     batch_executor: Arc<crate::graph::BatchExecutor>,
 }
 
+#[derive(Clone)]
+struct OrganizationProjectionTopic {
+    label: String,
+    alias_keys: Vec<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct OrganizationKnowledgeRecord {
+    pub id: Uuid,
+    pub org_id: String,
+    pub topic_label: String,
+    pub topic_alias_keys: Vec<String>,
+    pub memory_type: MemoryType,
+    pub content: String,
+    pub embedding: Option<Vec<f32>>,
+    pub keywords: Vec<String>,
+    pub importance: f32,
+    pub valid_time: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum OrganizationKnowledgeRelationKind {
+    Source { source_id: Uuid },
+    TopicAlias { topic_key: String },
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct OrganizationKnowledgeRelationRecord {
+    org_id: String,
+    knowledge_id: Uuid,
+    relation: OrganizationKnowledgeRelationKind,
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct OrganizationKnowledgeMembershipRecord {
+    pub org_id: String,
+    pub knowledge_id: Uuid,
+    pub source_id: Uuid,
+    pub contributor_user_id: String,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrganizationKnowledgeContributionStatus {
+    Candidate,
+    Active,
+    Revoked,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrganizationKnowledgeApprovalMode {
+    Auto,
+}
+
+impl Default for OrganizationKnowledgeContributionStatus {
+    fn default() -> Self {
+        Self::Active
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct OrganizationKnowledgeContributionRecord {
+    pub org_id: String,
+    pub knowledge_id: Uuid,
+    pub source_id: Uuid,
+    pub contributor_user_id: String,
+    #[serde(default)]
+    pub status: OrganizationKnowledgeContributionStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activated_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_mode: Option<OrganizationKnowledgeApprovalMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_by: Option<String>,
+    pub updated_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revoked_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct OrganizationKnowledgeMembershipEntry {
+    pub membership: OrganizationKnowledgeMembershipRecord,
+    pub source_unit: MemoryUnit,
+    pub contribution: Option<OrganizationKnowledgeContributionRecord>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct OrganizationKnowledgeContributionEntry {
+    pub contribution: OrganizationKnowledgeContributionRecord,
+    pub source_unit: Option<MemoryUnit>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct OrganizationKnowledgeDetailRecord {
+    pub record: OrganizationKnowledgeRecord,
+    pub read_view: MemoryUnit,
+    pub memberships: Vec<OrganizationKnowledgeMembershipEntry>,
+    pub contributions: Vec<OrganizationKnowledgeContributionEntry>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct OrganizationKnowledgeSearchHit {
+    pub knowledge_id: Uuid,
+    pub org_id: String,
+    pub unit: MemoryUnit,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SharedSearchHit {
+    NativeMemory { unit: MemoryUnit },
+    OrganizationKnowledge { knowledge: OrganizationKnowledgeSearchHit },
+}
+
+impl SharedSearchHit {
+    pub fn native(unit: MemoryUnit) -> Self {
+        Self::NativeMemory { unit }
+    }
+
+    fn organization_knowledge(record: &OrganizationKnowledgeRecord, unit: MemoryUnit) -> Self {
+        Self::OrganizationKnowledge {
+            knowledge: OrganizationKnowledgeSearchHit {
+                knowledge_id: record.id,
+                org_id: record.org_id.clone(),
+                unit,
+            },
+        }
+    }
+
+    pub fn memory_unit(&self) -> &MemoryUnit {
+        match self {
+            Self::NativeMemory { unit } => unit,
+            Self::OrganizationKnowledge { knowledge } => &knowledge.unit,
+        }
+    }
+
+    pub fn into_memory_unit(self) -> MemoryUnit {
+        match self {
+            Self::NativeMemory { unit } => unit,
+            Self::OrganizationKnowledge { knowledge } => knowledge.unit,
+        }
+    }
+
+}
+
+impl Deref for SharedSearchHit {
+    type Target = MemoryUnit;
+
+    fn deref(&self) -> &Self::Target {
+        self.memory_unit()
+    }
+}
+
+impl DerefMut for SharedSearchHit {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::NativeMemory { unit } => unit,
+            Self::OrganizationKnowledge { knowledge } => &mut knowledge.unit,
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct OrganizationAutomationCounterSnapshot {
+    pub org_id: String,
+    pub auto_approved_total: usize,
+    pub auto_publish_total: usize,
+    pub rebuild_total: usize,
+    pub revoke_total: usize,
+    pub merged_publication_total: usize,
+}
+
+#[derive(Clone, Copy)]
+enum OrganizationPublicationKind {
+    New,
+    Rebuild,
+}
+
+struct OrganizationKnowledgeMutation {
+    topic_relations: Vec<OrganizationKnowledgeRelationRecord>,
+    candidate_contribution_records: Vec<OrganizationKnowledgeContributionRecord>,
+    stale_relation_keys: Vec<String>,
+    obsolete_records: Vec<OrganizationKnowledgeRecord>,
+    record: OrganizationKnowledgeRecord,
+    unit: MemoryUnit,
+}
+
+struct OrganizationKnowledgeSnapshot {
+    record: OrganizationKnowledgeRecord,
+    read_view: MemoryUnit,
+    membership_sources: Vec<(OrganizationKnowledgeMembershipRecord, MemoryUnit)>,
+    contributions: Vec<OrganizationKnowledgeContributionRecord>,
+}
+
+#[derive(Default)]
+struct OrganizationStorageReconciliationStats {
+    removed_persisted_views: usize,
+    reconciled_records: usize,
+    removed_records: usize,
+    removed_stale_source_relations: usize,
+}
+
 impl MemoroseEngine {
+    async fn build_organization_knowledge_detail_record_from_snapshot(
+        &self,
+        snapshot: OrganizationKnowledgeSnapshot,
+    ) -> OrganizationKnowledgeDetailRecord {
+        let OrganizationKnowledgeSnapshot {
+            record,
+            read_view,
+            membership_sources,
+            mut contributions,
+        } = snapshot;
+        contributions.sort_by_key(Self::organization_contribution_sort_key);
+        let contribution_records_by_source = contributions
+            .iter()
+            .map(|contribution| (contribution.source_id, contribution.clone()))
+            .collect::<HashMap<_, _>>();
+        let mut membership_entries = membership_sources
+            .into_iter()
+            .map(|(membership, source_unit)| OrganizationKnowledgeMembershipEntry {
+                contribution: contribution_records_by_source.get(&membership.source_id).cloned(),
+                membership,
+                source_unit,
+            })
+            .collect::<Vec<_>>();
+        membership_entries.sort_by(|left, right| {
+            let left_activated_at = left
+                .contribution
+                .as_ref()
+                .and_then(|contribution| contribution.activated_at);
+            let right_activated_at = right
+                .contribution
+                .as_ref()
+                .and_then(|contribution| contribution.activated_at);
+            right_activated_at
+                .cmp(&left_activated_at)
+                .then_with(|| right.membership.updated_at.cmp(&left.membership.updated_at))
+                .then_with(|| left.membership.source_id.cmp(&right.membership.source_id))
+        });
+        let mut contribution_entries = Vec::with_capacity(contributions.len());
+        for contribution in contributions {
+            let source_unit = if let Some(entry) = membership_entries
+                .iter()
+                .find(|entry| entry.membership.source_id == contribution.source_id)
+            {
+                Some(entry.source_unit.clone())
+            } else {
+                self.get_native_memory_unit_by_index(contribution.source_id)
+                    .await
+                    .ok()
+                    .flatten()
+            };
+            contribution_entries.push(OrganizationKnowledgeContributionEntry {
+                contribution,
+                source_unit,
+            });
+        }
+
+        OrganizationKnowledgeDetailRecord {
+            record,
+            read_view,
+            memberships: membership_entries,
+            contributions: contribution_entries,
+        }
+    }
+
+    async fn load_organization_knowledge_snapshot(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<OrganizationKnowledgeSnapshot>> {
+        let Some(record) = self.load_organization_knowledge(id)? else {
+            return Ok(None);
+        };
+        let read_view = self
+            .materialize_organization_read_view_for_record(&record)
+            .await?;
+        let membership_sources = self.load_organization_membership_sources(id).await?;
+        let contributions = self.list_organization_contributions(id).await?;
+        Ok(Some(OrganizationKnowledgeSnapshot {
+            record,
+            read_view,
+            membership_sources,
+            contributions,
+        }))
+    }
+
+    async fn list_organization_knowledge_snapshots(
+        &self,
+        org_id_filter: Option<&str>,
+    ) -> Result<Vec<OrganizationKnowledgeSnapshot>> {
+        let mut snapshots = Vec::new();
+        let mut records = self
+            .list_organization_knowledge_records(org_id_filter, None)
+            .await?;
+        records.sort_by(|left, right| {
+            right
+                .updated_at
+                .cmp(&left.updated_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+
+        for record in records {
+            if let Some(snapshot) = self.load_organization_knowledge_snapshot(record.id).await? {
+                snapshots.push(snapshot);
+            }
+        }
+
+        Ok(snapshots)
+    }
+
     fn is_local_domain(domain: &MemoryDomain) -> bool {
         matches!(domain, MemoryDomain::Agent | MemoryDomain::User)
     }
@@ -62,19 +384,11 @@ impl MemoroseEngine {
         }
     }
 
-    pub fn build_user_filter(
-        &self,
-        user_id: &str,
-        app_id: Option<&str>,
-        extra: Option<String>,
-    ) -> Option<String> {
+    pub fn build_user_filter(&self, user_id: &str, extra: Option<String>) -> Option<String> {
         fn escape_sql_string(s: &str) -> String {
             s.replace('\'', "''")
         }
         let mut conditions = vec![format!("user_id = '{}'", escape_sql_string(user_id))];
-        if let Some(aid) = app_id {
-            conditions.push(format!("app_id = '{}'", escape_sql_string(aid)));
-        }
         if let Some(e) = extra {
             conditions.push(e);
         }
@@ -85,7 +399,6 @@ impl MemoroseEngine {
         &self,
         domain: MemoryDomain,
         org_id: Option<&str>,
-        app_id: Option<&str>,
         agent_id: Option<&str>,
         extra: Option<String>,
     ) -> Option<String> {
@@ -97,9 +410,6 @@ impl MemoroseEngine {
         if let Some(oid) = org_id {
             conditions.push(format!("org_id = '{}'", escape_sql_string(oid)));
         }
-        if let Some(aid) = app_id {
-            conditions.push(format!("app_id = '{}'", escape_sql_string(aid)));
-        }
         if let Some(agid) = agent_id {
             conditions.push(format!("agent_id = '{}'", escape_sql_string(agid)));
         }
@@ -109,16 +419,602 @@ impl MemoroseEngine {
         Some(conditions.join(" AND "))
     }
 
-    fn app_share_policy_key(user_id: &str, app_id: &str) -> String {
-        format!("share_policy:user:{}:app:{}", user_id, app_id)
-    }
-
     fn org_share_policy_key(user_id: &str, org_id: &str) -> String {
         format!("share_policy:user:{}:org:{}", user_id, org_id)
     }
 
-    fn projection_mapping_key(domain: &MemoryDomain, source_id: Uuid) -> String {
-        format!("projection:{}:{}", domain.as_str(), source_id)
+    fn organization_knowledge_key(id: Uuid) -> String {
+        format!("organization_knowledge:{}", id)
+    }
+
+    fn organization_source_relation_key(source_id: Uuid) -> String {
+        format!("organization_knowledge_relation:source:{}", source_id)
+    }
+
+    fn organization_topic_relation_key(org_id: &str, topic_key: &str) -> String {
+        format!(
+            "organization_knowledge_relation:topic:{}:{}",
+            org_id, topic_key
+        )
+    }
+
+    fn organization_knowledge_contribution_key(knowledge_id: Uuid, source_id: Uuid) -> String {
+        format!(
+            "organization_knowledge_contribution:{}:{}",
+            knowledge_id, source_id
+        )
+    }
+
+    fn organization_knowledge_contribution_prefix(knowledge_id: Uuid) -> String {
+        format!("organization_knowledge_contribution:{}:", knowledge_id)
+    }
+
+    fn organization_membership_source_key(source_id: Uuid) -> String {
+        format!("organization_knowledge_membership:source:{}", source_id)
+    }
+
+    fn organization_membership_by_knowledge_prefix(knowledge_id: Uuid) -> String {
+        format!(
+            "organization_knowledge_membership_by_knowledge:{}:",
+            knowledge_id
+        )
+    }
+
+    fn organization_membership_by_knowledge_key(
+        membership: &OrganizationKnowledgeMembershipRecord,
+    ) -> String {
+        format!(
+            "{}{}",
+            Self::organization_membership_by_knowledge_prefix(membership.knowledge_id),
+            membership.source_id
+        )
+    }
+
+    fn organization_knowledge_relation_index_prefix(knowledge_id: Uuid) -> String {
+        format!(
+            "organization_knowledge_relation_by_knowledge:{}:",
+            knowledge_id
+        )
+    }
+
+    fn organization_knowledge_relation_index_key(
+        record: &OrganizationKnowledgeRelationRecord,
+    ) -> String {
+        match &record.relation {
+            OrganizationKnowledgeRelationKind::Source { source_id } => format!(
+                "{}source:{}",
+                Self::organization_knowledge_relation_index_prefix(record.knowledge_id),
+                source_id
+            ),
+            OrganizationKnowledgeRelationKind::TopicAlias { topic_key } => format!(
+                "{}topic:{}",
+                Self::organization_knowledge_relation_index_prefix(record.knowledge_id),
+                topic_key
+            ),
+        }
+    }
+
+    fn organization_relation_key(record: &OrganizationKnowledgeRelationRecord) -> String {
+        match &record.relation {
+            OrganizationKnowledgeRelationKind::Source { source_id } => {
+                Self::organization_source_relation_key(*source_id)
+            }
+            OrganizationKnowledgeRelationKind::TopicAlias { topic_key } => {
+                Self::organization_topic_relation_key(&record.org_id, topic_key)
+            }
+        }
+    }
+
+    fn organization_read_view_owner(org_id: &str) -> String {
+        format!("__organization__:{}", org_id)
+    }
+
+    fn normalize_whitespace(text: &str) -> String {
+        text.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    fn neutralize_first_person_language(text: &str) -> String {
+        text.split_whitespace()
+            .map(|token| {
+                let prefix_len = token
+                    .find(|c: char| c.is_alphanumeric())
+                    .unwrap_or(token.len());
+                let suffix_start = token
+                    .rfind(|c: char| c.is_alphanumeric())
+                    .map(|idx| idx + 1)
+                    .unwrap_or(prefix_len);
+                let prefix = &token[..prefix_len];
+                let core = &token[prefix_len..suffix_start];
+                let suffix = &token[suffix_start..];
+
+                let replacement = match core.to_ascii_lowercase().as_str() {
+                    "i" | "me" => Some("the contributor"),
+                    "my" | "mine" => Some("the contributor's"),
+                    "we" | "us" => Some("the organization"),
+                    "our" | "ours" => Some("the organization's"),
+                    _ => None,
+                };
+
+                match replacement {
+                    Some(value) => format!("{}{}{}", prefix, value, suffix),
+                    None => token.to_string(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    fn normalize_organization_keywords(source: &MemoryUnit) -> Vec<String> {
+        let mut normalized = Vec::new();
+        for keyword in &source.keywords {
+            let keyword = Self::normalize_whitespace(keyword).trim().to_string();
+            if keyword.is_empty() {
+                continue;
+            }
+            if normalized.iter().any(|existing| existing == &keyword) {
+                continue;
+            }
+            normalized.push(keyword);
+            if normalized.len() >= 8 {
+                break;
+            }
+        }
+        normalized
+    }
+
+    fn build_organization_topic_key(label: &str) -> String {
+        let mut key = String::new();
+        let mut needs_separator = false;
+
+        for ch in label.chars() {
+            if ch.is_ascii_alphanumeric() {
+                if needs_separator && !key.is_empty() {
+                    key.push('-');
+                }
+                key.push(ch.to_ascii_lowercase());
+                needs_separator = false;
+            } else if !key.is_empty() {
+                needs_separator = true;
+            }
+        }
+
+        key
+    }
+
+    fn fallback_organization_topic_label(text: &str) -> Option<String> {
+        let normalized = Self::normalize_whitespace(text);
+        if normalized.is_empty() {
+            return None;
+        }
+
+        let label = normalized
+            .split_whitespace()
+            .take(6)
+            .collect::<Vec<_>>()
+            .join(" ");
+        if label.is_empty() {
+            None
+        } else {
+            Some(label)
+        }
+    }
+
+    fn organization_topic_candidates_from_keywords_and_content(
+        keywords: &[String],
+        content: &str,
+    ) -> Vec<(String, String)> {
+        let mut seen = HashSet::new();
+        let mut candidates = Vec::new();
+
+        for label in keywords {
+            let key = Self::build_organization_topic_key(label);
+            if !key.is_empty() && seen.insert(key.clone()) {
+                candidates.push((label.clone(), key));
+            }
+        }
+
+        if candidates.is_empty() {
+            if let Some(label) = Self::fallback_organization_topic_label(content) {
+                let key = Self::build_organization_topic_key(&label);
+                if !key.is_empty() && seen.insert(key.clone()) {
+                    candidates.push((label, key));
+                }
+            }
+        }
+
+        candidates
+    }
+
+    fn organization_source_topic_candidates(source: &MemoryUnit) -> Vec<(String, String)> {
+        let keywords = Self::normalize_organization_keywords(source);
+        Self::organization_topic_candidates_from_keywords_and_content(&keywords, &source.content)
+    }
+
+    fn select_organization_topic_from_candidates(
+        candidate_groups: &[Vec<(String, String)>],
+    ) -> Option<OrganizationProjectionTopic> {
+        let mut total_counts: HashMap<String, usize> = HashMap::new();
+        let mut primary_counts: HashMap<String, usize> = HashMap::new();
+        let mut labels_by_key: HashMap<String, String> = HashMap::new();
+        let mut alias_order = Vec::new();
+
+        for group in candidate_groups {
+            if group.is_empty() {
+                continue;
+            }
+
+            let mut seen_in_group = HashSet::new();
+            for (index, (label, key)) in group.iter().enumerate() {
+                if !seen_in_group.insert(key.clone()) {
+                    continue;
+                }
+
+                *total_counts.entry(key.clone()).or_insert(0) += 1;
+                if index == 0 {
+                    *primary_counts.entry(key.clone()).or_insert(0) += 1;
+                }
+
+                labels_by_key
+                    .entry(key.clone())
+                    .and_modify(|existing| {
+                        if label.len() < existing.len() {
+                            *existing = label.clone();
+                        }
+                    })
+                    .or_insert_with(|| label.clone());
+                alias_order.push(key.clone());
+            }
+        }
+
+        let mut alias_keys = alias_order
+            .into_iter()
+            .filter(|key| total_counts.contains_key(key))
+            .collect::<Vec<_>>();
+        alias_keys.sort_by(|left, right| {
+            total_counts
+                .get(right)
+                .copied()
+                .unwrap_or_default()
+                .cmp(&total_counts.get(left).copied().unwrap_or_default())
+                .then_with(|| {
+                    primary_counts
+                        .get(right)
+                        .copied()
+                        .unwrap_or_default()
+                        .cmp(&primary_counts.get(left).copied().unwrap_or_default())
+                })
+                .then_with(|| {
+                    labels_by_key
+                        .get(left)
+                        .map(|label| label.len())
+                        .unwrap_or(usize::MAX)
+                        .cmp(
+                            &labels_by_key
+                                .get(right)
+                                .map(|label| label.len())
+                                .unwrap_or(usize::MAX),
+                        )
+                })
+                .then_with(|| left.cmp(right))
+        });
+        alias_keys.dedup();
+
+        let key = alias_keys.first()?.clone();
+        let label = labels_by_key.get(&key)?.clone();
+
+        Some(OrganizationProjectionTopic { label, alias_keys })
+    }
+
+    fn select_organization_topic(sources: &[MemoryUnit]) -> Option<OrganizationProjectionTopic> {
+        let candidate_groups = sources
+            .iter()
+            .map(Self::organization_source_topic_candidates)
+            .filter(|group| !group.is_empty())
+            .collect::<Vec<_>>();
+        Self::select_organization_topic_from_candidates(&candidate_groups)
+    }
+
+    fn merge_organization_keywords(primary_label: &str, sources: &[MemoryUnit]) -> Vec<String> {
+        let mut merged = Vec::new();
+        let mut seen = HashSet::new();
+
+        let primary = Self::normalize_whitespace(primary_label).trim().to_string();
+        if !primary.is_empty() && seen.insert(primary.to_ascii_lowercase()) {
+            merged.push(primary);
+        }
+
+        for source in sources {
+            for keyword in Self::normalize_organization_keywords(source) {
+                let dedupe_key = keyword.to_ascii_lowercase();
+                if seen.insert(dedupe_key) {
+                    merged.push(keyword);
+                }
+                if merged.len() >= 8 {
+                    return merged;
+                }
+            }
+        }
+
+        merged
+    }
+
+    fn merge_organization_embedding(
+        sources: &[MemoryUnit],
+        representative: &MemoryUnit,
+    ) -> Option<Vec<f32>> {
+        let embeddings: Vec<&Vec<f32>> = sources
+            .iter()
+            .filter_map(|source| source.embedding.as_ref())
+            .collect();
+        if embeddings.is_empty() {
+            return representative.embedding.clone();
+        }
+
+        let dim = embeddings[0].len();
+        if embeddings.iter().any(|embedding| embedding.len() != dim) {
+            return representative.embedding.clone();
+        }
+
+        let mut merged = vec![0.0; dim];
+        for embedding in embeddings {
+            for (index, value) in embedding.iter().enumerate() {
+                merged[index] += *value;
+            }
+        }
+        for value in &mut merged {
+            *value /= sources
+                .iter()
+                .filter(|source| source.embedding.is_some())
+                .count() as f32;
+        }
+
+        Some(merged)
+    }
+
+    fn compose_organization_knowledge_record(
+        &self,
+        org_id: &str,
+        sources: &[MemoryUnit],
+        existing: Option<&OrganizationKnowledgeRecord>,
+        topic: &OrganizationProjectionTopic,
+    ) -> Option<OrganizationKnowledgeRecord> {
+        if sources.is_empty() {
+            return None;
+        }
+
+        let mut sorted_sources = sources.to_vec();
+        sorted_sources.sort_by(|left, right| {
+            right
+                .importance
+                .partial_cmp(&left.importance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| right.valid_time.cmp(&left.valid_time))
+                .then_with(|| right.transaction_time.cmp(&left.transaction_time))
+                .then_with(|| left.id.cmp(&right.id))
+        });
+
+        let representative = sorted_sources.first()?;
+        let keywords = Self::merge_organization_keywords(&topic.label, &sorted_sources);
+        let content = Self::build_organization_knowledge_content(representative, &keywords);
+        let embedding = Self::merge_organization_embedding(&sorted_sources, representative);
+        let now = Utc::now();
+
+        Some(OrganizationKnowledgeRecord {
+            id: existing
+                .map(|record| record.id)
+                .unwrap_or_else(Uuid::new_v4),
+            org_id: org_id.to_string(),
+            topic_label: topic.label.clone(),
+            topic_alias_keys: topic.alias_keys.clone(),
+            memory_type: representative.memory_type.clone(),
+            content,
+            embedding,
+            keywords,
+            importance: sorted_sources
+                .iter()
+                .map(|source| source.importance)
+                .fold(0.0, f32::max),
+            valid_time: sorted_sources
+                .iter()
+                .filter_map(|source| source.valid_time)
+                .max(),
+            created_at: existing.map(|record| record.created_at).unwrap_or(now),
+            updated_at: now,
+        })
+    }
+
+    fn materialize_organization_read_view(record: &OrganizationKnowledgeRecord) -> MemoryUnit {
+        let mut read_view = MemoryUnit::new_with_domain(
+            Some(record.org_id.clone()),
+            Self::organization_read_view_owner(&record.org_id),
+            None,
+            Uuid::nil(),
+            record.memory_type.clone(),
+            MemoryDomain::Organization,
+            record.content.clone(),
+            record.embedding.clone(),
+        );
+        read_view.id = record.id;
+        read_view.keywords = record.keywords.clone();
+        read_view.importance = record.importance;
+        read_view.level = 2;
+        read_view.stream_id = Uuid::nil();
+        read_view.transaction_time = record.updated_at;
+        read_view.last_accessed_at = record.updated_at;
+        read_view.valid_time = record.valid_time;
+        read_view.references.clear();
+        read_view.assets.clear();
+        read_view
+    }
+
+    fn organization_memberships_from_contributions(
+        contributions: &[OrganizationKnowledgeContributionRecord],
+    ) -> Vec<OrganizationKnowledgeMembershipRecord> {
+        contributions
+            .iter()
+            .filter(|contribution| {
+                matches!(
+                    contribution.status,
+                    OrganizationKnowledgeContributionStatus::Active
+                )
+            })
+            .map(|contribution| OrganizationKnowledgeMembershipRecord {
+                org_id: contribution.org_id.clone(),
+                knowledge_id: contribution.knowledge_id,
+                source_id: contribution.source_id,
+                contributor_user_id: contribution.contributor_user_id.clone(),
+                updated_at: contribution.updated_at,
+            })
+            .collect()
+    }
+
+    fn organization_topic_relations(
+        org_id: &str,
+        knowledge_id: Uuid,
+        topic: &OrganizationProjectionTopic,
+        updated_at: DateTime<Utc>,
+    ) -> Vec<OrganizationKnowledgeRelationRecord> {
+        topic
+            .alias_keys
+            .iter()
+            .map(|topic_key| OrganizationKnowledgeRelationRecord {
+                org_id: org_id.to_string(),
+                knowledge_id,
+                relation: OrganizationKnowledgeRelationKind::TopicAlias {
+                    topic_key: topic_key.clone(),
+                },
+                updated_at,
+            })
+            .collect()
+    }
+
+    fn organization_candidate_contribution_records(
+        org_id: &str,
+        knowledge_id: Uuid,
+        sources: &[MemoryUnit],
+        candidate_at: DateTime<Utc>,
+    ) -> Vec<OrganizationKnowledgeContributionRecord> {
+        sources
+            .iter()
+            .map(|source| OrganizationKnowledgeContributionRecord {
+                org_id: org_id.to_string(),
+                knowledge_id,
+                source_id: source.id,
+                contributor_user_id: source.user_id.clone(),
+                status: OrganizationKnowledgeContributionStatus::Candidate,
+                candidate_at: Some(candidate_at),
+                activated_at: None,
+                approval_mode: None,
+                approved_by: None,
+                updated_at: candidate_at,
+                revoked_at: None,
+            })
+            .collect()
+    }
+
+    fn activate_organization_contribution_records(
+        candidates: &[OrganizationKnowledgeContributionRecord],
+        activated_at: DateTime<Utc>,
+    ) -> Vec<OrganizationKnowledgeContributionRecord> {
+        candidates
+            .iter()
+            .map(|candidate| {
+                let mut active = candidate.clone();
+                active.status = OrganizationKnowledgeContributionStatus::Active;
+                active.candidate_at = active.candidate_at.or(Some(activated_at));
+                active.activated_at = Some(activated_at);
+                active.approval_mode = Some(OrganizationKnowledgeApprovalMode::Auto);
+                active.approved_by = Some("system:auto_publish".to_string());
+                active.updated_at = activated_at;
+                active.revoked_at = None;
+                active
+            })
+            .collect()
+    }
+
+    fn build_organization_knowledge_content(source: &MemoryUnit, keywords: &[String]) -> String {
+        let summary =
+            Self::neutralize_first_person_language(&Self::normalize_whitespace(&source.content));
+        if let Some(title) = keywords.first() {
+            let summary_lower = summary.to_ascii_lowercase();
+            let title_lower = title.to_ascii_lowercase();
+            if summary_lower.starts_with(&title_lower) {
+                summary
+            } else {
+                format!("{}: {}", title, summary)
+            }
+        } else {
+            summary
+        }
+    }
+
+    fn matches_valid_time_filter(
+        valid_time: Option<DateTime<Utc>>,
+        range: Option<&TimeRange>,
+    ) -> bool {
+        let Some(range) = range else {
+            return true;
+        };
+        let Some(valid_time) = valid_time else {
+            return false;
+        };
+        if let Some(start) = range.start {
+            if valid_time < start {
+                return false;
+            }
+        }
+        if let Some(end) = range.end {
+            if valid_time > end {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn tokenize_search_text(text: &str) -> Vec<String> {
+        text.split(|c: char| !c.is_alphanumeric())
+            .filter(|token| !token.is_empty())
+            .map(|token| token.to_ascii_lowercase())
+            .collect()
+    }
+
+    fn keyword_overlap_score(query_text: &str, content: &str, keywords: &[String]) -> f32 {
+        let query_terms = Self::tokenize_search_text(query_text);
+        if query_terms.is_empty() {
+            return 0.0;
+        }
+
+        let mut haystack = content.to_ascii_lowercase();
+        for keyword in keywords {
+            haystack.push(' ');
+            haystack.push_str(&keyword.to_ascii_lowercase());
+        }
+
+        let matched = query_terms
+            .iter()
+            .filter(|term| haystack.contains(term.as_str()))
+            .count();
+        matched as f32 / query_terms.len() as f32
+    }
+
+    fn organization_similarity_score(
+        record: &OrganizationKnowledgeRecord,
+        query_text: &str,
+        vector: &[f32],
+    ) -> f32 {
+        let lexical = Self::keyword_overlap_score(query_text, &record.content, &record.keywords);
+        let semantic = record
+            .embedding
+            .as_ref()
+            .map(|embedding| cosine_similarity(embedding, vector).max(0.0))
+            .unwrap_or(0.0);
+
+        match (semantic > 0.0, lexical > 0.0) {
+            (true, true) => semantic * 0.7 + lexical * 0.3,
+            (true, false) => semantic,
+            (false, true) => lexical,
+            (false, false) => 0.0,
+        }
     }
 
     fn backfill_status_key(domain: &MemoryDomain, user_id: &str, scope_id: &str) -> String {
@@ -128,6 +1024,10 @@ impl MemoroseEngine {
             user_id,
             scope_id
         )
+    }
+
+    fn organization_metric_counter_key(org_id: &str, metric: &str) -> String {
+        format!("organization_metric:{}:{}", org_id, metric)
     }
 
     fn normalize_share_policy(mut policy: SharePolicy, target: ShareTarget) -> SharePolicy {
@@ -147,6 +1047,72 @@ fn cosine_similarity(v1: &[f32], v2: &[f32]) -> f32 {
 }
 
 impl MemoroseEngine {
+    async fn materialize_organization_read_view_for_record(
+        &self,
+        record: &OrganizationKnowledgeRecord,
+    ) -> Result<MemoryUnit> {
+        Ok(Self::materialize_organization_read_view(record))
+    }
+
+    fn increment_organization_metric_counter(
+        &self,
+        org_id: &str,
+        metric: &str,
+        delta: usize,
+    ) -> Result<()> {
+        if delta == 0 {
+            return Ok(());
+        }
+
+        let key = Self::organization_metric_counter_key(org_id, metric);
+        let current = self
+            .system_kv()
+            .get(key.as_bytes())?
+            .map(|bytes| u64::from_le_bytes(bytes.try_into().unwrap_or([0; 8])) as usize)
+            .unwrap_or(0);
+        self.system_kv()
+            .put(key.as_bytes(), &((current + delta) as u64).to_le_bytes())?;
+        Ok(())
+    }
+
+    fn get_organization_metric_counter(&self, org_id: &str, metric: &str) -> Result<usize> {
+        let key = Self::organization_metric_counter_key(org_id, metric);
+        Ok(self
+            .system_kv()
+            .get(key.as_bytes())?
+            .map(|bytes| u64::from_le_bytes(bytes.try_into().unwrap_or([0; 8])) as usize)
+            .unwrap_or(0))
+    }
+
+    fn organization_contribution_sort_key(
+        contribution: &OrganizationKnowledgeContributionRecord,
+    ) -> (u8, std::cmp::Reverse<DateTime<Utc>>, Uuid) {
+        let status_rank = match contribution.status {
+            OrganizationKnowledgeContributionStatus::Active => 0,
+            OrganizationKnowledgeContributionStatus::Candidate => 1,
+            OrganizationKnowledgeContributionStatus::Revoked => 2,
+        };
+
+        (
+            status_rank,
+            std::cmp::Reverse(contribution.updated_at),
+            contribution.source_id,
+        )
+    }
+
+    pub async fn get_organization_knowledge_detail_record(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<OrganizationKnowledgeDetailRecord>> {
+        let Some(snapshot) = self.load_organization_knowledge_snapshot(id).await? else {
+            return Ok(None);
+        };
+        Ok(Some(
+            self.build_organization_knowledge_detail_record_from_snapshot(snapshot)
+                .await,
+        ))
+    }
+
     pub async fn new_with_default_threshold(
         path: impl Into<PathBuf>,
         commit_interval_ms: u64,
@@ -219,7 +1185,7 @@ impl MemoroseEngine {
         }));
         let batch_executor = Arc::new(crate::graph::BatchExecutor::new(graph.clone()));
 
-        Ok(Self {
+        let engine = Self {
             _kv: kv,
             vector,
             index,
@@ -234,7 +1200,24 @@ impl MemoroseEngine {
             auto_link_similarity_threshold,
             query_cache,
             batch_executor,
-        })
+        };
+
+        let reconciliation = engine.reconcile_organization_storage().await?;
+        if reconciliation.removed_persisted_views > 0
+            || reconciliation.reconciled_records > 0
+            || reconciliation.removed_records > 0
+            || reconciliation.removed_stale_source_relations > 0
+        {
+            tracing::info!(
+                removed_persisted_views = reconciliation.removed_persisted_views,
+                reconciled_records = reconciliation.reconciled_records,
+                removed_records = reconciliation.removed_records,
+                removed_stale_source_relations = reconciliation.removed_stale_source_relations,
+                "Reconciled organization knowledge storage during startup"
+            );
+        }
+
+        Ok(engine)
     }
 
     pub fn with_reranker(mut self, reranker: std::sync::Arc<dyn Reranker>) -> Self {
@@ -269,18 +1252,15 @@ impl MemoroseEngine {
 
         let event_id = event.id.to_string();
         let user_id = event.user_id.clone();
-        let app_id = event.app_id.clone();
-
         // Store event under user prefix
         let key = format!("u:{}:event:{}", user_id, event_id);
         let val = serde_json::to_vec(&event)?;
         self._kv.put(key.as_bytes(), &val)?;
 
-        // Global pending queue with user_id/app_id in value
+        // Global pending queue with only the owning user_id.
         let pending_key = format!("pending:{}", event_id);
         let pending_val = serde_json::to_vec(&serde_json::json!({
-            "user_id": user_id,
-            "app_id": app_id
+            "user_id": user_id
         }))?;
         self.system_kv().put(pending_key.as_bytes(), &pending_val)?;
 
@@ -315,26 +1295,6 @@ impl MemoroseEngine {
         self.task_reflection
     }
 
-    pub fn get_app_share_policy(&self, user_id: &str, app_id: &str) -> Result<SharePolicy> {
-        let key = Self::app_share_policy_key(user_id, app_id);
-        match self.system_kv().get(key.as_bytes())? {
-            Some(bytes) => Ok(serde_json::from_slice(&bytes).unwrap_or_default()),
-            None => Ok(SharePolicy::default()),
-        }
-    }
-
-    pub fn set_app_share_policy(
-        &self,
-        user_id: &str,
-        app_id: &str,
-        policy: &SharePolicy,
-    ) -> Result<()> {
-        let policy = Self::normalize_share_policy(policy.clone(), ShareTarget::App);
-        let key = Self::app_share_policy_key(user_id, app_id);
-        self.system_kv()
-            .put(key.as_bytes(), &serde_json::to_vec(&policy)?)
-    }
-
     pub fn get_org_share_policy(&self, user_id: &str, org_id: &str) -> Result<SharePolicy> {
         let key = Self::org_share_policy_key(user_id, org_id);
         match self.system_kv().get(key.as_bytes())? {
@@ -355,18 +1315,6 @@ impl MemoroseEngine {
             .put(key.as_bytes(), &serde_json::to_vec(&policy)?)
     }
 
-    pub fn get_app_backfill_status(
-        &self,
-        user_id: &str,
-        app_id: &str,
-    ) -> Result<Option<serde_json::Value>> {
-        let key = Self::backfill_status_key(&MemoryDomain::App, user_id, app_id);
-        match self.system_kv().get(key.as_bytes())? {
-            Some(bytes) => Ok(serde_json::from_slice(&bytes).ok()),
-            None => Ok(None),
-        }
-    }
-
     pub fn get_org_backfill_status(
         &self,
         user_id: &str,
@@ -379,23 +1327,107 @@ impl MemoroseEngine {
         }
     }
 
-    pub async fn disable_app_contribution(&self, user_id: &str, app_id: &str) -> Result<usize> {
-        let projected = self
-            .find_projected_units_for_scope(user_id, app_id, None, MemoryDomain::App)
-            .await?;
-        self.delete_projected_memory_units(projected).await
-    }
-
     pub async fn disable_org_contribution(&self, user_id: &str, org_id: &str) -> Result<usize> {
-        let projected = self
-            .find_projected_units_for_scope(
-                user_id,
-                "_all",
-                Some(org_id),
-                MemoryDomain::Organization,
-            )
+        let knowledge_records = self
+            .find_org_knowledge_records_for_contributor(user_id, org_id)
             .await?;
-        self.delete_projected_memory_units(projected).await
+        let mut removed_contributions = 0;
+
+        for (record, source_ids_to_remove) in knowledge_records {
+            if source_ids_to_remove.is_empty() {
+                continue;
+            }
+
+            let record_source_ids = self.resolve_organization_record_source_ids(&record).await?;
+            let remaining_source_ids: Vec<Uuid> = record_source_ids
+                .iter()
+                .copied()
+                .filter(|source_id| !source_ids_to_remove.contains(source_id))
+                .collect();
+            let remaining_sources = self
+                .load_organization_source_units(&remaining_source_ids)
+                .await?;
+
+            if remaining_sources.is_empty() {
+                self.delete_organization_knowledge_records(vec![record.clone()])
+                    .await?;
+            } else {
+                let topic = Self::select_organization_topic(&remaining_sources);
+
+                if let Some(topic) = topic {
+                    let rebuilt_record = self
+                        .compose_organization_knowledge_record(
+                            org_id,
+                            &remaining_sources,
+                            Some(&record),
+                            &topic,
+                        )
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("failed to rebuild organization knowledge")
+                        })?;
+                    let rebuilt_unit = Self::materialize_organization_read_view(&rebuilt_record);
+                    let unit_id = rebuilt_record.id;
+                    let topic_relations = Self::organization_topic_relations(
+                        org_id,
+                        unit_id,
+                        &topic,
+                        rebuilt_record.updated_at,
+                    );
+                    let previous_relation_keys = self
+                        .list_organization_relations_for_knowledge(record.id)
+                        .await?
+                        .into_iter()
+                        .map(|relation| Self::organization_relation_key(&relation))
+                        .collect::<Vec<_>>();
+                    let candidate_contribution_records =
+                        Self::organization_candidate_contribution_records(
+                            org_id,
+                            unit_id,
+                            &remaining_sources,
+                            rebuilt_record.updated_at,
+                        );
+                    let topic_relation_keys = topic_relations
+                        .iter()
+                        .map(Self::organization_relation_key)
+                        .collect::<Vec<_>>();
+
+                    let memberships = self
+                        .publish_organization_knowledge(
+                            rebuilt_record,
+                            rebuilt_unit,
+                            candidate_contribution_records,
+                            topic_relations,
+                            OrganizationPublicationKind::Rebuild,
+                        )
+                        .await?;
+                    let membership_keys = memberships
+                        .iter()
+                        .map(|membership| {
+                            Self::organization_membership_source_key(membership.source_id)
+                        })
+                        .collect::<Vec<_>>();
+                    for stale_relation_key in previous_relation_keys {
+                        if !membership_keys.contains(&stale_relation_key)
+                            && !topic_relation_keys.contains(&stale_relation_key)
+                        {
+                            self.delete_organization_relation_by_primary_key(&stale_relation_key)
+                                .ok();
+                        }
+                    }
+                } else {
+                    self.delete_organization_knowledge_records(vec![record.clone()])
+                        .await?;
+                }
+            }
+
+            for source_id in source_ids_to_remove {
+                self.revoke_organization_contribution(record.id, source_id)?;
+                self.delete_organization_membership(source_id).ok();
+                removed_contributions += 1;
+            }
+        }
+
+        Ok(removed_contributions)
     }
 
     pub async fn compact_vector_store(&self) -> Result<()> {
@@ -405,32 +1437,6 @@ impl MemoroseEngine {
 
     pub fn graph(&self) -> &GraphStore {
         &self.graph
-    }
-
-    fn derive_l2_app_id(units: &[MemoryUnit]) -> String {
-        let mut counts: HashMap<String, usize> = HashMap::new();
-        for unit in units {
-            if !unit.app_id.is_empty() {
-                *counts.entry(unit.app_id.clone()).or_insert(0) += 1;
-            }
-        }
-
-        let mut best_app = String::new();
-        let mut best_count = 0usize;
-        for (app_id, count) in counts {
-            if count > best_count
-                || (count == best_count && (best_app.is_empty() || app_id < best_app))
-            {
-                best_app = app_id;
-                best_count = count;
-            }
-        }
-
-        if best_count > 0 {
-            best_app
-        } else {
-            units.first().map(|u| u.app_id.clone()).unwrap_or_default()
-        }
     }
 
     pub async fn fetch_pending_events(&self) -> Result<Vec<Event>> {
@@ -661,12 +1667,7 @@ impl MemoroseEngine {
 
         let topic_units = self
             .arbitrator
-            .extract_topics(
-                user_id,
-                &session_units[0].app_id,
-                stream_id,
-                session_units.clone(),
-            )
+            .extract_topics(user_id, stream_id, session_units.clone())
             .await?;
 
         if topic_units.is_empty() {
@@ -865,7 +1866,6 @@ impl MemoroseEngine {
         let is_goal = unit.level == 3;
         let unit_id = unit.id;
         let user_id = unit.user_id.clone();
-        let app_id = unit.app_id.clone();
         let org_id = unit.org_id.clone();
         let agent_id = unit.agent_id.clone();
         let stream_id = unit.stream_id;
@@ -897,14 +1897,13 @@ impl MemoroseEngine {
 
             let engine = self.clone();
             let uid = user_id.clone();
-            let aid = app_id.clone();
             let cnt = content.clone();
             let org = org_id.clone();
             let agent = agent_id.clone();
             tokio::spawn(async move {
                 let key = format!("planning:{}", unit_id);
                 match engine
-                    .auto_plan_goal(org, uid, agent, aid, stream_id, unit_id, cnt, depth + 1)
+                    .auto_plan_goal(org, uid, agent, stream_id, unit_id, cnt, depth + 1)
                     .await
                 {
                     Ok(()) => {
@@ -925,7 +1924,6 @@ impl MemoroseEngine {
         org_id: Option<String>,
         user_id: String,
         agent_id: Option<String>,
-        app_id: String,
         stream_id: Uuid,
         goal_id: Uuid,
         goal_content: String,
@@ -940,7 +1938,6 @@ impl MemoroseEngine {
                     org_id.as_deref(),
                     &user_id,
                     agent_id.as_deref(),
-                    &app_id,
                     stream_id,
                     &goal_content,
                 )
@@ -1043,12 +2040,10 @@ impl MemoroseEngine {
     pub fn schedule_share_backfill(
         &self,
         user_id: &str,
-        app_id: &str,
         org_id: Option<&str>,
         domain: MemoryDomain,
     ) -> Result<()> {
         let scope_id = match domain {
-            MemoryDomain::App => app_id.to_string(),
             MemoryDomain::Organization => org_id.unwrap_or("_global").to_string(),
             _ => return Ok(()),
         };
@@ -1057,7 +2052,6 @@ impl MemoroseEngine {
         let pending = serde_json::json!({
             "status": "pending",
             "scheduled_at": chrono::Utc::now().to_rfc3339(),
-            "app_id": app_id,
             "org_id": org_id,
             "domain": domain.as_str()
         });
@@ -1066,11 +2060,10 @@ impl MemoroseEngine {
 
         let engine = self.clone();
         let user_id = user_id.to_string();
-        let app_id = app_id.to_string();
         let org_id = org_id.map(|value| value.to_string());
         tokio::spawn(async move {
             let result = engine
-                .run_share_backfill(&user_id, &app_id, org_id.as_deref(), domain.clone())
+                .run_share_backfill(&user_id, org_id.as_deref(), domain.clone())
                 .await;
 
             let payload = match result {
@@ -1078,7 +2071,6 @@ impl MemoroseEngine {
                     "status": "done",
                     "finished_at": chrono::Utc::now().to_rfc3339(),
                     "projected": projected,
-                    "app_id": app_id,
                     "org_id": org_id,
                     "domain": domain.as_str()
                 }),
@@ -1086,7 +2078,6 @@ impl MemoroseEngine {
                     "status": "failed",
                     "finished_at": chrono::Utc::now().to_rfc3339(),
                     "error": error.to_string(),
-                    "app_id": app_id,
                     "org_id": org_id,
                     "domain": domain.as_str()
                 }),
@@ -1106,7 +2097,6 @@ impl MemoroseEngine {
     async fn run_share_backfill(
         &self,
         user_id: &str,
-        app_id: &str,
         org_id: Option<&str>,
         domain: MemoryDomain,
     ) -> Result<usize> {
@@ -1121,181 +2111,726 @@ impl MemoroseEngine {
             .filter(|unit| Self::is_local_domain(&unit.domain))
             .filter(|unit| unit.level <= 2)
             .filter(|unit| match domain {
-                MemoryDomain::App => unit.app_id == app_id,
                 MemoryDomain::Organization => unit.org_id.as_deref() == org_id,
                 _ => false,
             })
             .collect();
 
-        let projected = self
-            .project_native_memory_units_for_domain(&native_units, Some(domain))
+        let published = self
+            .publish_native_shared_knowledge_for_domain(&native_units, Some(domain))
             .await?;
-        Ok(projected)
+        Ok(published)
     }
 
-    async fn build_projection_candidate(
+    fn should_publish_to_organization(source: &MemoryUnit) -> bool {
+        source.domain == MemoryDomain::User
+            && source.level == 2
+            && !source.content.trim().is_empty()
+            && source.content != "LLM not available"
+            && source.content != "No memories provided."
+    }
+
+    async fn load_organization_source_units(
         &self,
-        source: &MemoryUnit,
-        target_domain: MemoryDomain,
-    ) -> Result<Option<(String, MemoryUnit)>> {
-        let mapping_key = Self::projection_mapping_key(&target_domain, source.id);
-        if let Some(bytes) = self.system_kv().get(mapping_key.as_bytes())? {
-            let existing_id = String::from_utf8(bytes)?;
-            if let Ok(parsed) = Uuid::parse_str(&existing_id) {
-                if self.get_memory_unit_by_index(parsed).await?.is_some() {
-                    return Ok(None);
-                }
+        source_ids: &[Uuid],
+    ) -> Result<Vec<MemoryUnit>> {
+        let mut sources = Vec::new();
+
+        for source_id in source_ids {
+            let Some(source) = self.get_native_memory_unit_by_index(*source_id).await? else {
+                continue;
+            };
+            if Self::should_publish_to_organization(&source) {
+                sources.push(source);
             }
         }
 
-        let mut projected = source.clone();
-        projected.id = Uuid::new_v4();
-        projected.domain = target_domain.clone();
-        projected.namespace_key = MemoryUnit::build_namespace_key(
-            &target_domain,
-            source.org_id.as_deref(),
-            Some(&source.user_id),
-            Some(&source.app_id),
-            source.agent_id.as_deref(),
-        );
-        projected.share_policy = SharePolicy::default();
-        projected.projected_from = vec![source.id];
-
-        Ok(Some((mapping_key, projected)))
+        Ok(sources)
     }
 
-    async fn find_projected_units_for_scope(
+    fn load_organization_knowledge(&self, id: Uuid) -> Result<Option<OrganizationKnowledgeRecord>> {
+        let key = Self::organization_knowledge_key(id);
+        match self.system_kv().get(key.as_bytes())? {
+            Some(bytes) => Ok(serde_json::from_slice(&bytes).ok()),
+            None => Ok(None),
+        }
+    }
+
+    fn store_organization_knowledge(&self, record: &OrganizationKnowledgeRecord) -> Result<()> {
+        let key = Self::organization_knowledge_key(record.id);
+        self.system_kv()
+            .put(key.as_bytes(), &serde_json::to_vec(record)?)
+    }
+
+    fn load_organization_membership(
+        &self,
+        source_id: Uuid,
+    ) -> Result<Option<OrganizationKnowledgeMembershipRecord>> {
+        let key = Self::organization_membership_source_key(source_id);
+        match self.system_kv().get(key.as_bytes())? {
+            Some(bytes) => Ok(serde_json::from_slice(&bytes).ok()),
+            None => Ok(None),
+        }
+    }
+
+    fn load_organization_topic_relation(
+        &self,
+        org_id: &str,
+        topic_key: &str,
+    ) -> Result<Option<OrganizationKnowledgeRelationRecord>> {
+        let key = Self::organization_topic_relation_key(org_id, topic_key);
+        match self.system_kv().get(key.as_bytes())? {
+            Some(bytes) => Ok(serde_json::from_slice(&bytes).ok()),
+            None => Ok(None),
+        }
+    }
+
+    fn store_organization_relation(
+        &self,
+        relation: &OrganizationKnowledgeRelationRecord,
+    ) -> Result<()> {
+        let primary_key = Self::organization_relation_key(relation);
+        let index_key = Self::organization_knowledge_relation_index_key(relation);
+        let value = serde_json::to_vec(relation)?;
+        self.system_kv().put(primary_key.as_bytes(), &value)?;
+        self.system_kv().put(index_key.as_bytes(), &value)
+    }
+
+    fn store_organization_relations(
+        &self,
+        relations: &[OrganizationKnowledgeRelationRecord],
+    ) -> Result<()> {
+        for relation in relations {
+            self.store_organization_relation(relation)?;
+        }
+        Ok(())
+    }
+
+    fn store_organization_membership(
+        &self,
+        membership: &OrganizationKnowledgeMembershipRecord,
+    ) -> Result<()> {
+        let primary_key = Self::organization_membership_source_key(membership.source_id);
+        let index_key = Self::organization_membership_by_knowledge_key(membership);
+        let value = serde_json::to_vec(membership)?;
+        self.system_kv().put(primary_key.as_bytes(), &value)?;
+        self.system_kv().put(index_key.as_bytes(), &value)
+    }
+
+    fn store_organization_memberships(
+        &self,
+        memberships: &[OrganizationKnowledgeMembershipRecord],
+    ) -> Result<()> {
+        for membership in memberships {
+            self.store_organization_membership(membership)?;
+        }
+        Ok(())
+    }
+
+    fn delete_organization_membership(&self, source_id: Uuid) -> Result<()> {
+        if let Some(bytes) = self
+            .system_kv()
+            .get(Self::organization_membership_source_key(source_id).as_bytes())?
+        {
+            if let Ok(membership) =
+                serde_json::from_slice::<OrganizationKnowledgeMembershipRecord>(&bytes)
+            {
+                let index_key = Self::organization_membership_by_knowledge_key(&membership);
+                self.system_kv().delete(index_key.as_bytes()).ok();
+            }
+        }
+        self.system_kv()
+            .delete(Self::organization_membership_source_key(source_id).as_bytes())
+            .ok();
+        Ok(())
+    }
+
+    fn delete_organization_relation_by_primary_key(&self, primary_key: &str) -> Result<()> {
+        if let Some(bytes) = self.system_kv().get(primary_key.as_bytes())? {
+            if let Ok(relation) =
+                serde_json::from_slice::<OrganizationKnowledgeRelationRecord>(&bytes)
+            {
+                let index_key = Self::organization_knowledge_relation_index_key(&relation);
+                self.system_kv().delete(index_key.as_bytes()).ok();
+            }
+        }
+        self.system_kv().delete(primary_key.as_bytes()).ok();
+        Ok(())
+    }
+
+    fn delete_organization_membership_or_relation_by_key(&self, key: &str) -> Result<()> {
+        if key.starts_with("organization_knowledge_membership:source:") {
+            let source_id = key
+                .rsplit(':')
+                .next()
+                .and_then(|value| Uuid::parse_str(value).ok());
+            if let Some(source_id) = source_id {
+                self.delete_organization_membership(source_id)?;
+            } else {
+                self.system_kv().delete(key.as_bytes()).ok();
+            }
+            return Ok(());
+        }
+
+        self.delete_organization_relation_by_primary_key(key)
+    }
+
+    fn store_organization_contribution(
+        &self,
+        contribution: &OrganizationKnowledgeContributionRecord,
+    ) -> Result<()> {
+        let key = Self::organization_knowledge_contribution_key(
+            contribution.knowledge_id,
+            contribution.source_id,
+        );
+        self.system_kv()
+            .put(key.as_bytes(), &serde_json::to_vec(contribution)?)
+    }
+
+    fn store_organization_contributions(
+        &self,
+        contributions: &[OrganizationKnowledgeContributionRecord],
+    ) -> Result<()> {
+        for contribution in contributions {
+            self.store_organization_contribution(contribution)?;
+        }
+        Ok(())
+    }
+
+    fn submit_organization_contribution_candidates(
+        &self,
+        candidates: &[OrganizationKnowledgeContributionRecord],
+    ) -> Result<()> {
+        self.store_organization_contributions(candidates)
+    }
+
+    fn approve_organization_contribution_candidates(
+        &self,
+        candidates: &[OrganizationKnowledgeContributionRecord],
+        activated_at: DateTime<Utc>,
+    ) -> Result<Vec<OrganizationKnowledgeContributionRecord>> {
+        let approved = Self::activate_organization_contribution_records(candidates, activated_at);
+        self.store_organization_contributions(&approved)?;
+        if let Some(first) = approved.first() {
+            self.increment_organization_metric_counter(
+                &first.org_id,
+                "auto_approved_total",
+                approved.len(),
+            )?;
+        }
+        Ok(approved)
+    }
+
+    async fn list_organization_contributions(
+        &self,
+        knowledge_id: Uuid,
+    ) -> Result<Vec<OrganizationKnowledgeContributionRecord>> {
+        let prefix = Self::organization_knowledge_contribution_prefix(knowledge_id);
+        let system_kv = self.system_kv();
+        let pairs =
+            tokio::task::spawn_blocking(move || system_kv.scan(prefix.as_bytes())).await??;
+
+        Ok(pairs
+            .into_iter()
+            .filter_map(|(_, val)| {
+                serde_json::from_slice::<OrganizationKnowledgeContributionRecord>(&val).ok()
+            })
+            .collect())
+    }
+
+    async fn list_organization_memberships(
+        &self,
+        knowledge_id: Uuid,
+    ) -> Result<Vec<OrganizationKnowledgeMembershipRecord>> {
+        let prefix = Self::organization_membership_by_knowledge_prefix(knowledge_id);
+        let system_kv = self.system_kv();
+        let pairs =
+            tokio::task::spawn_blocking(move || system_kv.scan(prefix.as_bytes())).await??;
+
+        let mut memberships = pairs
+            .into_iter()
+            .filter_map(|(_, val)| {
+                serde_json::from_slice::<OrganizationKnowledgeMembershipRecord>(&val).ok()
+            })
+            .collect::<Vec<_>>();
+        memberships.sort_by(|left, right| left.source_id.cmp(&right.source_id));
+        Ok(memberships)
+    }
+
+    async fn resolve_organization_record_source_ids(
+        &self,
+        record: &OrganizationKnowledgeRecord,
+    ) -> Result<Vec<Uuid>> {
+        let mut source_ids = self
+            .list_organization_memberships(record.id)
+            .await?
+            .into_iter()
+            .map(|membership| membership.source_id)
+            .collect::<Vec<_>>();
+        source_ids.sort();
+        source_ids.dedup();
+        Ok(source_ids)
+    }
+
+    async fn delete_organization_contributions(&self, knowledge_id: Uuid) -> Result<()> {
+        let prefix = Self::organization_knowledge_contribution_prefix(knowledge_id);
+        let system_kv = self.system_kv();
+        let pairs =
+            tokio::task::spawn_blocking(move || system_kv.scan(prefix.as_bytes())).await??;
+        for (key, _) in pairs {
+            self.system_kv().delete(&key).ok();
+        }
+        Ok(())
+    }
+
+    async fn delete_organization_memberships(&self, knowledge_id: Uuid) -> Result<()> {
+        for membership in self.list_organization_memberships(knowledge_id).await? {
+            self.delete_organization_membership(membership.source_id)?;
+        }
+        Ok(())
+    }
+
+    async fn load_organization_membership_sources(
+        &self,
+        knowledge_id: Uuid,
+    ) -> Result<Vec<(OrganizationKnowledgeMembershipRecord, MemoryUnit)>> {
+        let mut sources = Vec::new();
+        for membership in self.list_organization_memberships(knowledge_id).await? {
+            let Some(source_unit) = self
+                .get_native_memory_unit_by_index(membership.source_id)
+                .await?
+            else {
+                continue;
+            };
+            sources.push((membership, source_unit));
+        }
+        Ok(sources)
+    }
+
+    fn load_organization_contribution(
+        &self,
+        knowledge_id: Uuid,
+        source_id: Uuid,
+    ) -> Result<Option<OrganizationKnowledgeContributionRecord>> {
+        let key = Self::organization_knowledge_contribution_key(knowledge_id, source_id);
+        match self.system_kv().get(key.as_bytes())? {
+            Some(bytes) => Ok(serde_json::from_slice(&bytes).ok()),
+            None => Ok(None),
+        }
+    }
+
+    fn revoke_organization_contribution(&self, knowledge_id: Uuid, source_id: Uuid) -> Result<()> {
+        let Some(mut contribution) =
+            self.load_organization_contribution(knowledge_id, source_id)?
+        else {
+            return Ok(());
+        };
+
+        contribution.status = OrganizationKnowledgeContributionStatus::Revoked;
+        contribution.updated_at = Utc::now();
+        contribution.revoked_at = Some(contribution.updated_at);
+        self.store_organization_contribution(&contribution)?;
+        self.increment_organization_metric_counter(&contribution.org_id, "revoke_total", 1)
+    }
+
+    async fn list_organization_relations_for_knowledge(
+        &self,
+        knowledge_id: Uuid,
+    ) -> Result<Vec<OrganizationKnowledgeRelationRecord>> {
+        let prefix = Self::organization_knowledge_relation_index_prefix(knowledge_id);
+        let system_kv = self.system_kv();
+        let indexed_pairs =
+            tokio::task::spawn_blocking(move || system_kv.scan(prefix.as_bytes())).await??;
+
+        let mut indexed_relations = indexed_pairs
+            .into_iter()
+            .filter_map(|(_, val)| {
+                serde_json::from_slice::<OrganizationKnowledgeRelationRecord>(&val).ok()
+            })
+            .filter(|relation| {
+                matches!(
+                    relation.relation,
+                    OrganizationKnowledgeRelationKind::TopicAlias { .. }
+                )
+            })
+            .collect::<Vec<_>>();
+        if !indexed_relations.is_empty() {
+            indexed_relations.sort_by(|left, right| {
+                Self::organization_relation_key(left).cmp(&Self::organization_relation_key(right))
+            });
+            return Ok(indexed_relations);
+        }
+
+        let system_kv = self.system_kv();
+        let pairs = tokio::task::spawn_blocking(move || {
+            system_kv.scan(b"organization_knowledge_relation:")
+        })
+        .await??;
+
+        let mut relations = pairs
+            .into_iter()
+            .filter_map(|(_, val)| {
+                serde_json::from_slice::<OrganizationKnowledgeRelationRecord>(&val).ok()
+            })
+            .filter(|relation| relation.knowledge_id == knowledge_id)
+            .filter(|relation| {
+                matches!(
+                    relation.relation,
+                    OrganizationKnowledgeRelationKind::TopicAlias { .. }
+                )
+            })
+            .collect::<Vec<_>>();
+        relations.sort_by(|left, right| {
+            Self::organization_relation_key(left).cmp(&Self::organization_relation_key(right))
+        });
+        Ok(relations)
+    }
+
+    async fn cleanup_stale_organization_source_relations(&self) -> Result<usize> {
+        let system_kv = self.system_kv();
+        let primary_pairs = tokio::task::spawn_blocking(move || {
+            system_kv.scan(b"organization_knowledge_relation:source:")
+        })
+        .await??;
+        let system_kv = self.system_kv();
+        let indexed_pairs = tokio::task::spawn_blocking(move || {
+            system_kv.scan(b"organization_knowledge_relation_by_knowledge:")
+        })
+        .await??;
+
+        let mut removed = 0usize;
+        for (key, _) in primary_pairs {
+            self.system_kv().delete(&key).ok();
+            removed += 1;
+        }
+        for (key, value) in indexed_pairs {
+            let is_stale_source_index = String::from_utf8_lossy(&key).contains(":source:");
+            let is_source_relation =
+                serde_json::from_slice::<OrganizationKnowledgeRelationRecord>(&value)
+                    .ok()
+                    .map(|relation| {
+                        matches!(
+                            relation.relation,
+                            OrganizationKnowledgeRelationKind::Source { .. }
+                        )
+                    })
+                    .unwrap_or(false);
+            if is_stale_source_index || is_source_relation {
+                self.system_kv().delete(&key).ok();
+                removed += 1;
+            }
+        }
+
+        Ok(removed)
+    }
+
+    fn select_retained_organization_knowledge(
+        existing_records: &[OrganizationKnowledgeRecord],
+    ) -> Option<OrganizationKnowledgeRecord> {
+        let mut records = existing_records.to_vec();
+        records.sort_by(|left, right| {
+            right
+                .importance
+                .partial_cmp(&left.importance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| left.created_at.cmp(&right.created_at))
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        records.into_iter().next()
+    }
+
+    async fn build_organization_knowledge_mutation(
+        &self,
+        source: &MemoryUnit,
+        target_domain: MemoryDomain,
+    ) -> Result<Option<OrganizationKnowledgeMutation>> {
+        let mut stale_relation_keys = Vec::new();
+
+        let mutation = match target_domain {
+            MemoryDomain::Organization => {
+                if !Self::should_publish_to_organization(source) {
+                    None
+                } else {
+                    let Some(org_id) = source.org_id.as_deref() else {
+                        return Ok(None);
+                    };
+                    if let Some(existing_membership) =
+                        self.load_organization_membership(source.id)?
+                    {
+                        if existing_membership.org_id == org_id
+                            && self
+                                .load_organization_knowledge(existing_membership.knowledge_id)?
+                                .is_some()
+                        {
+                            return Ok(None);
+                        }
+                        stale_relation_keys
+                            .push(Self::organization_membership_source_key(source.id));
+                    }
+
+                    let source_topic_candidates =
+                        Self::organization_source_topic_candidates(source);
+                    if source_topic_candidates.is_empty() {
+                        return Ok(None);
+                    }
+
+                    let mut existing_records_by_id = HashMap::new();
+                    for (_, topic_key) in &source_topic_candidates {
+                        if let Some(existing_relation) =
+                            self.load_organization_topic_relation(org_id, topic_key)?
+                        {
+                            if let Some(existing_record) =
+                                self.load_organization_knowledge(existing_relation.knowledge_id)?
+                            {
+                                if existing_record.org_id == org_id {
+                                    existing_records_by_id
+                                        .entry(existing_record.id)
+                                        .or_insert(existing_record);
+                                } else {
+                                    stale_relation_keys
+                                        .push(Self::organization_relation_key(&existing_relation));
+                                }
+                            } else {
+                                stale_relation_keys
+                                    .push(Self::organization_relation_key(&existing_relation));
+                            }
+                        }
+                    }
+
+                    let existing_records = existing_records_by_id
+                        .into_values()
+                        .collect::<Vec<OrganizationKnowledgeRecord>>();
+                    let mut source_ids = Vec::new();
+                    for record in &existing_records {
+                        source_ids
+                            .extend(self.resolve_organization_record_source_ids(record).await?);
+                    }
+                    source_ids.sort();
+                    source_ids.dedup();
+                    if !source_ids.contains(&source.id) {
+                        source_ids.push(source.id);
+                    }
+
+                    let sources = self.load_organization_source_units(&source_ids).await?;
+                    let Some(topic) = Self::select_organization_topic(&sources) else {
+                        return Ok(None);
+                    };
+                    let retained_record =
+                        Self::select_retained_organization_knowledge(&existing_records);
+                    let obsolete_records = existing_records
+                        .iter()
+                        .filter(|record| {
+                            Some(record.id) != retained_record.as_ref().map(|record| record.id)
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>();
+
+                    let Some(record) = self.compose_organization_knowledge_record(
+                        org_id,
+                        &sources,
+                        retained_record.as_ref(),
+                        &topic,
+                    ) else {
+                        return Ok(None);
+                    };
+                    let unit = Self::materialize_organization_read_view(&record);
+
+                    let candidate_contribution_records =
+                        Self::organization_candidate_contribution_records(
+                            org_id,
+                            record.id,
+                            &sources,
+                            record.updated_at,
+                        );
+                    let approved_contribution_records =
+                        Self::activate_organization_contribution_records(
+                            &candidate_contribution_records,
+                            record.updated_at,
+                        );
+                    let memberships = Self::organization_memberships_from_contributions(
+                        &approved_contribution_records,
+                    );
+                    let topic_relations = Self::organization_topic_relations(
+                        org_id,
+                        record.id,
+                        &topic,
+                        record.updated_at,
+                    );
+
+                    let mut previous_relation_keys = Vec::new();
+                    for existing_record in &existing_records {
+                        previous_relation_keys.extend(
+                            self.list_organization_relations_for_knowledge(existing_record.id)
+                                .await?
+                                .into_iter()
+                                .map(|relation| Self::organization_relation_key(&relation)),
+                        );
+                    }
+                    let membership_keys = memberships
+                        .iter()
+                        .map(|membership| {
+                            Self::organization_membership_source_key(membership.source_id)
+                        })
+                        .collect::<Vec<_>>();
+                    let topic_relation_keys = topic_relations
+                        .iter()
+                        .map(Self::organization_relation_key)
+                        .collect::<Vec<_>>();
+                    for stale_relation_key in previous_relation_keys {
+                        if !membership_keys.contains(&stale_relation_key)
+                            && !topic_relation_keys.contains(&stale_relation_key)
+                        {
+                            stale_relation_keys.push(stale_relation_key);
+                        }
+                    }
+
+                    Some(OrganizationKnowledgeMutation {
+                        topic_relations,
+                        candidate_contribution_records,
+                        stale_relation_keys,
+                        obsolete_records,
+                        record,
+                        unit,
+                    })
+                }
+            }
+            _ => None,
+        };
+
+        Ok(mutation)
+    }
+
+    async fn find_org_knowledge_records_for_contributor(
         &self,
         user_id: &str,
-        app_id: &str,
-        org_id: Option<&str>,
-        domain: MemoryDomain,
-    ) -> Result<Vec<MemoryUnit>> {
+        org_id: &str,
+    ) -> Result<Vec<(OrganizationKnowledgeRecord, Vec<Uuid>)>> {
         let prefix = format!("u:{}:unit:", user_id);
         let store = self._kv.clone();
         let prefix_bytes = prefix.into_bytes();
         let pairs = tokio::task::spawn_blocking(move || store.scan(&prefix_bytes)).await??;
 
-        let projected = pairs
+        let source_units: Vec<MemoryUnit> = pairs
             .into_iter()
             .filter_map(|(_, val)| serde_json::from_slice::<MemoryUnit>(&val).ok())
-            .filter(|unit| !unit.projected_from.is_empty())
-            .filter(|unit| unit.domain == domain)
-            .filter(|unit| match domain {
-                MemoryDomain::App => unit.app_id == app_id,
-                MemoryDomain::Organization => unit.org_id.as_deref() == org_id,
-                _ => false,
-            })
             .collect();
 
-        Ok(projected)
+        let mut knowledge_by_id: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+        for source_unit in source_units {
+            if source_unit.org_id.as_deref() != Some(org_id)
+                || !Self::should_publish_to_organization(&source_unit)
+            {
+                continue;
+            }
+
+            let Some(membership) = self.load_organization_membership(source_unit.id)? else {
+                continue;
+            };
+            if membership.org_id != org_id {
+                continue;
+            }
+            knowledge_by_id
+                .entry(membership.knowledge_id)
+                .or_default()
+                .push(source_unit.id);
+        }
+
+        let mut knowledge_records = Vec::new();
+        for (knowledge_id, source_ids) in knowledge_by_id {
+            let Some(record) = self.load_organization_knowledge(knowledge_id)? else {
+                continue;
+            };
+            if record.org_id == org_id {
+                knowledge_records.push((record, source_ids));
+            }
+        }
+
+        Ok(knowledge_records)
     }
 
-    async fn delete_projected_memory_units(&self, units: Vec<MemoryUnit>) -> Result<usize> {
-        if units.is_empty() {
+    async fn delete_organization_knowledge_records(
+        &self,
+        records: Vec<OrganizationKnowledgeRecord>,
+    ) -> Result<usize> {
+        if records.is_empty() {
             return Ok(0);
         }
 
-        let kv = self._kv.clone();
-        let deletions: Vec<(String, String, Vec<String>)> = units
-            .iter()
-            .map(|unit| {
-                let mapping_keys = unit
-                    .projected_from
-                    .iter()
-                    .map(|source_id| {
-                        Self::projection_mapping_key(&unit.domain, *source_id)
-                    })
-                    .collect();
-                (
-                    format!("u:{}:unit:{}", unit.user_id, unit.id),
-                    format!("idx:unit:{}", unit.id),
-                    mapping_keys,
-                )
-            })
-            .collect();
-
-        tokio::task::spawn_blocking(move || {
-            for (unit_key, index_key, mapping_keys) in deletions {
-                kv.delete(unit_key.as_bytes())?;
-                kv.delete(index_key.as_bytes()).ok();
-                for mapping_key in mapping_keys {
-                    kv.delete(mapping_key.as_bytes()).ok();
-                }
-            }
-            Ok::<(), anyhow::Error>(())
-        })
-        .await??;
-
-        for unit in &units {
-            if let Err(error) = self
-                .vector
-                .delete_by_id("memories", &unit.id.to_string())
-                .await
+        for record in &records {
+            self.system_kv()
+                .delete(Self::organization_knowledge_key(record.id).as_bytes())
+                .ok();
+            for relation in self
+                .list_organization_relations_for_knowledge(record.id)
+                .await?
             {
-                tracing::warn!(
-                    "Failed to delete projected unit {} from vector store: {:?}",
-                    unit.id,
-                    error
-                );
+                self.delete_organization_relation_by_primary_key(&Self::organization_relation_key(
+                    &relation,
+                ))
+                .ok();
             }
+            self.delete_organization_memberships(record.id).await?;
         }
 
-        let index = self.index.clone();
-        let ids: Vec<String> = units.iter().map(|unit| unit.id.to_string()).collect();
-        tokio::task::spawn_blocking(move || {
-            for id in &ids {
-                index.delete_unit(id)?;
-            }
-            index.commit()?;
-            index.reload()?;
-            Ok::<(), anyhow::Error>(())
-        })
-        .await??;
+        for record in &records {
+            self.delete_organization_contributions(record.id).await?;
+            let unit = Self::materialize_organization_read_view(record);
+            self.delete_materialized_organization_view_storage(&unit)
+                .await?;
+        }
 
-        Ok(units.len())
+        Ok(records.len())
     }
 
-    async fn store_projected_memory_units(&self, units: Vec<MemoryUnit>) -> Result<()> {
-        if units.is_empty() {
-            return Ok(());
-        }
-
+    async fn list_persisted_organization_read_view_units(
+        &self,
+    ) -> Result<Vec<(Vec<u8>, MemoryUnit)>> {
         let kv = self._kv.clone();
-        let mut kv_batch = Vec::new();
-        for unit in &units {
-            let key = format!("u:{}:unit:{}", unit.user_id, unit.id);
-            let val = serde_json::to_vec(unit)?;
-            kv_batch.push((key, val));
+        let pairs = tokio::task::spawn_blocking(move || kv.scan(b"u:")).await??;
 
-            let idx_key = format!("idx:unit:{}", unit.id);
-            kv_batch.push((idx_key, unit.user_id.as_bytes().to_vec()));
-        }
+        Ok(pairs
+            .into_iter()
+            .filter(|(key, _)| key.windows(6).any(|window| window == b":unit:"))
+            .filter_map(|(key, val)| {
+                serde_json::from_slice::<MemoryUnit>(&val)
+                    .ok()
+                    .map(|unit| (key, unit))
+            })
+            .filter(|(_, unit)| unit.domain == MemoryDomain::Organization)
+            .collect())
+    }
+
+    async fn delete_memory_unit_storage_by_key(
+        &self,
+        unit_key: Vec<u8>,
+        unit_id: Uuid,
+    ) -> Result<()> {
+        let kv = self._kv.clone();
+        let index_key = format!("idx:unit:{}", unit_id);
 
         tokio::task::spawn_blocking(move || {
-            for (k, v) in kv_batch {
-                kv.put(k.as_bytes(), &v)?;
-            }
+            kv.delete(&unit_key)?;
+            kv.delete(index_key.as_bytes()).ok();
             Ok::<(), anyhow::Error>(())
         })
         .await??;
 
-        let units_with_embeddings: Vec<MemoryUnit> = units
-            .iter()
-            .filter(|u| u.embedding.is_some())
-            .cloned()
-            .collect();
-        if !units_with_embeddings.is_empty() {
-            self.vector.ensure_table("memories").await?;
-            self.vector.add("memories", units_with_embeddings).await?;
+        if let Err(error) = self
+            .vector
+            .delete_by_id("memories", &unit_id.to_string())
+            .await
+        {
+            tracing::warn!(
+                "Failed to delete materialized unit {} from vector store: {:?}",
+                unit_id,
+                error
+            );
         }
 
         let index = self.index.clone();
-        let units_for_index = units.clone();
+        let id = unit_id.to_string();
         tokio::task::spawn_blocking(move || {
-            for unit in &units_for_index {
-                index.index_unit(unit)?;
-            }
+            index.delete_unit(&id)?;
             Ok::<(), anyhow::Error>(())
         })
         .await??;
@@ -1303,38 +2838,317 @@ impl MemoroseEngine {
         Ok(())
     }
 
-    async fn project_native_memory_units(&self, units: &[MemoryUnit]) -> Result<usize> {
-        self.project_native_memory_units_for_domain(units, None)
+    async fn delete_materialized_organization_view_storage(
+        &self,
+        unit: &MemoryUnit,
+    ) -> Result<()> {
+        let unit_key = format!("u:{}:unit:{}", unit.user_id, unit.id).into_bytes();
+        self.delete_memory_unit_storage_by_key(unit_key, unit.id)
             .await
     }
 
-    async fn project_native_memory_units_for_domain(
+    async fn upsert_organization_knowledge(
+        &self,
+        record: OrganizationKnowledgeRecord,
+        unit: MemoryUnit,
+    ) -> Result<()> {
+        self.store_organization_knowledge(&record)?;
+        self.delete_materialized_organization_view_storage(&unit).await
+    }
+
+    async fn publish_organization_knowledge(
+        &self,
+        record: OrganizationKnowledgeRecord,
+        unit: MemoryUnit,
+        candidate_contribution_records: Vec<OrganizationKnowledgeContributionRecord>,
+        topic_relations: Vec<OrganizationKnowledgeRelationRecord>,
+        publication_kind: OrganizationPublicationKind,
+    ) -> Result<Vec<OrganizationKnowledgeMembershipRecord>> {
+        let knowledge_id = record.id;
+        let activated_at = record.updated_at;
+        let org_id = record.org_id.clone();
+
+        self.delete_organization_contributions(knowledge_id).await?;
+        self.submit_organization_contribution_candidates(&candidate_contribution_records)?;
+        let approved_contribution_records = self.approve_organization_contribution_candidates(
+            &candidate_contribution_records,
+            activated_at,
+        )?;
+        let memberships =
+            Self::organization_memberships_from_contributions(&approved_contribution_records);
+
+        self.upsert_organization_knowledge(record, unit).await?;
+        self.delete_organization_memberships(knowledge_id).await?;
+        self.store_organization_memberships(&memberships)?;
+        self.store_organization_relations(&topic_relations)?;
+        self.increment_organization_metric_counter(&org_id, "auto_publish_total", 1)?;
+        if matches!(publication_kind, OrganizationPublicationKind::Rebuild) {
+            self.increment_organization_metric_counter(&org_id, "rebuild_total", 1)?;
+        }
+        if candidate_contribution_records.len() > 1 {
+            self.increment_organization_metric_counter(&org_id, "merged_publication_total", 1)?;
+        }
+
+        Ok(memberships)
+    }
+
+    async fn load_reconciled_organization_source_units(
+        &self,
+        org_id: &str,
+        source_ids: &[Uuid],
+    ) -> Result<Vec<MemoryUnit>> {
+        let mut sources = Vec::new();
+
+        for source_id in source_ids {
+            let Some(source) = self.get_native_memory_unit_by_index(*source_id).await? else {
+                continue;
+            };
+            if source.org_id.as_deref() != Some(org_id)
+                || !Self::should_publish_to_organization(&source)
+            {
+                continue;
+            }
+
+            let policy = self.get_org_share_policy(&source.user_id, org_id)?;
+            if policy.contribute {
+                sources.push(source);
+            }
+        }
+
+        Ok(sources)
+    }
+
+    fn organization_record_matches_reconciled_state(
+        existing: &OrganizationKnowledgeRecord,
+        reconciled: &OrganizationKnowledgeRecord,
+    ) -> bool {
+        existing.id == reconciled.id
+            && existing.org_id == reconciled.org_id
+            && existing.topic_label == reconciled.topic_label
+            && existing.topic_alias_keys == reconciled.topic_alias_keys
+            && existing.memory_type == reconciled.memory_type
+            && existing.content == reconciled.content
+            && existing.embedding == reconciled.embedding
+            && existing.keywords == reconciled.keywords
+            && existing.importance == reconciled.importance
+            && existing.valid_time == reconciled.valid_time
+            && existing.created_at == reconciled.created_at
+    }
+
+    fn reconcile_active_organization_contributions(
+        org_id: &str,
+        knowledge_id: Uuid,
+        sources: &[MemoryUnit],
+        existing_contributions: &[OrganizationKnowledgeContributionRecord],
+        reconciled_at: DateTime<Utc>,
+        keep_existing_timestamps: bool,
+    ) -> Vec<OrganizationKnowledgeContributionRecord> {
+        let mut existing_by_source: HashMap<Uuid, OrganizationKnowledgeContributionRecord> =
+            HashMap::new();
+        for contribution in existing_contributions {
+            if matches!(
+                contribution.status,
+                OrganizationKnowledgeContributionStatus::Revoked
+            ) {
+                continue;
+            }
+            existing_by_source
+                .entry(contribution.source_id)
+                .or_insert_with(|| contribution.clone());
+        }
+
+        sources
+            .iter()
+            .map(|source| {
+                if let Some(existing) = existing_by_source.get(&source.id) {
+                    let mut active = existing.clone();
+                    active.org_id = org_id.to_string();
+                    active.knowledge_id = knowledge_id;
+                    active.source_id = source.id;
+                    active.contributor_user_id = source.user_id.clone();
+                    active.status = OrganizationKnowledgeContributionStatus::Active;
+                    active.candidate_at = active.candidate_at.or(Some(reconciled_at));
+                    active.activated_at = active
+                        .activated_at
+                        .or(active.candidate_at)
+                        .or(Some(reconciled_at));
+                    active.approval_mode = Some(OrganizationKnowledgeApprovalMode::Auto);
+                    active.approved_by = Some("system:auto_publish".to_string());
+                    if !keep_existing_timestamps
+                        || !matches!(
+                            existing.status,
+                            OrganizationKnowledgeContributionStatus::Active
+                        )
+                    {
+                        active.updated_at = reconciled_at;
+                    }
+                    active.revoked_at = None;
+                    active
+                } else {
+                    let candidate = OrganizationKnowledgeContributionRecord {
+                        org_id: org_id.to_string(),
+                        knowledge_id,
+                        source_id: source.id,
+                        contributor_user_id: source.user_id.clone(),
+                        status: OrganizationKnowledgeContributionStatus::Candidate,
+                        candidate_at: Some(reconciled_at),
+                        activated_at: None,
+                        approval_mode: None,
+                        approved_by: None,
+                        updated_at: reconciled_at,
+                        revoked_at: None,
+                    };
+                    Self::activate_organization_contribution_records(&[candidate], reconciled_at)
+                        .into_iter()
+                        .next()
+                        .expect("expected active contribution")
+                }
+            })
+            .collect()
+    }
+
+    async fn reconcile_organization_record(
+        &self,
+        record: OrganizationKnowledgeRecord,
+    ) -> Result<bool> {
+        let existing_contributions = self.list_organization_contributions(record.id).await?;
+        let active_source_ids = existing_contributions
+            .iter()
+            .filter(|contribution| {
+                matches!(
+                    contribution.status,
+                    OrganizationKnowledgeContributionStatus::Active
+                        | OrganizationKnowledgeContributionStatus::Candidate
+                )
+            })
+            .map(|contribution| contribution.source_id)
+            .collect::<Vec<_>>();
+
+        let sources = self
+            .load_reconciled_organization_source_units(&record.org_id, &active_source_ids)
+            .await?;
+
+        if sources.is_empty() {
+            self.delete_organization_knowledge_records(vec![record])
+                .await?;
+            return Ok(false);
+        }
+
+        let Some(topic) = Self::select_organization_topic(&sources) else {
+            self.delete_organization_knowledge_records(vec![record])
+                .await?;
+            return Ok(false);
+        };
+
+        let mut reconciled_record = self
+            .compose_organization_knowledge_record(&record.org_id, &sources, Some(&record), &topic)
+            .ok_or_else(|| anyhow::anyhow!("failed to reconcile organization knowledge"))?;
+        let record_unchanged =
+            Self::organization_record_matches_reconciled_state(&record, &reconciled_record);
+        if record_unchanged {
+            reconciled_record.updated_at = record.updated_at;
+        }
+
+        let active_contributions = Self::reconcile_active_organization_contributions(
+            &record.org_id,
+            record.id,
+            &sources,
+            &existing_contributions,
+            reconciled_record.updated_at,
+            record_unchanged,
+        );
+        let active_source_ids = active_contributions
+            .iter()
+            .map(|contribution| contribution.source_id)
+            .collect::<HashSet<_>>();
+        let mut contributions_to_store = active_contributions;
+        contributions_to_store.extend(existing_contributions.into_iter().filter(|contribution| {
+            matches!(
+                contribution.status,
+                OrganizationKnowledgeContributionStatus::Revoked
+            ) && !active_source_ids.contains(&contribution.source_id)
+        }));
+
+        let memberships =
+            Self::organization_memberships_from_contributions(&contributions_to_store);
+        let topic_relations = Self::organization_topic_relations(
+            &record.org_id,
+            record.id,
+            &topic,
+            reconciled_record.updated_at,
+        );
+        let previous_relation_keys = self
+            .list_organization_relations_for_knowledge(record.id)
+            .await?
+            .into_iter()
+            .map(|relation| Self::organization_relation_key(&relation))
+            .collect::<Vec<_>>();
+        let retained_relation_keys = topic_relations
+            .iter()
+            .map(Self::organization_relation_key)
+            .collect::<HashSet<_>>();
+
+        self.store_organization_knowledge(&reconciled_record)?;
+        self.delete_organization_contributions(record.id).await?;
+        self.delete_organization_memberships(record.id).await?;
+        self.store_organization_contributions(&contributions_to_store)?;
+        self.store_organization_memberships(&memberships)?;
+        self.store_organization_relations(&topic_relations)?;
+        for relation_key in previous_relation_keys {
+            if !retained_relation_keys.contains(&relation_key) {
+                self.delete_organization_relation_by_primary_key(&relation_key)
+                    .ok();
+            }
+        }
+
+        let read_view = Self::materialize_organization_read_view(&reconciled_record);
+        self.delete_materialized_organization_view_storage(&read_view)
+            .await?;
+
+        Ok(true)
+    }
+
+    async fn reconcile_organization_storage(
+        &self,
+    ) -> Result<OrganizationStorageReconciliationStats> {
+        let mut stats = OrganizationStorageReconciliationStats::default();
+        stats.removed_stale_source_relations =
+            self.cleanup_stale_organization_source_relations().await?;
+
+        for (unit_key, unit) in self.list_persisted_organization_read_view_units().await? {
+            self.delete_memory_unit_storage_by_key(unit_key, unit.id)
+                .await?;
+            stats.removed_persisted_views += 1;
+        }
+
+        for record in self.list_organization_knowledge_records(None, None).await? {
+            if self.reconcile_organization_record(record).await? {
+                stats.reconciled_records += 1;
+            } else {
+                stats.removed_records += 1;
+            }
+        }
+
+        Ok(stats)
+    }
+
+    async fn publish_native_shared_knowledge(&self, units: &[MemoryUnit]) -> Result<usize> {
+        self.publish_native_shared_knowledge_for_domain(units, None)
+            .await
+    }
+
+    async fn publish_native_shared_knowledge_for_domain(
         &self,
         units: &[MemoryUnit],
         only_domain: Option<MemoryDomain>,
     ) -> Result<usize> {
-        let mut mappings = Vec::new();
-        let mut projected_units = Vec::new();
+        let mut published_count = 0;
 
         for unit in units {
-            if !Self::is_local_domain(&unit.domain) || unit.level > 2 {
-                continue;
-            }
-
-            let app_policy = self.get_app_share_policy(&unit.user_id, &unit.app_id)?;
-            if app_policy.contribute
-                && only_domain
-                    .as_ref()
-                    .map(|domain| domain == &MemoryDomain::App)
-                    .unwrap_or(true)
+            if unit.domain != MemoryDomain::User
+                || unit.level != 2
             {
-                if let Some((mapping_key, projected)) = self
-                    .build_projection_candidate(unit, MemoryDomain::App)
-                    .await?
-                {
-                    mappings.push((mapping_key, projected.id));
-                    projected_units.push(projected);
-                }
+                continue;
             }
 
             if let Some(org_id) = unit.org_id.as_deref() {
@@ -1345,29 +3159,35 @@ impl MemoroseEngine {
                         .map(|domain| domain == &MemoryDomain::Organization)
                         .unwrap_or(true)
                 {
-                    if let Some((mapping_key, projected)) = self
-                        .build_projection_candidate(unit, MemoryDomain::Organization)
+                    if let Some(mutation) = self
+                        .build_organization_knowledge_mutation(unit, MemoryDomain::Organization)
                         .await?
                     {
-                        mappings.push((mapping_key, projected.id));
-                        projected_units.push(projected);
+                        if !mutation.obsolete_records.is_empty() {
+                            self.delete_organization_knowledge_records(mutation.obsolete_records)
+                                .await?;
+                        }
+                        self.publish_organization_knowledge(
+                            mutation.record,
+                            mutation.unit,
+                            mutation.candidate_contribution_records,
+                            mutation.topic_relations,
+                            OrganizationPublicationKind::New,
+                        )
+                        .await?;
+                        for stale_relation_key in mutation.stale_relation_keys {
+                            self.delete_organization_membership_or_relation_by_key(
+                                &stale_relation_key,
+                            )
+                                .ok();
+                        }
+                        published_count += 1;
                     }
                 }
             }
         }
 
-        let projected_count = projected_units.len();
-        if projected_count == 0 {
-            return Ok(0);
-        }
-
-        self.store_projected_memory_units(projected_units).await?;
-        for (mapping_key, projected_id) in mappings {
-            self.system_kv()
-                .put(mapping_key.as_bytes(), projected_id.to_string().as_bytes())?;
-        }
-
-        Ok(projected_count)
+        Ok(published_count)
     }
 
     pub async fn store_memory_units(&self, units: Vec<MemoryUnit>) -> Result<()> {
@@ -1462,7 +3282,7 @@ impl MemoroseEngine {
         .await??;
 
         // 4. Automatic Semantic Linking (Parallelized)
-        let units_for_projection = units.clone();
+        let units_for_org_publication = units.clone();
         let mut join_set = tokio::task::JoinSet::new();
         for unit in units {
             let engine = self.clone();
@@ -1485,7 +3305,7 @@ impl MemoroseEngine {
             }
         }
 
-        self.project_native_memory_units(&units_for_projection)
+        self.publish_native_shared_knowledge(&units_for_org_publication)
             .await?;
 
         Ok(())
@@ -1495,11 +3315,10 @@ impl MemoroseEngine {
         if let Some(ref embedding) = unit.embedding {
             let filter = self.build_user_filter(
                 &unit.user_id,
-                Some(&unit.app_id),
                 Some("(domain = 'agent' OR domain = 'user')".to_string()),
             );
             let similar = self
-                .search_similar(&unit.user_id, None, embedding, 5, filter)
+                .search_similar(&unit.user_id, embedding, 5, filter)
                 .await?;
 
             for (peer, score) in similar {
@@ -1527,7 +3346,6 @@ impl MemoroseEngine {
 
         let context: Vec<MemoryUnit> = context
             .into_iter()
-            .filter(|u| u.app_id == unit.app_id)
             .filter(|u| u.id != unit.id)
             .take(5)
             .collect();
@@ -1551,7 +3369,6 @@ impl MemoroseEngine {
     pub async fn search_similar(
         &self,
         user_id: &str,
-        _app_id: Option<&str>,
         vector: &[f32],
         limit: usize,
         filter: Option<String>,
@@ -1567,7 +3384,6 @@ impl MemoroseEngine {
     async fn expand_subgraph(
         &self,
         user_id: &str,
-        app_id: Option<&str>,
         seeds: Vec<(MemoryUnit, f32)>,
         depth: usize,
     ) -> Result<Vec<(MemoryUnit, f32)>> {
@@ -1667,12 +3483,6 @@ impl MemoroseEngine {
             if !ids_list.is_empty() {
                 let units = self.fetch_units(user_id, ids_list).await?;
                 for unit in units {
-                    if let Some(expected_app_id) = app_id {
-                        if unit.app_id != expected_app_id {
-                            continue;
-                        }
-                    }
-
                     let score = 0.8_f32.powi((_d + 1) as i32) * 0.8;
 
                     let unit_id_str = unit.id.to_string();
@@ -1691,7 +3501,6 @@ impl MemoroseEngine {
     pub async fn search_procedural(
         &self,
         user_id: &str,
-        app_id: Option<&str>,
         agent_id: Option<&str>,
         query_text: &str,
         vector: &[f32],
@@ -1703,7 +3512,7 @@ impl MemoroseEngine {
             extra_filter.push_str(&format!(" AND agent_id = '{}'", aid.replace('\'', "''")));
         }
 
-        let vec_filter = self.build_user_filter(user_id, app_id, Some(extra_filter));
+        let vec_filter = self.build_user_filter(user_id, Some(extra_filter));
         let vector_future = self
             .vector
             .search("memories", vector, limit * 2, vec_filter);
@@ -1752,7 +3561,6 @@ impl MemoroseEngine {
     pub async fn search_hybrid(
         &self,
         user_id: &str,
-        app_id: Option<&str>,
         agent_id: Option<&str>,
         query_text: &str,
         vector: &[f32],
@@ -1772,7 +3580,7 @@ impl MemoroseEngine {
             (None, Some(af)) => Some(format!("{} AND {}", local_filter, af)),
             (None, None) => Some(local_filter),
         };
-        let vec_filter = self.build_user_filter(user_id, app_id, extra);
+        let vec_filter = self.build_user_filter(user_id, extra);
 
         let vector_future = self
             .vector
@@ -1783,7 +3591,6 @@ impl MemoroseEngine {
         let vt = valid_time.clone();
         let tt = transaction_time.clone();
         let uid = Some(user_id.to_string());
-        let aid = app_id.map(|s| s.to_string());
         let agid = agent_id.map(|s| s.to_string());
         let text_future = tokio::task::spawn_blocking(move || {
             // Ensure reader sees latest committed segments before searching
@@ -1795,7 +3602,6 @@ impl MemoroseEngine {
                 tt,
                 None,
                 uid.as_deref(),
-                aid.as_deref(),
                 agid.as_deref(),
                 None,
             )
@@ -1860,9 +3666,7 @@ impl MemoroseEngine {
         }
 
         // Graph Expansion (BFS)
-        let mut expanded_units = self
-            .expand_subgraph(user_id, app_id, seeds, graph_depth)
-            .await?;
+        let mut expanded_units = self.expand_subgraph(user_id, seeds, graph_depth).await?;
 
         expanded_units.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
@@ -1961,19 +3765,35 @@ impl MemoroseEngine {
         &self,
         domain: MemoryDomain,
         org_id: Option<&str>,
-        app_id: Option<&str>,
         agent_id: Option<&str>,
         query_text: &str,
         vector: &[f32],
         limit: usize,
         min_score: Option<f32>,
         valid_time: Option<TimeRange>,
-    ) -> Result<Vec<(MemoryUnit, f32)>> {
+    ) -> Result<Vec<(SharedSearchHit, f32)>> {
+        if domain == MemoryDomain::Organization {
+            let Some(org_id) = org_id else {
+                return Ok(Vec::new());
+            };
+            let record_hits = self
+                .search_organization_knowledge_records(
+                    org_id, query_text, vector, limit, min_score, valid_time,
+                )
+                .await?;
+            return self
+                .materialize_organization_search_hits(record_hits)
+                .await;
+        }
+
+        let shared_agent_filter = match domain {
+            MemoryDomain::Organization => None,
+            _ => agent_id,
+        };
         let filter = self.build_global_filter(
             domain,
             org_id,
-            app_id,
-            agent_id,
+            shared_agent_filter,
             self.build_time_filter(valid_time),
         );
 
@@ -2000,17 +3820,29 @@ impl MemoroseEngine {
         let candidates = self.fetch_units_with_scores_global(hits).await?;
         let mut reranked = self
             .reranker
-            .rerank(query_text, &self._kv, candidates)
+            .rerank(
+                query_text,
+                &self._kv,
+                candidates
+                    .iter()
+                    .map(|(hit, score)| (hit.memory_unit().clone(), *score))
+                    .collect(),
+            )
             .await?;
         let threshold = min_score.unwrap_or(0.3);
         reranked.retain(|(_, score)| *score >= threshold);
-        Ok(reranked)
+        let mut scored_hits = Vec::with_capacity(reranked.len());
+        for (unit, score) in reranked {
+            if let Some((hit, _)) = candidates.iter().find(|(hit, _)| hit.id == unit.id) {
+                scored_hits.push((hit.clone(), score));
+            }
+        }
+        Ok(scored_hits)
     }
 
     pub async fn search_hybrid_with_shared(
         &self,
         user_id: &str,
-        app_id: Option<&str>,
         org_id: Option<&str>,
         agent_id: Option<&str>,
         query_text: &str,
@@ -2021,11 +3853,10 @@ impl MemoroseEngine {
         graph_depth: usize,
         valid_time: Option<TimeRange>,
         transaction_time: Option<TimeRange>,
-    ) -> Result<Vec<(MemoryUnit, f32)>> {
+    ) -> Result<Vec<(SharedSearchHit, f32)>> {
         let mut combined = self
             .search_hybrid(
                 user_id,
-                app_id,
                 agent_id,
                 query_text,
                 vector,
@@ -2036,30 +3867,10 @@ impl MemoroseEngine {
                 valid_time.clone(),
                 transaction_time,
             )
-            .await?;
-
-        if let Some(app_id) = app_id {
-            let app_policy = self.get_app_share_policy(user_id, app_id)?;
-            if app_policy.consume {
-                let mut app_results = self
-                    .search_shared_scope(
-                        MemoryDomain::App,
-                        None,
-                        Some(app_id),
-                        agent_id,
-                        query_text,
-                        vector,
-                        limit,
-                        min_score,
-                        valid_time.clone(),
-                    )
-                    .await?;
-                for (_, score) in &mut app_results {
-                    *score *= 0.85;
-                }
-                combined.extend(app_results);
-            }
-        }
+            .await?
+            .into_iter()
+            .map(|(unit, score)| (SharedSearchHit::native(unit), score))
+            .collect::<Vec<_>>();
 
         if let Some(org_id) = org_id {
             let org_policy = self.get_org_share_policy(user_id, org_id)?;
@@ -2068,7 +3879,6 @@ impl MemoroseEngine {
                     .search_shared_scope(
                         MemoryDomain::Organization,
                         Some(org_id),
-                        None,
                         agent_id,
                         query_text,
                         vector,
@@ -2090,16 +3900,16 @@ impl MemoroseEngine {
 
         combined.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        let mut deduped: Vec<(MemoryUnit, f32)> = Vec::new();
+        let mut deduped: Vec<(SharedSearchHit, f32)> = Vec::new();
         let mut seen_ids = HashSet::new();
-        for (unit, score) in combined {
-            if !seen_ids.insert(unit.id) {
+        for (hit, score) in combined {
+            if !seen_ids.insert(hit.id) {
                 continue;
             }
 
             let mut is_duplicate = false;
             for (existing, _) in &deduped {
-                if let (Some(v1), Some(v2)) = (&unit.embedding, &existing.embedding) {
+                if let (Some(v1), Some(v2)) = (&hit.embedding, &existing.embedding) {
                     if cosine_similarity(v1, v2) > 0.92 {
                         is_duplicate = true;
                         break;
@@ -2108,7 +3918,7 @@ impl MemoroseEngine {
             }
 
             if !is_duplicate {
-                deduped.push((unit, score));
+                deduped.push((hit, score));
             }
 
             if deduped.len() >= limit * 2 {
@@ -2133,18 +3943,21 @@ impl MemoroseEngine {
             let arbitrated = self
                 .arbitrator
                 .arbitrate(
-                    deduped.iter().map(|(unit, _)| unit.clone()).collect(),
+                    deduped
+                        .iter()
+                        .map(|(hit, _)| hit.memory_unit().clone())
+                        .collect(),
                     Some(query_text),
                 )
                 .await?;
 
             let mut final_results = Vec::new();
             for unit in arbitrated {
-                if let Some((_, score)) = deduped
+                if let Some((hit, score)) = deduped
                     .iter()
                     .find(|(candidate, _)| candidate.id == unit.id)
                 {
-                    final_results.push((unit, *score));
+                    final_results.push((hit.clone(), *score));
                 }
             }
             Ok(final_results)
@@ -2157,7 +3970,6 @@ impl MemoroseEngine {
     pub async fn search_text(
         &self,
         user_id: &str,
-        app_id: Option<&str>,
         query: &str,
         limit: usize,
         enable_arbitration: bool,
@@ -2173,11 +3985,9 @@ impl MemoroseEngine {
         let q = query.to_string();
         let tr = time_range.clone();
         let uid = Some(user_id.to_string());
-        let aid = app_id.map(|s| s.to_string());
-        let ids = tokio::task::spawn_blocking(move || {
-            index.search(&q, limit, tr, None, uid.as_deref(), aid.as_deref())
-        })
-        .await??;
+        let ids =
+            tokio::task::spawn_blocking(move || index.search(&q, limit, tr, None, uid.as_deref()))
+                .await??;
 
         let mut units = self.fetch_units(user_id, ids).await?;
         units.retain(|unit| Self::is_local_domain(&unit.domain));
@@ -2192,114 +4002,87 @@ impl MemoroseEngine {
     pub async fn search_text_with_shared(
         &self,
         user_id: &str,
-        app_id: Option<&str>,
         org_id: Option<&str>,
         query: &str,
         limit: usize,
         enable_arbitration: bool,
         time_range: Option<TimeRange>,
-    ) -> Result<Vec<MemoryUnit>> {
+    ) -> Result<Vec<SharedSearchHit>> {
         let index = self.index.clone();
         tokio::task::spawn_blocking(move || {
             index.reload().ok();
         })
         .await?;
 
-        let mut rrf_scores: HashMap<String, f32> = HashMap::new();
         let k = 60.0;
+        let mut combined_scores: HashMap<Uuid, (SharedSearchHit, f32)> = HashMap::new();
         for (rank, unit) in self
-            .search_text(user_id, app_id, query, limit, false, time_range.clone())
+            .search_text(user_id, query, limit, false, time_range.clone())
             .await?
             .into_iter()
             .enumerate()
         {
-            *rrf_scores.entry(unit.id.to_string()).or_default() += 1.0 / (k + rank as f32);
-        }
-
-        if let Some(app_id) = app_id {
-            let app_policy = self.get_app_share_policy(user_id, app_id)?;
-            if app_policy.consume {
-                let q = query.to_string();
-                let tr = time_range.clone();
-                let aid = Some(app_id.to_string());
-                let app_ids = {
-                    let index = self.index.clone();
-                    tokio::task::spawn_blocking(move || {
-                        index.search_bitemporal(
-                            &q,
-                            limit,
-                            tr,
-                            None,
-                            None,
-                            None,
-                            aid.as_deref(),
-                            None,
-                            Some("app"),
-                        )
-                    })
-                    .await??
-                };
-
-                for (rank, id) in app_ids.into_iter().enumerate() {
-                    *rrf_scores.entry(id).or_default() += 0.85 / (k + rank as f32);
-                }
-            }
+            let score = 1.0 / (k + rank as f32);
+            combined_scores
+                .entry(unit.id)
+                .and_modify(|(_, existing_score)| *existing_score += score)
+                .or_insert((SharedSearchHit::native(unit), score));
         }
 
         if let Some(org_id) = org_id {
             let org_policy = self.get_org_share_policy(user_id, org_id)?;
             if org_policy.consume {
-                let q = query.to_string();
-                let tr = time_range.clone();
-                let oid = Some(org_id.to_string());
-                let org_ids = {
-                    let index = self.index.clone();
-                    tokio::task::spawn_blocking(move || {
-                        index.search_bitemporal(
-                            &q,
-                            limit,
-                            tr,
-                            None,
-                            oid.as_deref(),
-                            None,
-                            None,
-                            None,
-                            Some("organization"),
-                        )
-                    })
-                    .await??
-                };
-
-                for (rank, id) in org_ids.into_iter().enumerate() {
-                    *rrf_scores.entry(id).or_default() += 0.7 / (k + rank as f32);
+                for (rank, unit) in self
+                    .search_organization_knowledge_text(org_id, query, limit, time_range.clone())
+                    .await?
+                    .into_iter()
+                    .enumerate()
+                {
+                    let score = 0.7 / (k + rank as f32);
+                    combined_scores
+                        .entry(unit.id)
+                        .and_modify(|(_, existing_score)| *existing_score += score)
+                        .or_insert((unit, score));
                 }
             }
         }
 
-        if rrf_scores.is_empty() {
+        if combined_scores.is_empty() {
             return Ok(Vec::new());
         }
 
-        let mut sorted_ids: Vec<(String, f32)> = rrf_scores.into_iter().collect();
-        sorted_ids.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-        let ids: Vec<String> = sorted_ids
-            .iter()
-            .take(limit * 2)
-            .map(|(id, _)| id.clone())
-            .collect();
-        let mut units = self.fetch_units_global(ids).await?;
-        if units.len() > limit * 2 {
-            units.truncate(limit * 2);
+        let mut hits: Vec<(SharedSearchHit, f32)> = combined_scores.into_values().collect();
+        hits.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        if hits.len() > limit * 2 {
+            hits.truncate(limit * 2);
         }
 
         if enable_arbitration {
-            self.arbitrator.arbitrate(units, Some(query)).await
-        } else {
-            if units.len() > limit {
-                units.truncate(limit);
+            let arbitrated = self
+                .arbitrator
+                .arbitrate(
+                    hits.iter()
+                        .map(|(hit, _)| hit.memory_unit().clone())
+                        .collect(),
+                    Some(query),
+                )
+                .await?;
+            let mut final_hits = Vec::new();
+            for unit in arbitrated {
+                if let Some((hit, _)) = hits.iter().find(|(candidate, _)| candidate.id == unit.id) {
+                    final_hits.push(hit.clone());
+                }
             }
-            Ok(units)
+            if final_hits.len() > limit {
+                final_hits.truncate(limit);
+            }
+            Ok(final_hits)
+        } else {
+            let mut final_hits = hits.into_iter().map(|(hit, _)| hit).collect::<Vec<_>>();
+            if final_hits.len() > limit {
+                final_hits.truncate(limit);
+            }
+            Ok(final_hits)
         }
     }
 
@@ -2307,13 +4090,10 @@ impl MemoroseEngine {
     pub async fn search_consolidated(
         &self,
         user_id: &str,
-        app_id: Option<&str>,
         query: &str,
         limit: usize,
     ) -> Result<String> {
-        let units = self
-            .search_text(user_id, app_id, query, limit, false, None)
-            .await?;
+        let units = self.search_text(user_id, query, limit, false, None).await?;
         self.arbitrator.consolidate(units).await
     }
 
@@ -2331,8 +4111,7 @@ impl MemoroseEngine {
         }
     }
 
-    /// Get a memory unit using the global index (for dashboard)
-    pub async fn get_memory_unit_by_index(&self, id: Uuid) -> Result<Option<MemoryUnit>> {
+    pub async fn get_native_memory_unit_by_index(&self, id: Uuid) -> Result<Option<MemoryUnit>> {
         let idx_key = format!("idx:unit:{}", id);
         if let Some(uid_bytes) = self._kv.get(idx_key.as_bytes())? {
             let user_id = String::from_utf8(uid_bytes)?;
@@ -2340,6 +4119,20 @@ impl MemoroseEngine {
         } else {
             Ok(None)
         }
+    }
+
+    pub async fn get_shared_search_hit_by_index(&self, id: Uuid) -> Result<Option<SharedSearchHit>> {
+        if let Some(record) = self.load_organization_knowledge(id)? {
+            let unit = self
+                .materialize_organization_read_view_for_record(&record)
+                .await?;
+            return Ok(Some(SharedSearchHit::organization_knowledge(&record, unit)));
+        }
+
+        Ok(self
+            .get_native_memory_unit_by_index(id)
+            .await?
+            .map(SharedSearchHit::native))
     }
 
     // ── Forgetting ──────────────────────────────────────────────────
@@ -2510,7 +4303,6 @@ impl MemoroseEngine {
                 None,
                 user_id.to_string(),
                 None,
-                Self::derive_l2_app_id(&units),
                 Uuid::new_v4(),
                 memorose_common::MemoryType::Factual,
                 insight.summary,
@@ -2668,7 +4460,6 @@ impl MemoroseEngine {
                 None,
                 user_id.to_string(),
                 None,
-                Self::derive_l2_app_id(&units),
                 Uuid::new_v4(),
                 memorose_common::MemoryType::Factual,
                 insight.summary,
@@ -2910,7 +4701,7 @@ impl MemoroseEngine {
     pub async fn fetch_units_with_scores_global(
         &self,
         results: Vec<(String, f32)>,
-    ) -> Result<Vec<(MemoryUnit, f32)>> {
+    ) -> Result<Vec<(SharedSearchHit, f32)>> {
         if results.is_empty() {
             return Ok(Vec::new());
         }
@@ -2922,8 +4713,9 @@ impl MemoroseEngine {
                 Err(_) => continue,
             };
 
-            if let Some(unit) = self.get_memory_unit_by_index(parsed).await? {
-                final_results.push((unit, score));
+            if let Some(hit) = self.get_shared_search_hit_by_index(parsed).await?
+            {
+                final_results.push((hit, score));
             }
         }
 
@@ -2958,24 +4750,198 @@ impl MemoroseEngine {
         Ok(units)
     }
 
-    pub async fn fetch_units_global(&self, ids: Vec<String>) -> Result<Vec<MemoryUnit>> {
-        if ids.is_empty() {
-            return Ok(Vec::new());
-        }
+    pub async fn list_memory_units_global(
+        &self,
+        user_id_filter: Option<&str>,
+    ) -> Result<Vec<MemoryUnit>> {
+        let prefix = if let Some(user_id) = user_id_filter {
+            format!("u:{}:unit:", user_id).into_bytes()
+        } else {
+            b"u:".to_vec()
+        };
+        let kv = self._kv.clone();
+        let pairs = tokio::task::spawn_blocking(move || kv.scan(&prefix)).await??;
 
-        let mut units = Vec::new();
-        for id in ids {
-            let parsed = match Uuid::parse_str(&id) {
-                Ok(parsed) => parsed,
-                Err(_) => continue,
-            };
+        let mut units: Vec<MemoryUnit> = pairs
+            .into_iter()
+            .filter(|(key, _)| {
+                if user_id_filter.is_some() {
+                    true
+                } else {
+                    key.windows(6).any(|window| window == b":unit:")
+                }
+            })
+            .filter_map(|(_, val)| serde_json::from_slice::<MemoryUnit>(&val).ok())
+            .filter(|unit| unit.domain != MemoryDomain::Organization)
+            .collect();
 
-            if let Some(unit) = self.get_memory_unit_by_index(parsed).await? {
-                units.push(unit);
-            }
+        if user_id_filter.is_none() {
+            units.extend(self.list_organization_read_units(None).await?);
         }
 
         Ok(units)
+    }
+
+    pub async fn list_organization_read_units(
+        &self,
+        org_id_filter: Option<&str>,
+    ) -> Result<Vec<MemoryUnit>> {
+        let mut units = Vec::new();
+        for record in self
+            .list_organization_knowledge_records(org_id_filter, None)
+            .await?
+        {
+            units.push(
+                self.materialize_organization_read_view_for_record(&record)
+                    .await?,
+            );
+        }
+        Ok(units)
+    }
+
+    pub async fn list_organization_knowledge_detail_records(
+        &self,
+        org_id_filter: Option<&str>,
+    ) -> Result<Vec<OrganizationKnowledgeDetailRecord>> {
+        let mut details = Vec::new();
+        for snapshot in self
+            .list_organization_knowledge_snapshots(org_id_filter)
+            .await?
+        {
+            details.push(
+                self.build_organization_knowledge_detail_record_from_snapshot(snapshot)
+                    .await,
+            );
+        }
+        Ok(details)
+    }
+
+    pub fn get_organization_automation_counter_snapshot(
+        &self,
+        org_id: &str,
+    ) -> Result<OrganizationAutomationCounterSnapshot> {
+        Ok(OrganizationAutomationCounterSnapshot {
+            org_id: org_id.to_string(),
+            auto_approved_total: self.get_organization_metric_counter(org_id, "auto_approved_total")?,
+            auto_publish_total: self.get_organization_metric_counter(org_id, "auto_publish_total")?,
+            rebuild_total: self.get_organization_metric_counter(org_id, "rebuild_total")?,
+            revoke_total: self.get_organization_metric_counter(org_id, "revoke_total")?,
+            merged_publication_total: self
+                .get_organization_metric_counter(org_id, "merged_publication_total")?,
+        })
+    }
+
+    async fn list_organization_knowledge_records(
+        &self,
+        org_id_filter: Option<&str>,
+        valid_time: Option<&TimeRange>,
+    ) -> Result<Vec<OrganizationKnowledgeRecord>> {
+        let system_kv = self.system_kv();
+        let pairs = tokio::task::spawn_blocking(move || system_kv.scan(b"organization_knowledge:"))
+            .await??;
+
+        Ok(pairs
+            .into_iter()
+            .filter_map(|(_, val)| serde_json::from_slice::<OrganizationKnowledgeRecord>(&val).ok())
+            .filter(|record| {
+                org_id_filter
+                    .map(|org_id| record.org_id == org_id)
+                    .unwrap_or(true)
+            })
+            .filter(|record| Self::matches_valid_time_filter(record.valid_time, valid_time))
+            .collect())
+    }
+
+    async fn materialize_organization_search_hits(
+        &self,
+        hits: Vec<(OrganizationKnowledgeRecord, f32)>,
+    ) -> Result<Vec<(SharedSearchHit, f32)>> {
+        let mut materialized = Vec::with_capacity(hits.len());
+        for (record, score) in hits {
+            let unit = self
+                .materialize_organization_read_view_for_record(&record)
+                .await?;
+            materialized.push((SharedSearchHit::organization_knowledge(&record, unit), score));
+        }
+        Ok(materialized)
+    }
+
+    async fn search_organization_knowledge_records(
+        &self,
+        org_id: &str,
+        query_text: &str,
+        vector: &[f32],
+        limit: usize,
+        min_score: Option<f32>,
+        valid_time: Option<TimeRange>,
+    ) -> Result<Vec<(OrganizationKnowledgeRecord, f32)>> {
+        let mut candidates = Vec::new();
+        for record in self
+            .list_organization_knowledge_records(Some(org_id), valid_time.as_ref())
+            .await?
+        {
+            let score = Self::organization_similarity_score(&record, query_text, vector);
+            if score > 0.0 {
+                candidates.push((record, score));
+            }
+        }
+
+        candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        if candidates.len() > limit * 3 {
+            candidates.truncate(limit * 3);
+        }
+
+        let mut reranked = self
+            .reranker
+            .rerank(
+                query_text,
+                &self._kv,
+                self.materialize_organization_search_hits(candidates)
+                    .await?
+                    .iter()
+                    .map(|(hit, score)| (hit.memory_unit().clone(), *score))
+                    .collect(),
+            )
+            .await?;
+        let threshold = min_score.unwrap_or(0.3);
+        reranked.retain(|(_, score)| *score >= threshold);
+        let mut record_hits = Vec::with_capacity(reranked.len());
+        for (unit, score) in reranked {
+            let Some(record) = self.load_organization_knowledge(unit.id)? else {
+                continue;
+            };
+            record_hits.push((record, score));
+        }
+        Ok(record_hits)
+    }
+
+    async fn search_organization_knowledge_text(
+        &self,
+        org_id: &str,
+        query_text: &str,
+        limit: usize,
+        valid_time: Option<TimeRange>,
+    ) -> Result<Vec<SharedSearchHit>> {
+        let zero_vector = Vec::new();
+        let mut scored = self
+            .search_organization_knowledge_records(
+                org_id,
+                query_text,
+                &zero_vector,
+                limit,
+                Some(0.01),
+                valid_time,
+            )
+            .await?;
+        if scored.len() > limit {
+            scored.truncate(limit);
+        }
+        Ok(self
+            .materialize_organization_search_hits(scored)
+            .await?
+            .into_iter()
+            .map(|(hit, _)| hit)
+            .collect())
     }
 
     // ── 图查询优化 API ──────────────────────────────────────────────────
@@ -3052,8 +5018,6 @@ mod tests {
     use uuid::Uuid;
 
     const TEST_USER: &str = "test_user";
-    const TEST_APP: &str = "test_app";
-
     #[tokio::test]
     async fn test_engine_integration() -> Result<()> {
         let temp_dir = tempdir()?;
@@ -3066,7 +5030,6 @@ mod tests {
             None,
             TEST_USER.into(),
             None,
-            TEST_APP.into(),
             stream_id,
             EventContent::Text("L0 Test".to_string()),
         );
@@ -3092,7 +5055,6 @@ mod tests {
             None,
             TEST_USER.into(),
             None,
-            TEST_APP.into(),
             stream_id,
             memorose_common::MemoryType::Factual,
             "L1 Insight".to_string(),
@@ -3104,16 +5066,16 @@ mod tests {
         engine.index.reload()?;
 
         // Search by Vector
-        let filter = engine.build_user_filter(TEST_USER, None, None);
+        let filter = engine.build_user_filter(TEST_USER, None);
         let similar = engine
-            .search_similar(TEST_USER, None, &embedding, 1, filter)
+            .search_similar(TEST_USER, &embedding, 1, filter)
             .await?;
         assert_eq!(similar.len(), 1);
         assert_eq!(similar[0].0.id, unit.id);
 
         // Search by Text
         let text_hits = engine
-            .search_text(TEST_USER, None, "Insight", 1, true, None)
+            .search_text(TEST_USER, "Insight", 1, true, None)
             .await?;
         assert_eq!(text_hits.len(), 1);
         assert_eq!(text_hits[0].id, unit.id);
@@ -3123,7 +5085,6 @@ mod tests {
             None,
             TEST_USER.into(),
             None,
-            TEST_APP.into(),
             stream_id,
             memorose_common::MemoryType::Factual,
             "Weak Memory".to_string(),
@@ -3140,9 +5101,7 @@ mod tests {
         assert!(pruned_count >= 1);
 
         // Verify it's gone
-        let search_gone = engine
-            .search_text(TEST_USER, None, "Weak", 1, true, None)
-            .await?;
+        let search_gone = engine.search_text(TEST_USER, "Weak", 1, true, None).await?;
         assert!(search_gone.is_empty());
 
         Ok(())
@@ -3162,7 +5121,6 @@ mod tests {
             None,
             TEST_USER.into(),
             None,
-            TEST_APP.into(),
             stream_id,
             memorose_common::MemoryType::Factual,
             "Apple is a fruit".to_string(),
@@ -3177,7 +5135,6 @@ mod tests {
             None,
             TEST_USER.into(),
             None,
-            TEST_APP.into(),
             stream_id,
             memorose_common::MemoryType::Factual,
             "Apples are sweet".to_string(),
@@ -3213,7 +5170,6 @@ mod tests {
             None,
             TEST_USER.into(),
             None,
-            TEST_APP.into(),
             stream_id,
             memorose_common::MemoryType::Factual,
             "I love cats".to_string(),
@@ -3228,7 +5184,6 @@ mod tests {
             None,
             TEST_USER.into(),
             None,
-            TEST_APP.into(),
             stream_id,
             memorose_common::MemoryType::Factual,
             "I hate cats now".to_string(),
@@ -3239,7 +5194,7 @@ mod tests {
         engine.index.reload()?;
 
         let results = engine
-            .search_text(TEST_USER, None, "cats", 10, true, None)
+            .search_text(TEST_USER, "cats", 10, true, None)
             .await?;
 
         println!(
@@ -3278,7 +5233,6 @@ mod tests {
             None,
             TEST_USER.into(),
             None,
-            TEST_APP.into(),
             stream_id,
             memorose_common::MemoryType::Factual,
             "Rust is memory safe".to_string(),
@@ -3292,7 +5246,6 @@ mod tests {
             None,
             TEST_USER.into(),
             None,
-            TEST_APP.into(),
             stream_id,
             memorose_common::MemoryType::Factual,
             "The borrow checker prevents data races".to_string(),
@@ -3306,7 +5259,6 @@ mod tests {
             None,
             TEST_USER.into(),
             None,
-            TEST_APP.into(),
             stream_id,
             memorose_common::MemoryType::Factual,
             "Ownership is key to Rust".to_string(),
@@ -3357,7 +5309,6 @@ mod tests {
             None,
             TEST_USER.into(),
             None,
-            TEST_APP.into(),
             stream_id,
             memorose_common::MemoryType::Factual,
             "Memory A".into(),
@@ -3367,7 +5318,6 @@ mod tests {
             None,
             TEST_USER.into(),
             None,
-            TEST_APP.into(),
             stream_id,
             memorose_common::MemoryType::Factual,
             "Memory B".into(),
@@ -3416,7 +5366,6 @@ mod tests {
             None,
             TEST_USER.into(),
             None,
-            TEST_APP.into(),
             stream_id,
             memorose_common::MemoryType::Factual,
             "Memorose started in 2020".into(),
@@ -3430,7 +5379,6 @@ mod tests {
             None,
             TEST_USER.into(),
             None,
-            TEST_APP.into(),
             stream_id,
             memorose_common::MemoryType::Factual,
             "Memorose is advanced in 2026".into(),
@@ -3449,7 +5397,7 @@ mod tests {
         };
 
         let hits = engine
-            .search_text(TEST_USER, None, "Memorose", 10, false, Some(range))
+            .search_text(TEST_USER, "Memorose", 10, false, Some(range))
             .await?;
 
         assert_eq!(
@@ -3473,7 +5421,6 @@ mod tests {
             None,
             TEST_USER.into(),
             None,
-            TEST_APP.into(),
             stream_id,
             memorose_common::MemoryType::Factual,
             "Highly relevant".into(),
@@ -3484,7 +5431,6 @@ mod tests {
             None,
             TEST_USER.into(),
             None,
-            TEST_APP.into(),
             stream_id,
             memorose_common::MemoryType::Factual,
             "Less relevant".into(),
@@ -3501,7 +5447,6 @@ mod tests {
         let results = engine
             .search_hybrid(
                 TEST_USER,
-                None,
                 None,
                 "relevant",
                 &vec![1.0; 768],
@@ -3552,7 +5497,6 @@ mod tests {
             None,
             TEST_USER.into(),
             None,
-            TEST_APP.into(),
             Uuid::new_v4(),
             memorose_common::MemoryType::Factual,
             "Test".into(),
@@ -3565,7 +5509,6 @@ mod tests {
         let results = engine
             .search_hybrid(
                 TEST_USER,
-                None,
                 None,
                 "Test",
                 &vec![1.0; 768],
@@ -3594,7 +5537,6 @@ mod tests {
             None,
             TEST_USER.into(),
             None,
-            TEST_APP.into(),
             stream_id,
             memorose_common::MemoryType::Factual,
             "Parent Task".into(),
@@ -3614,7 +5556,6 @@ mod tests {
                 None,
                 TEST_USER.into(),
                 None,
-                TEST_APP.into(),
                 stream_id,
                 memorose_common::MemoryType::Factual,
                 format!("Child {}", i),
@@ -3668,7 +5609,6 @@ mod tests {
             None,
             "user_a".into(),
             None,
-            "app1".into(),
             stream_id,
             memorose_common::MemoryType::Factual,
             "Secret of user A".into(),
@@ -3683,7 +5623,6 @@ mod tests {
             None,
             "user_b".into(),
             None,
-            "app1".into(),
             stream_id,
             memorose_common::MemoryType::Factual,
             "Secret of user B".into(),
@@ -3695,14 +5634,14 @@ mod tests {
 
         // User A should only see their own data
         let results_a = engine
-            .search_text("user_a", None, "Secret", 10, false, None)
+            .search_text("user_a", "Secret", 10, false, None)
             .await?;
         assert_eq!(results_a.len(), 1);
         assert_eq!(results_a[0].user_id, "user_a");
 
         // User B should only see their own data
         let results_b = engine
-            .search_text("user_b", None, "Secret", 10, false, None)
+            .search_text("user_b", "Secret", 10, false, None)
             .await?;
         assert_eq!(results_b.len(), 1);
         assert_eq!(results_b[0].user_id, "user_b");
@@ -3720,7 +5659,6 @@ mod tests {
             None,
             TEST_USER.into(),
             None,
-            TEST_APP.into(),
             Uuid::new_v4(),
             EventContent::Text("retry me".into()),
         );
@@ -3759,7 +5697,6 @@ mod tests {
             None,
             TEST_USER.into(),
             None,
-            TEST_APP.into(),
             Uuid::new_v4(),
             EventContent::Text("later".into()),
         );
@@ -3769,7 +5706,6 @@ mod tests {
             None,
             TEST_USER.into(),
             None,
-            TEST_APP.into(),
             Uuid::new_v4(),
             EventContent::Text("earlier".into()),
         );
@@ -3795,8 +5731,7 @@ mod tests {
         let orphan_id = Uuid::new_v4().to_string();
         let pending_key = format!("pending:{}", orphan_id);
         let pending_val = serde_json::to_vec(&serde_json::json!({
-            "user_id": TEST_USER,
-            "app_id": TEST_APP
+            "user_id": TEST_USER
         }))?;
         engine
             .system_kv()
@@ -3823,7 +5758,6 @@ mod tests {
                 None,
                 TEST_USER.into(),
                 None,
-                TEST_APP.into(),
                 stream_id,
                 memorose_common::MemoryType::Factual,
                 format!("base {}", i),
@@ -3837,7 +5771,6 @@ mod tests {
                 None,
                 TEST_USER.into(),
                 None,
-                TEST_APP.into(),
                 stream_id,
                 memorose_common::MemoryType::Factual,
                 format!("delta {}", i),
@@ -3854,7 +5787,6 @@ mod tests {
             None,
             TEST_USER.into(),
             None,
-            TEST_APP.into(),
             stream_id,
             memorose_common::MemoryType::Factual,
             "delta 2".into(),
@@ -3869,156 +5801,49 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_graph_expansion_respects_app_filter() -> Result<()> {
+    async fn test_text_search_returns_local_memories() -> Result<()> {
         let temp_dir = tempdir()?;
         let engine =
             MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let stream_id = Uuid::new_v4();
 
-        let seed = MemoryUnit::new(
+        let primary = MemoryUnit::new(
             None,
             TEST_USER.into(),
             None,
-            "app_a".into(),
             stream_id,
             memorose_common::MemoryType::Factual,
-            "Seed memory".into(),
-            Some(vec![1.0; 768]),
+            "Cross stream retrieval phrase".into(),
+            None,
         );
-        let foreign = MemoryUnit::new(
+        let secondary = MemoryUnit::new(
             None,
             TEST_USER.into(),
             None,
-            "app_b".into(),
             stream_id,
             memorose_common::MemoryType::Factual,
-            "Foreign memory".into(),
-            Some(vec![0.9; 768]),
+            "Cross stream retrieval phrase".into(),
+            None,
         );
 
         engine
-            .store_memory_units(vec![seed.clone(), foreign.clone()])
-            .await?;
-        engine
-            .graph()
-            .add_edge(&GraphEdge::new(
-                TEST_USER.into(),
-                seed.id,
-                foreign.id,
-                RelationType::DerivedFrom,
-                1.0,
-            ))
+            .store_memory_units(vec![primary.clone(), secondary.clone()])
             .await?;
         engine.index.commit()?;
         engine.index.reload()?;
 
         let results = engine
-            .search_hybrid(
-                TEST_USER,
-                Some("app_a"),
-                None,
-                "Seed",
-                &vec![1.0; 768],
-                10,
-                false,
-                None,
-                1,
-                None,
-                None,
-            )
+            .search_text(TEST_USER, "cross stream retrieval", 10, false, None)
             .await?;
 
         assert!(!results.is_empty());
-        assert!(results.iter().all(|(unit, _)| unit.app_id == "app_a"));
+        assert_eq!(results.len(), 2);
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn test_app_shared_memory_requires_consume_policy() -> Result<()> {
-        let temp_dir = tempdir()?;
-        let engine =
-            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
-        let stream_id = Uuid::new_v4();
-
-        engine.set_app_share_policy(
-            "author",
-            "shared_app",
-            &memorose_common::SharePolicy {
-                contribute: true,
-                consume: false,
-                include_history: false,
-                targets: vec![],
-            },
-        )?;
-        engine.set_app_share_policy(
-            "consumer",
-            "shared_app",
-            &memorose_common::SharePolicy {
-                contribute: false,
-                consume: true,
-                include_history: false,
-                targets: vec![],
-            },
-        )?;
-
-        let source = MemoryUnit::new(
-            None,
-            "author".into(),
-            None,
-            "shared_app".into(),
-            stream_id,
-            memorose_common::MemoryType::Factual,
-            "Shared app playbook".into(),
-            Some(vec![1.0; 768]),
-        );
-        engine.store_memory_unit(source.clone()).await?;
-
-        let local_only = engine
-            .search_hybrid(
-                "consumer",
-                Some("shared_app"),
-                None,
-                "playbook",
-                &vec![1.0; 768],
-                5,
-                false,
-                Some(0.0),
-                0,
-                None,
-                None,
-            )
-            .await?;
-        assert!(local_only.is_empty());
-
-        let shared = engine
-            .search_hybrid_with_shared(
-                "consumer",
-                Some("shared_app"),
-                None,
-                None,
-                "playbook",
-                &vec![1.0; 768],
-                5,
-                false,
-                Some(0.0),
-                0,
-                None,
-                None,
-            )
-            .await?;
-
-        assert!(!shared.is_empty());
-        assert!(shared
-            .iter()
-            .any(|(unit, _)| unit.domain == MemoryDomain::App
-                && unit.projected_from == vec![source.id]));
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_org_shared_memory_crosses_apps() -> Result<()> {
+    async fn test_org_shared_memory_is_visible_across_consumers() -> Result<()> {
         let temp_dir = tempdir()?;
         let engine =
             MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
@@ -4045,22 +5870,21 @@ mod tests {
             },
         )?;
 
-        let source = MemoryUnit::new(
+        let mut source = MemoryUnit::new(
             Some("org_alpha".into()),
             "author".into(),
             None,
-            "app_a".into(),
             stream_id,
             memorose_common::MemoryType::Factual,
             "Organization onboarding standard".into(),
             Some(vec![1.0; 768]),
         );
+        source.level = 2;
         engine.store_memory_unit(source.clone()).await?;
 
         let shared = engine
             .search_hybrid_with_shared(
                 "consumer",
-                Some("app_b"),
                 Some("org_alpha"),
                 None,
                 "onboarding standard",
@@ -4078,91 +5902,41 @@ mod tests {
         assert!(shared
             .iter()
             .any(|(unit, _)| unit.domain == MemoryDomain::Organization
-                && unit.projected_from == vec![source.id]));
+                && unit.user_id == MemoroseEngine::organization_read_view_owner("org_alpha")
+                && unit.agent_id.is_none()
+                && unit.stream_id.is_nil()
+                && unit.references.is_empty()
+                && unit.assets.is_empty()));
 
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_app_share_backfill_projects_existing_local_memory() -> Result<()> {
-        let temp_dir = tempdir()?;
-        let engine =
-            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
-        let stream_id = Uuid::new_v4();
-
-        let source = MemoryUnit::new(
-            None,
-            "author".into(),
-            None,
-            "history_app".into(),
-            stream_id,
-            memorose_common::MemoryType::Factual,
-            "Historical app memory".into(),
-            Some(vec![1.0; 768]),
-        );
-        engine.store_memory_unit(source.clone()).await?;
-
-        engine.set_app_share_policy(
-            "author",
-            "history_app",
-            &memorose_common::SharePolicy {
-                contribute: true,
-                consume: false,
-                include_history: true,
-                targets: vec![],
-            },
-        )?;
-        engine.set_app_share_policy(
-            "consumer",
-            "history_app",
-            &memorose_common::SharePolicy {
-                contribute: false,
-                consume: true,
-                include_history: false,
-                targets: vec![],
-            },
-        )?;
-
-        let projected = engine
-            .run_share_backfill("author", "history_app", None, MemoryDomain::App)
-            .await?;
-        assert_eq!(projected, 1);
-
-        let shared = engine
-            .search_hybrid_with_shared(
-                "consumer",
-                Some("history_app"),
-                None,
-                None,
-                "historical memory",
-                &vec![1.0; 768],
-                5,
-                false,
-                Some(0.0),
-                0,
-                None,
-                None,
-            )
-            .await?;
-
-        assert!(shared
+        let read_view = shared
             .iter()
-            .any(|(unit, _)| unit.domain == MemoryDomain::App
-                && unit.projected_from == vec![source.id]));
+            .find(|(unit, _)| unit.domain == MemoryDomain::Organization)
+            .map(|(unit, _)| unit.clone())
+            .expect("expected organization read view");
+        let record = engine
+            .load_organization_knowledge(read_view.id)?
+            .expect("expected canonical organization knowledge");
+        assert_eq!(
+            engine.resolve_organization_record_source_ids(&record).await?,
+            vec![source.id]
+        );
+        assert_eq!(record.org_id, "org_alpha");
+        assert_eq!(record.content, read_view.content);
+        assert_eq!(record.keywords, read_view.keywords);
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn test_disabling_app_contribution_removes_projected_memory() -> Result<()> {
+    async fn test_org_read_view_does_not_persist_view_unit() -> Result<()> {
         let temp_dir = tempdir()?;
         let engine =
             MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let stream_id = Uuid::new_v4();
 
-        engine.set_app_share_policy(
+        engine.set_org_share_policy(
             "author",
-            "cleanup_app",
+            "org_alpha",
             &memorose_common::SharePolicy {
                 contribute: true,
                 consume: false,
@@ -4170,9 +5944,9 @@ mod tests {
                 targets: vec![],
             },
         )?;
-        engine.set_app_share_policy(
+        engine.set_org_share_policy(
             "consumer",
-            "cleanup_app",
+            "org_alpha",
             &memorose_common::SharePolicy {
                 contribute: false,
                 consume: true,
@@ -4181,25 +5955,24 @@ mod tests {
             },
         )?;
 
-        let source = MemoryUnit::new(
-            None,
+        let mut source = MemoryUnit::new(
+            Some("org_alpha".into()),
             "author".into(),
             None,
-            "cleanup_app".into(),
             stream_id,
             memorose_common::MemoryType::Factual,
-            "Cleanup shared memory".into(),
+            "Organization onboarding standard".into(),
             Some(vec![1.0; 768]),
         );
-        engine.store_memory_unit(source.clone()).await?;
+        source.level = 2;
+        engine.store_memory_unit(source).await?;
 
-        let before = engine
+        let read_view = engine
             .search_hybrid_with_shared(
                 "consumer",
-                Some("cleanup_app"),
+                Some("org_alpha"),
                 None,
-                None,
-                "cleanup shared",
+                "onboarding standard",
                 &vec![1.0; 768],
                 5,
                 false,
@@ -4208,115 +5981,24 @@ mod tests {
                 None,
                 None,
             )
-            .await?;
-        assert!(!before.is_empty());
+            .await?
+            .into_iter()
+            .find(|(unit, _)| unit.domain == MemoryDomain::Organization)
+            .map(|(unit, _)| unit)
+            .expect("expected organization read view");
 
-        let removed = engine
-            .disable_app_contribution("author", "cleanup_app")
-            .await?;
-        assert_eq!(removed, 1);
-
-        let after = engine
-            .search_hybrid_with_shared(
-                "consumer",
-                Some("cleanup_app"),
-                None,
-                None,
-                "cleanup shared",
-                &vec![1.0; 768],
-                5,
-                false,
-                Some(0.0),
-                0,
-                None,
-                None,
-            )
-            .await?;
-        assert!(after.is_empty());
-
-        let after_text = engine
-            .search_text_with_shared(
-                "consumer",
-                Some("cleanup_app"),
-                None,
-                "cleanup shared",
-                5,
-                false,
-                None,
-            )
-            .await?;
-        assert!(after_text.is_empty());
+        let unit_key = format!(
+            "u:{}:unit:{}",
+            MemoroseEngine::organization_read_view_owner("org_alpha"),
+            read_view.id
+        );
+        assert!(engine.kv().get(unit_key.as_bytes())?.is_none());
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn test_search_text_with_shared_returns_app_projection() -> Result<()> {
-        let temp_dir = tempdir()?;
-        let engine =
-            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
-        let stream_id = Uuid::new_v4();
-
-        engine.set_app_share_policy(
-            "author",
-            "text_app",
-            &memorose_common::SharePolicy {
-                contribute: true,
-                consume: false,
-                include_history: false,
-                targets: vec![],
-            },
-        )?;
-        engine.set_app_share_policy(
-            "consumer",
-            "text_app",
-            &memorose_common::SharePolicy {
-                contribute: false,
-                consume: true,
-                include_history: false,
-                targets: vec![],
-            },
-        )?;
-
-        let source = MemoryUnit::new(
-            None,
-            "author".into(),
-            None,
-            "text_app".into(),
-            stream_id,
-            memorose_common::MemoryType::Factual,
-            "Shared text retrieval phrase".into(),
-            None,
-        );
-        engine.store_memory_unit(source.clone()).await?;
-        engine.index.commit()?;
-        engine.index.reload()?;
-
-        let units = engine
-            .search_text_with_shared(
-                "consumer",
-                Some("text_app"),
-                None,
-                "retrieval phrase",
-                5,
-                false,
-                None,
-            )
-            .await?;
-
-        assert!(!units.is_empty());
-        assert!(
-            units
-                .iter()
-                .any(|unit| unit.domain == MemoryDomain::App
-                    && unit.projected_from == vec![source.id])
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_disabling_org_contribution_removes_projected_memory() -> Result<()> {
+    async fn test_disabling_org_contribution_removes_org_read_view() -> Result<()> {
         let temp_dir = tempdir()?;
         let engine =
             MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
@@ -4343,22 +6025,21 @@ mod tests {
             },
         )?;
 
-        let source = MemoryUnit::new(
+        let mut source = MemoryUnit::new(
             Some("org_cleanup".into()),
             "author".into(),
             None,
-            "app_a".into(),
             stream_id,
             memorose_common::MemoryType::Factual,
             "Org cleanup knowledge".into(),
             Some(vec![1.0; 768]),
         );
+        source.level = 2;
         engine.store_memory_unit(source.clone()).await?;
 
         let before = engine
             .search_hybrid_with_shared(
                 "consumer",
-                Some("app_b"),
                 Some("org_cleanup"),
                 None,
                 "cleanup knowledge",
@@ -4381,7 +6062,6 @@ mod tests {
         let after = engine
             .search_hybrid_with_shared(
                 "consumer",
-                Some("app_b"),
                 Some("org_cleanup"),
                 None,
                 "cleanup knowledge",
@@ -4400,15 +6080,840 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_local_text_search_excludes_shared_projection() -> Result<()> {
+    async fn test_disabling_org_contribution_marks_contribution_revoked() -> Result<()> {
         let temp_dir = tempdir()?;
         let engine =
             MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let stream_id = Uuid::new_v4();
 
-        engine.set_app_share_policy(
-            TEST_USER,
-            "local_text_app",
+        for user_id in ["author_a", "author_b"] {
+            engine.set_org_share_policy(
+                user_id,
+                "org_cleanup",
+                &memorose_common::SharePolicy {
+                    contribute: true,
+                    consume: false,
+                    include_history: false,
+                    targets: vec![],
+                },
+            )?;
+        }
+        engine.set_org_share_policy(
+            "consumer",
+            "org_cleanup",
+            &memorose_common::SharePolicy {
+                contribute: false,
+                consume: true,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+
+        let mut source_a = MemoryUnit::new(
+            Some("org_cleanup".into()),
+            "author_a".into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Cleanup Playbook: restart the cleanup worker.".into(),
+            Some(vec![1.0; 768]),
+        );
+        source_a.level = 2;
+        source_a.keywords = vec!["Cleanup Playbook".into(), "Restart".into()];
+
+        let mut source_b = MemoryUnit::new(
+            Some("org_cleanup".into()),
+            "author_b".into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Cleanup Playbook: retry failed cleanup jobs.".into(),
+            Some(vec![1.0; 768]),
+        );
+        source_b.level = 2;
+        source_b.keywords = vec!["Cleanup Playbook".into(), "Retry".into()];
+
+        engine
+            .store_memory_units(vec![source_a.clone(), source_b.clone()])
+            .await?;
+
+        let read_view = engine
+            .search_hybrid_with_shared(
+                "consumer",
+                Some("org_cleanup"),
+                None,
+                "cleanup playbook",
+                &vec![1.0; 768],
+                5,
+                false,
+                Some(0.0),
+                0,
+                None,
+                None,
+            )
+            .await?
+            .into_iter()
+            .find(|(unit, _)| unit.domain == MemoryDomain::Organization)
+            .map(|(unit, _)| unit)
+            .expect("expected organization read view");
+
+        engine
+            .disable_org_contribution("author_a", "org_cleanup")
+            .await?;
+
+        let contribution = engine
+            .load_organization_contribution(read_view.id, source_a.id)?
+            .expect("expected contribution record");
+        assert!(matches!(
+            contribution.status,
+            OrganizationKnowledgeContributionStatus::Revoked
+        ));
+        assert!(contribution.revoked_at.is_some());
+
+        let hydrated = engine
+            .get_shared_search_hit_by_index(read_view.id)
+            .await?
+            .expect("expected rebuilt organization read view")
+            .into_memory_unit();
+        let hydrated_record = engine
+            .load_organization_knowledge(hydrated.id)?
+            .expect("expected rebuilt organization knowledge record");
+        assert_eq!(
+            engine
+                .resolve_organization_record_source_ids(&hydrated_record)
+                .await?,
+            vec![source_b.id]
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_org_knowledge_contribution_is_activated_from_candidate() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        engine.set_org_share_policy(
+            "author",
+            "org_alpha",
+            &memorose_common::SharePolicy {
+                contribute: true,
+                consume: false,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+        engine.set_org_share_policy(
+            "consumer",
+            "org_alpha",
+            &memorose_common::SharePolicy {
+                contribute: false,
+                consume: true,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+
+        let mut source = MemoryUnit::new(
+            Some("org_alpha".into()),
+            "author".into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Escalation Playbook: page the incident commander.".into(),
+            Some(vec![1.0; 768]),
+        );
+        source.level = 2;
+        source.keywords = vec!["Escalation Playbook".into()];
+        engine.store_memory_unit(source.clone()).await?;
+
+        let read_view = engine
+            .search_hybrid_with_shared(
+                "consumer",
+                Some("org_alpha"),
+                None,
+                "escalation playbook",
+                &vec![1.0; 768],
+                5,
+                false,
+                Some(0.0),
+                0,
+                None,
+                None,
+            )
+            .await?
+            .into_iter()
+            .find(|(unit, _)| unit.domain == MemoryDomain::Organization)
+            .map(|(unit, _)| unit)
+            .expect("expected organization read view");
+
+        let contribution = engine
+            .load_organization_contribution(read_view.id, source.id)?
+            .expect("expected contribution record");
+        assert!(matches!(
+            contribution.status,
+            OrganizationKnowledgeContributionStatus::Active
+        ));
+        assert_eq!(contribution.contributor_user_id, "author");
+        assert!(contribution.candidate_at.is_some());
+        assert!(contribution.activated_at.is_some());
+        assert!(matches!(
+            contribution.approval_mode,
+            Some(OrganizationKnowledgeApprovalMode::Auto)
+        ));
+        assert_eq!(
+            contribution.approved_by.as_deref(),
+            Some("system:auto_publish")
+        );
+        assert!(contribution.revoked_at.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_org_knowledge_detail_record_exposes_membership_and_history() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        engine.set_org_share_policy(
+            "author",
+            "org_alpha",
+            &memorose_common::SharePolicy {
+                contribute: true,
+                consume: false,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+        engine.set_org_share_policy(
+            "consumer",
+            "org_alpha",
+            &memorose_common::SharePolicy {
+                contribute: false,
+                consume: true,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+
+        let mut source = MemoryUnit::new(
+            Some("org_alpha".into()),
+            "author".into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Runbook: rotate credentials after incident closure.".into(),
+            Some(vec![1.0; 768]),
+        );
+        source.level = 2;
+        source.keywords = vec!["Credential Rotation".into()];
+        engine.store_memory_unit(source.clone()).await?;
+
+        let read_view = engine
+            .search_hybrid_with_shared(
+                "consumer",
+                Some("org_alpha"),
+                None,
+                "credential rotation",
+                &vec![1.0; 768],
+                5,
+                false,
+                Some(0.0),
+                0,
+                None,
+                None,
+            )
+            .await?
+            .into_iter()
+            .find(|(unit, _)| unit.domain == MemoryDomain::Organization)
+            .map(|(unit, _)| unit)
+            .expect("expected organization read view");
+
+        let detail = engine
+            .get_organization_knowledge_detail_record(read_view.id)
+            .await?
+            .expect("expected organization knowledge detail");
+
+        assert_eq!(detail.record.id, read_view.id);
+        assert_eq!(detail.read_view.id, read_view.id);
+        assert_eq!(detail.memberships.len(), 1);
+        assert_eq!(detail.contributions.len(), 1);
+
+        let membership = &detail.memberships[0];
+        assert_eq!(membership.membership.source_id, source.id);
+        assert_eq!(membership.membership.contributor_user_id, "author");
+        assert_eq!(membership.source_unit.memory_type, MemoryType::Factual);
+        assert_eq!(membership.source_unit.level, 2);
+        assert_eq!(membership.source_unit.keywords, vec!["Credential Rotation"]);
+        assert!(membership.source_unit.content.contains("rotate credentials"));
+        assert!(membership.contribution.is_some());
+        assert!(matches!(
+            membership
+                .contribution
+                .as_ref()
+                .and_then(|record| record.approval_mode.as_ref()),
+            Some(OrganizationKnowledgeApprovalMode::Auto)
+        ));
+        assert_eq!(
+            membership
+                .contribution
+                .as_ref()
+                .and_then(|record| record.approved_by.as_deref()),
+            Some("system:auto_publish")
+        );
+
+        let contribution = &detail.contributions[0];
+        assert_eq!(contribution.contribution.source_id, source.id);
+        assert_eq!(contribution.contribution.contributor_user_id, "author");
+        assert!(matches!(
+            contribution.contribution.status,
+            OrganizationKnowledgeContributionStatus::Active
+        ));
+        assert!(matches!(
+            contribution.contribution.approval_mode.as_ref(),
+            Some(OrganizationKnowledgeApprovalMode::Auto)
+        ));
+        assert_eq!(
+            contribution.contribution.approved_by.as_deref(),
+            Some("system:auto_publish")
+        );
+        let contribution_source = contribution
+            .source_unit
+            .as_ref()
+            .expect("expected contribution source unit");
+        assert_eq!(contribution_source.memory_type, MemoryType::Factual);
+        assert_eq!(contribution_source.level, 2);
+        assert_eq!(contribution_source.keywords, vec!["Credential Rotation"]);
+        assert!(contribution_source.content.contains("rotate credentials"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_org_knowledge_requires_l2_user_memory() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        engine.set_org_share_policy(
+            "author",
+            "org_alpha",
+            &memorose_common::SharePolicy {
+                contribute: true,
+                consume: false,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+        engine.set_org_share_policy(
+            "consumer",
+            "org_alpha",
+            &memorose_common::SharePolicy {
+                contribute: false,
+                consume: true,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+
+        let l1_source = MemoryUnit::new(
+            Some("org_alpha".into()),
+            "author".into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Raw user note that should stay local".into(),
+            Some(vec![1.0; 768]),
+        );
+        engine.store_memory_unit(l1_source).await?;
+
+        let shared = engine
+            .search_hybrid_with_shared(
+                "consumer",
+                Some("org_alpha"),
+                None,
+                "raw user note",
+                &vec![1.0; 768],
+                5,
+                false,
+                Some(0.0),
+                0,
+                None,
+                None,
+            )
+            .await?;
+
+        assert!(shared.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_org_knowledge_excludes_agent_memory() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        engine.set_org_share_policy(
+            "author",
+            "org_alpha",
+            &memorose_common::SharePolicy {
+                contribute: true,
+                consume: false,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+        engine.set_org_share_policy(
+            "consumer",
+            "org_alpha",
+            &memorose_common::SharePolicy {
+                contribute: false,
+                consume: true,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+
+        let mut procedural = MemoryUnit::new(
+            Some("org_alpha".into()),
+            "author".into(),
+            Some("agent_writer".into()),
+            stream_id,
+            memorose_common::MemoryType::Procedural,
+            "Agent-specific recovery pattern".into(),
+            Some(vec![1.0; 768]),
+        );
+        procedural.level = 2;
+        engine.store_memory_unit(procedural).await?;
+
+        let shared = engine
+            .search_hybrid_with_shared(
+                "consumer",
+                Some("org_alpha"),
+                None,
+                "recovery pattern",
+                &vec![1.0; 768],
+                5,
+                false,
+                Some(0.0),
+                0,
+                None,
+                None,
+            )
+            .await?;
+
+        assert!(shared.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_org_shared_memory_ignores_agent_filter() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        engine.set_org_share_policy(
+            "author",
+            "org_alpha",
+            &memorose_common::SharePolicy {
+                contribute: true,
+                consume: false,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+        engine.set_org_share_policy(
+            "consumer",
+            "org_alpha",
+            &memorose_common::SharePolicy {
+                contribute: false,
+                consume: true,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+
+        let mut source = MemoryUnit::new(
+            Some("org_alpha".into()),
+            "author".into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Shared organization troubleshooting playbook".into(),
+            Some(vec![1.0; 768]),
+        );
+        source.level = 2;
+        engine.store_memory_unit(source).await?;
+
+        let shared = engine
+            .search_hybrid_with_shared(
+                "consumer",
+                Some("org_alpha"),
+                Some("consumer_agent"),
+                "troubleshooting playbook",
+                &vec![1.0; 768],
+                5,
+                false,
+                Some(0.0),
+                0,
+                None,
+                None,
+            )
+            .await?;
+
+        assert!(shared
+            .iter()
+            .any(|(unit, _)| unit.domain == MemoryDomain::Organization));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_org_knowledge_canonicalizes_content() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        engine.set_org_share_policy(
+            "author",
+            "org_alpha",
+            &memorose_common::SharePolicy {
+                contribute: true,
+                consume: false,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+        engine.set_org_share_policy(
+            "consumer",
+            "org_alpha",
+            &memorose_common::SharePolicy {
+                contribute: false,
+                consume: true,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+
+        let mut source = MemoryUnit::new(
+            Some("org_alpha".into()),
+            "author".into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "I restart our payment service when my alert fires.".into(),
+            Some(vec![1.0; 768]),
+        );
+        source.level = 2;
+        source.keywords = vec!["Incident Recovery".into(), "Incident Recovery".into()];
+        engine.store_memory_unit(source).await?;
+
+        let shared = engine
+            .search_hybrid_with_shared(
+                "consumer",
+                Some("org_alpha"),
+                None,
+                "incident recovery payment service",
+                &vec![1.0; 768],
+                5,
+                false,
+                Some(0.0),
+                0,
+                None,
+                None,
+            )
+            .await?;
+
+        let read_view = shared
+            .into_iter()
+            .find(|(unit, _)| unit.domain == MemoryDomain::Organization)
+            .map(|(unit, _)| unit)
+            .expect("expected organization read view");
+
+        assert_eq!(read_view.keywords, vec!["Incident Recovery".to_string()]);
+        assert!(read_view.content.starts_with("Incident Recovery:"));
+        assert!(read_view.content.contains("the contributor restart"));
+        assert!(read_view
+            .content
+            .contains("the organization's payment service"));
+        assert!(read_view.content.contains("the contributor's alert"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_org_knowledge_skips_placeholder_l2_content() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        engine.set_org_share_policy(
+            "author",
+            "org_alpha",
+            &memorose_common::SharePolicy {
+                contribute: true,
+                consume: false,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+        engine.set_org_share_policy(
+            "consumer",
+            "org_alpha",
+            &memorose_common::SharePolicy {
+                contribute: false,
+                consume: true,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+
+        let mut source = MemoryUnit::new(
+            Some("org_alpha".into()),
+            "author".into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "LLM not available".into(),
+            Some(vec![1.0; 768]),
+        );
+        source.level = 2;
+        engine.store_memory_unit(source).await?;
+
+        let shared = engine
+            .search_hybrid_with_shared(
+                "consumer",
+                Some("org_alpha"),
+                None,
+                "llm not available",
+                &vec![1.0; 768],
+                5,
+                false,
+                Some(0.0),
+                0,
+                None,
+                None,
+            )
+            .await?;
+
+        assert!(shared.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_org_knowledge_merges_same_topic_sources() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        for user_id in ["author_a", "author_b"] {
+            engine.set_org_share_policy(
+                user_id,
+                "org_alpha",
+                &memorose_common::SharePolicy {
+                    contribute: true,
+                    consume: false,
+                    include_history: false,
+                    targets: vec![],
+                },
+            )?;
+        }
+        engine.set_org_share_policy(
+            "consumer",
+            "org_alpha",
+            &memorose_common::SharePolicy {
+                contribute: false,
+                consume: true,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+
+        let mut source_a = MemoryUnit::new(
+            Some("org_alpha".into()),
+            "author_a".into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "I restart our payment service after alert storms.".into(),
+            Some(vec![1.0; 768]),
+        );
+        source_a.level = 2;
+        source_a.keywords = vec!["Incident Recovery".into(), "Restart".into()];
+
+        let mut source_b = MemoryUnit::new(
+            Some("org_alpha".into()),
+            "author_b".into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "We roll back the payment service after failed deploys.".into(),
+            Some(vec![0.5; 768]),
+        );
+        source_b.level = 2;
+        source_b.keywords = vec!["Incident Recovery".into(), "Rollback".into()];
+
+        engine
+            .store_memory_units(vec![source_a.clone(), source_b.clone()])
+            .await?;
+
+        let shared = engine
+            .search_hybrid_with_shared(
+                "consumer",
+                Some("org_alpha"),
+                None,
+                "incident recovery payment service",
+                &vec![1.0; 768],
+                5,
+                false,
+                Some(0.0),
+                0,
+                None,
+                None,
+            )
+            .await?;
+
+        let org_units: Vec<MemoryUnit> = shared
+            .into_iter()
+            .filter(|(unit, _)| unit.domain == MemoryDomain::Organization)
+            .map(|(unit, _)| unit.into_memory_unit())
+            .collect();
+
+        assert_eq!(org_units.len(), 1);
+        let read_view = &org_units[0];
+        assert_eq!(
+            read_view.user_id,
+            MemoroseEngine::organization_read_view_owner("org_alpha")
+        );
+        assert_eq!(read_view.keywords.len(), 3);
+        assert_eq!(read_view.keywords[0], "Incident Recovery");
+        assert!(read_view.keywords.contains(&"Restart".to_string()));
+        assert!(read_view.keywords.contains(&"Rollback".to_string()));
+        assert!(read_view.agent_id.is_none());
+        assert!(read_view.stream_id.is_nil());
+        let record = engine
+            .load_organization_knowledge(read_view.id)?
+            .expect("expected organization knowledge record");
+        let source_ids = engine.resolve_organization_record_source_ids(&record).await?;
+        assert_eq!(source_ids.len(), 2);
+        assert!(source_ids.contains(&source_a.id));
+        assert!(source_ids.contains(&source_b.id));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_org_global_read_prefers_canonical_record_over_stored_view() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        engine.set_org_share_policy(
+            "author",
+            "org_alpha",
+            &memorose_common::SharePolicy {
+                contribute: true,
+                consume: false,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+        engine.set_org_share_policy(
+            "consumer",
+            "org_alpha",
+            &memorose_common::SharePolicy {
+                contribute: false,
+                consume: true,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+
+        let mut source = MemoryUnit::new(
+            Some("org_alpha".into()),
+            "author".into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Organization incident playbook".into(),
+            Some(vec![1.0; 768]),
+        );
+        source.level = 2;
+        source.keywords = vec!["Incident Playbook".into()];
+        engine.store_memory_unit(source).await?;
+
+        let read_view = engine
+            .search_hybrid_with_shared(
+                "consumer",
+                Some("org_alpha"),
+                None,
+                "incident playbook",
+                &vec![1.0; 768],
+                5,
+                false,
+                Some(0.0),
+                0,
+                None,
+                None,
+            )
+            .await?
+            .into_iter()
+            .find(|(unit, _)| unit.domain == MemoryDomain::Organization)
+            .map(|(unit, _)| unit)
+            .expect("expected organization read view");
+
+        let record = engine
+            .load_organization_knowledge(read_view.id)?
+            .expect("expected canonical organization knowledge");
+        let key = format!(
+            "u:{}:unit:{}",
+            MemoroseEngine::organization_read_view_owner("org_alpha"),
+            read_view.id
+        );
+        let mut stale_view = read_view.clone();
+        stale_view.content = "STALE VIEW".into();
+        stale_view.keywords = vec!["STALE".into()];
+        engine
+            .kv()
+            .put(key.as_bytes(), &serde_json::to_vec(&stale_view)?)?;
+
+        let hydrated = engine
+            .get_shared_search_hit_by_index(read_view.id)
+            .await?
+            .expect("expected organization knowledge hit by index")
+            .into_memory_unit();
+
+        assert_eq!(hydrated.content, record.content);
+        assert_eq!(hydrated.keywords, record.keywords);
+        assert_ne!(hydrated.content, "STALE VIEW");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_org_global_list_prefers_canonical_record_over_stored_view() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        engine.set_org_share_policy(
+            "author",
+            "org_alpha",
             &memorose_common::SharePolicy {
                 contribute: true,
                 consume: false,
@@ -4417,14 +6922,767 @@ mod tests {
             },
         )?;
 
+        let mut source = MemoryUnit::new(
+            Some("org_alpha".into()),
+            "author".into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Organization onboarding guide".into(),
+            Some(vec![1.0; 768]),
+        );
+        source.level = 2;
+        source.keywords = vec!["Onboarding Guide".into()];
+        engine.store_memory_unit(source).await?;
+
+        let read_view = engine
+            .list_memory_units_global(None)
+            .await?
+            .into_iter()
+            .find(|unit| unit.domain == MemoryDomain::Organization)
+            .expect("expected organization knowledge read view in global list");
+
+        let key = format!(
+            "u:{}:unit:{}",
+            MemoroseEngine::organization_read_view_owner("org_alpha"),
+            read_view.id
+        );
+        let mut stale_view = read_view.clone();
+        stale_view.content = "STALE LIST VIEW".into();
+        engine
+            .kv()
+            .put(key.as_bytes(), &serde_json::to_vec(&stale_view)?)?;
+
+        let listed = engine
+            .list_memory_units_global(None)
+            .await?
+            .into_iter()
+            .find(|unit| unit.id == read_view.id)
+            .expect("expected organization knowledge read view in global list");
+
+        assert_ne!(listed.content, "STALE LIST VIEW");
+        assert_eq!(listed.content, read_view.content);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_org_text_search_prefers_canonical_record_over_stored_view() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        engine.set_org_share_policy(
+            "author",
+            "org_alpha",
+            &memorose_common::SharePolicy {
+                contribute: true,
+                consume: false,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+        engine.set_org_share_policy(
+            "consumer",
+            "org_alpha",
+            &memorose_common::SharePolicy {
+                contribute: false,
+                consume: true,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+
+        let mut source = MemoryUnit::new(
+            Some("org_alpha".into()),
+            "author".into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Organization troubleshooting playbook".into(),
+            Some(vec![1.0; 768]),
+        );
+        source.level = 2;
+        source.keywords = vec!["Troubleshooting Playbook".into()];
+        engine.store_memory_unit(source).await?;
+
+        let read_view = engine
+            .search_text_with_shared(
+                "consumer",
+                Some("org_alpha"),
+                "troubleshooting",
+                5,
+                false,
+                None,
+            )
+            .await?
+            .into_iter()
+            .find(|unit| unit.domain == MemoryDomain::Organization)
+            .expect("expected organization result");
+
+        let key = format!(
+            "u:{}:unit:{}",
+            MemoroseEngine::organization_read_view_owner("org_alpha"),
+            read_view.id
+        );
+        let mut stale_view = read_view.clone();
+        stale_view.content = "Completely unrelated cached view".into();
+        stale_view.keywords = vec!["Unrelated".into()];
+        engine
+            .kv()
+            .put(key.as_bytes(), &serde_json::to_vec(&stale_view)?)?;
+
+        let results = engine
+            .search_text_with_shared(
+                "consumer",
+                Some("org_alpha"),
+                "troubleshooting",
+                5,
+                false,
+                None,
+            )
+            .await?;
+
+        assert!(results.iter().any(|unit| {
+            unit.domain == MemoryDomain::Organization
+                && unit.id == read_view.id
+                && unit.content.contains("troubleshooting")
+        }));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_org_knowledge_merges_by_shared_topic_alias() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        for user_id in ["author_a", "author_b"] {
+            engine.set_org_share_policy(
+                user_id,
+                "org_alpha",
+                &memorose_common::SharePolicy {
+                    contribute: true,
+                    consume: false,
+                    include_history: false,
+                    targets: vec![],
+                },
+            )?;
+        }
+        engine.set_org_share_policy(
+            "consumer",
+            "org_alpha",
+            &memorose_common::SharePolicy {
+                contribute: false,
+                consume: true,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+
+        let mut source_a = MemoryUnit::new(
+            Some("org_alpha".into()),
+            "author_a".into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "I restart our cleanup worker when alerts fire.".into(),
+            Some(vec![1.0; 768]),
+        );
+        source_a.level = 2;
+        source_a.keywords = vec!["Restart Runbook".into(), "Cleanup Playbook".into()];
+
+        let mut source_b = MemoryUnit::new(
+            Some("org_alpha".into()),
+            "author_b".into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "We retry the cleanup worker after failed jobs.".into(),
+            Some(vec![1.0; 768]),
+        );
+        source_b.level = 2;
+        source_b.keywords = vec!["Retry Procedure".into(), "Cleanup Playbook".into()];
+
+        engine.store_memory_unit(source_a.clone()).await?;
+        engine.store_memory_unit(source_b.clone()).await?;
+
+        let shared = engine
+            .search_hybrid_with_shared(
+                "consumer",
+                Some("org_alpha"),
+                None,
+                "cleanup playbook worker",
+                &vec![1.0; 768],
+                5,
+                false,
+                Some(0.0),
+                0,
+                None,
+                None,
+            )
+            .await?;
+
+        let read_view = shared
+            .into_iter()
+            .find(|(unit, _)| unit.domain == MemoryDomain::Organization)
+            .map(|(unit, _)| unit)
+            .expect("expected organization read view");
+
+        assert_eq!(read_view.keywords[0], "Cleanup Playbook");
+        assert!(read_view.keywords.contains(&"Restart Runbook".to_string()));
+        assert!(read_view.keywords.contains(&"Retry Procedure".to_string()));
+        let record = engine
+            .load_organization_knowledge(read_view.id)?
+            .expect("expected organization knowledge record");
+        assert_eq!(
+            engine.resolve_organization_record_source_ids(&record).await?.len(),
+            2
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_disabling_org_contribution_preserves_other_topic_sources() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        for user_id in ["author_a", "author_b"] {
+            engine.set_org_share_policy(
+                user_id,
+                "org_cleanup",
+                &memorose_common::SharePolicy {
+                    contribute: true,
+                    consume: false,
+                    include_history: false,
+                    targets: vec![],
+                },
+            )?;
+        }
+        engine.set_org_share_policy(
+            "consumer",
+            "org_cleanup",
+            &memorose_common::SharePolicy {
+                contribute: false,
+                consume: true,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+
+        let mut source_a = MemoryUnit::new(
+            Some("org_cleanup".into()),
+            "author_a".into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "I restart our cleanup worker when alerts fire.".into(),
+            Some(vec![1.0; 768]),
+        );
+        source_a.level = 2;
+        source_a.keywords = vec!["Cleanup Playbook".into(), "Restart".into()];
+
+        let mut source_b = MemoryUnit::new(
+            Some("org_cleanup".into()),
+            "author_b".into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "We re-run the cleanup worker after failed jobs.".into(),
+            Some(vec![1.0; 768]),
+        );
+        source_b.level = 2;
+        source_b.keywords = vec!["Cleanup Playbook".into(), "Retry".into()];
+
+        engine.store_memory_unit(source_a.clone()).await?;
+        engine.store_memory_unit(source_b.clone()).await?;
+
+        let removed = engine
+            .disable_org_contribution("author_a", "org_cleanup")
+            .await?;
+        assert_eq!(removed, 1);
+        assert!(engine.load_organization_membership(source_a.id)?.is_none());
+
+        let shared = engine
+            .search_hybrid_with_shared(
+                "consumer",
+                Some("org_cleanup"),
+                None,
+                "cleanup worker",
+                &vec![1.0; 768],
+                5,
+                false,
+                Some(0.0),
+                0,
+                None,
+                None,
+            )
+            .await?;
+
+        let read_view = shared
+            .into_iter()
+            .find(|(unit, _)| unit.domain == MemoryDomain::Organization)
+            .map(|(unit, _)| unit)
+            .expect("expected organization read view to remain");
+
+        assert_eq!(
+            read_view.keywords,
+            vec!["Cleanup Playbook".to_string(), "Retry".to_string()]
+        );
+        assert!(read_view.content.contains("the organization"));
+        let record = engine
+            .load_organization_knowledge(read_view.id)?
+            .expect("expected organization knowledge record");
+        assert_eq!(
+            engine.resolve_organization_record_source_ids(&record).await?,
+            vec![source_b.id]
+        );
+
+        let removed_second = engine
+            .disable_org_contribution("author_b", "org_cleanup")
+            .await?;
+        assert_eq!(removed_second, 1);
+
+        let after = engine
+            .search_hybrid_with_shared(
+                "consumer",
+                Some("org_cleanup"),
+                None,
+                "cleanup worker",
+                &vec![1.0; 768],
+                5,
+                false,
+                Some(0.0),
+                0,
+                None,
+                None,
+            )
+            .await?;
+        assert!(after.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_disabling_org_contribution_rebinds_topic_alias_mappings() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        for user_id in ["author_a", "author_b"] {
+            engine.set_org_share_policy(
+                user_id,
+                "org_cleanup",
+                &memorose_common::SharePolicy {
+                    contribute: true,
+                    consume: false,
+                    include_history: false,
+                    targets: vec![],
+                },
+            )?;
+        }
+        engine.set_org_share_policy(
+            "consumer",
+            "org_cleanup",
+            &memorose_common::SharePolicy {
+                contribute: false,
+                consume: true,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+
+        let mut source_a = MemoryUnit::new(
+            Some("org_cleanup".into()),
+            "author_a".into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "I restart our cleanup worker when alerts fire.".into(),
+            Some(vec![1.0; 768]),
+        );
+        source_a.level = 2;
+        source_a.keywords = vec!["Restart Runbook".into(), "Cleanup Playbook".into()];
+
+        let mut source_b = MemoryUnit::new(
+            Some("org_cleanup".into()),
+            "author_b".into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "We retry the cleanup worker after failed jobs.".into(),
+            Some(vec![1.0; 768]),
+        );
+        source_b.level = 2;
+        source_b.keywords = vec!["Retry Procedure".into(), "Cleanup Playbook".into()];
+
+        engine.store_memory_unit(source_a).await?;
+        engine.store_memory_unit(source_b.clone()).await?;
+
+        engine
+            .disable_org_contribution("author_a", "org_cleanup")
+            .await?;
+
+        let shared = engine
+            .search_hybrid_with_shared(
+                "consumer",
+                Some("org_cleanup"),
+                None,
+                "retry procedure cleanup",
+                &vec![1.0; 768],
+                5,
+                false,
+                Some(0.0),
+                0,
+                None,
+                None,
+            )
+            .await?;
+        let read_view = shared
+            .into_iter()
+            .find(|(unit, _)| unit.domain == MemoryDomain::Organization)
+            .map(|(unit, _)| unit)
+            .expect("expected organization read view");
+
+        let retry_mapping = MemoroseEngine::organization_topic_relation_key(
+            "org_cleanup",
+            &MemoroseEngine::build_organization_topic_key("Retry Procedure"),
+        );
+        let shared_mapping = MemoroseEngine::organization_topic_relation_key(
+            "org_cleanup",
+            &MemoroseEngine::build_organization_topic_key("Cleanup Playbook"),
+        );
+
+        assert_eq!(read_view.keywords[0], "Retry Procedure");
+        let record = engine
+            .load_organization_knowledge(read_view.id)?
+            .expect("expected organization knowledge record");
+        assert_eq!(
+            engine.resolve_organization_record_source_ids(&record).await?,
+            vec![source_b.id]
+        );
+        assert_eq!(
+            engine
+                .load_organization_topic_relation(
+                    "org_cleanup",
+                    &MemoroseEngine::build_organization_topic_key("Retry Procedure"),
+                )?
+                .map(|relation| relation.knowledge_id),
+            Some(read_view.id)
+        );
+        assert_eq!(
+            engine
+                .load_organization_topic_relation(
+                    "org_cleanup",
+                    &MemoroseEngine::build_organization_topic_key("Cleanup Playbook"),
+                )?
+                .map(|relation| relation.knowledge_id),
+            Some(read_view.id)
+        );
+        assert!(engine.system_kv().get(retry_mapping.as_bytes())?.is_some());
+        assert!(engine.system_kv().get(shared_mapping.as_bytes())?.is_some());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_startup_reconcile_removes_persisted_org_views() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let mut stale_view = MemoryUnit::new_with_domain(
+            Some("org_stale".into()),
+            "stale_owner".into(),
+            None,
+            Uuid::nil(),
+            memorose_common::MemoryType::Factual,
+            MemoryDomain::Organization,
+            "Stale persisted organization read view".into(),
+            Some(vec![1.0; 768]),
+        );
+        stale_view.level = 2;
+        stale_view.keywords = vec!["Stale".into()];
+
+        let unit_key = format!("u:{}:unit:{}", stale_view.user_id, stale_view.id);
+        let index_key = format!("idx:unit:{}", stale_view.id);
+        engine
+            .kv()
+            .put(unit_key.as_bytes(), &serde_json::to_vec(&stale_view)?)?;
+        engine
+            .kv()
+            .put(index_key.as_bytes(), stale_view.user_id.as_bytes())?;
+
+        drop(engine);
+
+        let reopened =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        assert!(reopened.kv().get(unit_key.as_bytes())?.is_none());
+        assert!(reopened.kv().get(index_key.as_bytes())?.is_none());
+        assert!(reopened
+            .get_shared_search_hit_by_index(stale_view.id)
+            .await?
+            .is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_startup_reconcile_removes_org_record_without_live_sources() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        engine.set_org_share_policy(
+            "author",
+            "org_reconcile",
+            &memorose_common::SharePolicy {
+                contribute: true,
+                consume: false,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+        engine.set_org_share_policy(
+            "consumer",
+            "org_reconcile",
+            &memorose_common::SharePolicy {
+                contribute: false,
+                consume: true,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+
+        let mut source = MemoryUnit::new(
+            Some("org_reconcile".into()),
+            "author".into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Reconcile startup should remove orphaned org records.".into(),
+            Some(vec![1.0; 768]),
+        );
+        source.level = 2;
+        source.keywords = vec!["Startup Reconcile".into()];
+        engine.store_memory_unit(source.clone()).await?;
+
+        let read_view = engine
+            .search_hybrid_with_shared(
+                "consumer",
+                Some("org_reconcile"),
+                None,
+                "startup reconcile",
+                &vec![1.0; 768],
+                5,
+                false,
+                Some(0.0),
+                0,
+                None,
+                None,
+            )
+            .await?
+            .into_iter()
+            .find(|(unit, _)| unit.domain == MemoryDomain::Organization)
+            .map(|(unit, _)| unit)
+            .expect("expected organization read view");
+
+        let source_key = format!("u:{}:unit:{}", source.user_id, source.id);
+        let source_index_key = format!("idx:unit:{}", source.id);
+        engine.kv().delete(source_key.as_bytes())?;
+        engine.kv().delete(source_index_key.as_bytes())?;
+
+        drop(engine);
+
+        let reopened =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        assert!(reopened
+            .load_organization_knowledge(read_view.id)?
+            .is_none());
+        assert!(reopened
+            .search_hybrid_with_shared(
+                "consumer",
+                Some("org_reconcile"),
+                None,
+                "startup reconcile",
+                &vec![1.0; 768],
+                5,
+                false,
+                Some(0.0),
+                0,
+                None,
+                None,
+            )
+            .await?
+            .into_iter()
+            .all(|(unit, _)| unit.id != read_view.id));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_startup_reconcile_cleans_stale_org_source_relations() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let relation = OrganizationKnowledgeRelationRecord {
+            org_id: "org_stale_relation".into(),
+            knowledge_id: Uuid::new_v4(),
+            relation: OrganizationKnowledgeRelationKind::Source {
+                source_id: Uuid::new_v4(),
+            },
+            updated_at: Utc::now(),
+        };
+        let primary_key = MemoroseEngine::organization_relation_key(&relation);
+        let index_key = MemoroseEngine::organization_knowledge_relation_index_key(&relation);
+        let bytes = serde_json::to_vec(&relation)?;
+
+        engine.system_kv().put(primary_key.as_bytes(), &bytes)?;
+        engine.system_kv().put(index_key.as_bytes(), &bytes)?;
+
+        drop(engine);
+
+        let reopened =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        assert!(reopened.system_kv().get(primary_key.as_bytes())?.is_none());
+        assert!(reopened.system_kv().get(index_key.as_bytes())?.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_org_relation_index_is_written_for_knowledge() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        engine.set_org_share_policy(
+            "author",
+            "org_index",
+            &memorose_common::SharePolicy {
+                contribute: true,
+                consume: false,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+
+        let mut source = MemoryUnit::new(
+            Some("org_index".into()),
+            "author".into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Index the organization relation structure.".into(),
+            Some(vec![1.0; 768]),
+        );
+        source.level = 2;
+        source.keywords = vec!["Relation Index".into(), "Org Index".into()];
+        engine.store_memory_unit(source).await?;
+
+        let record = engine
+            .list_organization_knowledge_records(Some("org_index"), None)
+            .await?
+            .into_iter()
+            .next()
+            .expect("expected organization knowledge record");
+        let relations = engine
+            .list_organization_relations_for_knowledge(record.id)
+            .await?;
+
+        assert!(!relations.is_empty());
+        for relation in relations {
+            let index_key = MemoroseEngine::organization_knowledge_relation_index_key(&relation);
+            assert!(engine.system_kv().get(index_key.as_bytes())?.is_some());
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_org_relation_index_is_removed_with_read_view() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        engine.set_org_share_policy(
+            "author",
+            "org_index_cleanup",
+            &memorose_common::SharePolicy {
+                contribute: true,
+                consume: false,
+                include_history: false,
+                targets: vec![],
+            },
+        )?;
+
+        let mut source = MemoryUnit::new(
+            Some("org_index_cleanup".into()),
+            "author".into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Remove relation index when organization read view is deleted.".into(),
+            Some(vec![1.0; 768]),
+        );
+        source.level = 2;
+        source.keywords = vec!["Relation Cleanup".into()];
+        engine.store_memory_unit(source).await?;
+
+        let record = engine
+            .list_organization_knowledge_records(Some("org_index_cleanup"), None)
+            .await?
+            .into_iter()
+            .next()
+            .expect("expected organization knowledge record");
+        let relation_prefix =
+            MemoroseEngine::organization_knowledge_relation_index_prefix(record.id);
+        assert!(!engine
+            .system_kv()
+            .scan(relation_prefix.as_bytes())?
+            .is_empty());
+
+        let removed = engine
+            .disable_org_contribution("author", "org_index_cleanup")
+            .await?;
+        assert_eq!(removed, 1);
+        assert!(engine.load_organization_knowledge(record.id)?.is_none());
+        assert!(engine
+            .system_kv()
+            .scan(relation_prefix.as_bytes())?
+            .is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_local_text_search_excludes_shared_org_read_view() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
         let source = MemoryUnit::new(
             None,
             TEST_USER.into(),
             None,
-            "local_text_app".into(),
             stream_id,
             memorose_common::MemoryType::Factual,
-            "Projection should not leak into local text search".into(),
+            "Read view should not leak into local text search".into(),
             None,
         );
         engine.store_memory_unit(source.clone()).await?;
@@ -4432,14 +7690,7 @@ mod tests {
         engine.index.reload()?;
 
         let local_results = engine
-            .search_text(
-                TEST_USER,
-                Some("local_text_app"),
-                "projection leak",
-                10,
-                false,
-                None,
-            )
+            .search_text(TEST_USER, "read view leak", 10, false, None)
             .await?;
 
         assert_eq!(local_results.len(), 1);

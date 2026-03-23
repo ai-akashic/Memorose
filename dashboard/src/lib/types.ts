@@ -3,43 +3,8 @@ export interface LoginResponse {
   expires_in: number;
 }
 
-export interface SharePolicy {
-  contribute: boolean;
-  consume: boolean;
-  include_history: boolean;
-  targets: Array<"app" | "organization">;
-}
-
-export interface ShareBackfillStatus {
-  status: "pending" | "done" | "failed";
-  scheduled_at?: string;
-  finished_at?: string;
-  app_id?: string;
-  org_id?: string | null;
-  domain?: "app" | "organization";
-  projected?: number;
-  error?: string;
-}
-
-export interface MemorySharingState {
-  user_id: string;
-  app_id: string;
-  org_id?: string | null;
-  app: SharePolicy;
-  organization?: SharePolicy | null;
-  app_backfill?: ShareBackfillStatus | null;
-  organization_backfill?: ShareBackfillStatus | null;
-}
-
-export interface MemorySharingUpdateRequest {
-  org_id?: string;
-  app?: SharePolicy;
-  organization?: SharePolicy;
-}
-
 export interface ShardStatus {
   shard_id: number;
-  raft_node_id: number;
   raft_state: "Leader" | "Follower" | "Candidate";
   current_leader: number | null;
   current_term: number;
@@ -53,7 +18,6 @@ export interface ShardStatus {
 // Single-shard backward-compatible format
 export interface ClusterStatusSingle {
   node_id: number;
-  raft_node_id: number;
   shard_id: number;
   raft_state: "Leader" | "Follower" | "Candidate";
   current_leader: number | null;
@@ -67,7 +31,6 @@ export interface ClusterStatusSingle {
   config: {
     heartbeat_interval_ms: number;
     election_timeout_min_ms: number;
-    election_timeout_max_ms: number;
   };
 }
 
@@ -79,7 +42,6 @@ export interface ClusterStatusSharded {
   config: {
     heartbeat_interval_ms: number;
     election_timeout_min_ms: number;
-    election_timeout_max_ms: number;
   };
 }
 
@@ -102,7 +64,6 @@ export interface Stats {
   memory_by_domain: {
     agent: number;
     user: number;
-    app: number;
     organization: number;
   };
   memory_by_level: {
@@ -124,21 +85,15 @@ export interface Stats {
 
 export interface MemoryItem {
   id: string;
-  org_id?: string | null;
   user_id: string;
   agent_id?: string | null;
-  app_id: string;
-  domain?: "agent" | "user" | "app" | "organization";
   memory_type?: "factual" | "procedural";
   content: string;
   level: number;
   importance: number;
   keywords: string[];
   access_count: number;
-  last_accessed_at: string;
-  transaction_time: string;
   reference_count: number;
-  has_assets: boolean;
   item_type?: "memory" | "event";
 }
 
@@ -149,30 +104,113 @@ export interface MemoryListResponse {
   limit: number;
 }
 
-export interface MemoryUnit {
+export interface DashboardMemoryDetail {
   id: string;
   org_id?: string | null;
   user_id: string;
-  agent_id: string | null;
-  app_id: string;
-  stream_id: string;
-  memory_type: "factual" | "procedural";
-  domain: "agent" | "user" | "app" | "organization";
   content: string;
   keywords: string[];
   importance: number;
   level: number;
   transaction_time: string;
-  valid_time: string | null;
-  last_accessed_at: string;
-  access_count: number;
-  references: string[];
-  projected_from?: string[];
-  assets: Array<{
-    storage_key: string;
-    original_name: string;
-    asset_type: string;
+  organization_knowledge?: OrganizationKnowledgeDetail;
+}
+
+export interface SearchMemoryUnit {
+  id: string;
+  memory_type: "factual" | "procedural";
+  content: string;
+  keywords: string[];
+  level: number;
+}
+
+export interface OrganizationKnowledgeUnit {
+  id: string;
+  content: string;
+  keywords: string[];
+  transaction_time: string;
+}
+
+export interface OrganizationContribution {
+  source_id: string;
+  contributor_user_id: string;
+  status: "candidate" | "active" | "revoked";
+  source_memory_type?: "factual" | "procedural" | null;
+  source_level?: number | null;
+  source_keywords: string[];
+  source_content_preview?: string | null;
+  candidate_at?: string | null;
+  activated_at?: string | null;
+  approval_mode?: "auto" | null;
+  approved_by?: string | null;
+  revoked_at?: string | null;
+}
+
+export interface OrganizationKnowledgeMembership {
+  source_id: string;
+  contributor_user_id: string;
+  source_memory_type?: "factual" | "procedural" | null;
+  source_level?: number | null;
+  source_keywords: string[];
+  source_content_preview?: string | null;
+  activated_at?: string | null;
+  approval_mode?: "auto" | null;
+  approved_by?: string | null;
+  updated_at: string;
+}
+
+export interface OrganizationKnowledgeMembershipSummary {
+  contributors: Array<{
+    contributor_user_id: string;
+    membership_count: number;
+    source_ids: string[];
+    source_memory_types: string[];
   }>;
+  source_types: Array<{
+    source_memory_type: string;
+    membership_count: number;
+    contributor_user_ids: string[];
+  }>;
+}
+
+export interface OrganizationKnowledgeMembershipState {
+  membership_count: number;
+  summary: OrganizationKnowledgeMembershipSummary;
+  memberships: OrganizationKnowledgeMembership[];
+}
+
+export interface OrganizationKnowledgeHistorySummary {
+  contributors: Array<{
+    contributor_user_id: string;
+    contribution_count: number;
+    candidate_contribution_count: number;
+    active_contribution_count: number;
+    revoked_contribution_count: number;
+    source_ids: string[];
+    source_memory_types: string[];
+  }>;
+  source_types: Array<{
+    source_memory_type: string;
+    contribution_count: number;
+    candidate_contribution_count: number;
+    active_contribution_count: number;
+    revoked_contribution_count: number;
+    contributor_user_ids: string[];
+  }>;
+}
+
+export interface OrganizationKnowledgeHistory {
+    contribution_count: number;
+    candidate_contribution_count: number;
+    active_contribution_count: number;
+    revoked_contribution_count: number;
+    summary: OrganizationKnowledgeHistorySummary;
+    contributions: OrganizationContribution[];
+}
+
+export interface OrganizationKnowledgeDetail {
+  membership: OrganizationKnowledgeMembershipState;
+  history: OrganizationKnowledgeHistory;
 }
 
 export interface GraphNode {
@@ -201,7 +239,7 @@ export interface GraphData {
 }
 
 export interface SearchResult {
-  unit: MemoryUnit;
+  unit: SearchMemoryUnit;
   score: number;
 }
 
@@ -210,7 +248,7 @@ export interface SearchResponse {
   query_time_ms: number;
 }
 
-export interface AppConfig {
+export interface RuntimeConfig {
   raft: Record<string, unknown>;
   worker: Record<string, unknown>;
   llm: Record<string, unknown>;
@@ -228,30 +266,50 @@ export interface OrganizationListResponse {
   total_count: number;
 }
 
-export interface AppApiKey {
-  key_id: string;
-  app_id: string;
-  org_id: string;
-  name: string;
-  key_prefix: string;
-  created_at: string;
-  revoked_at?: string | null;
+export interface OrganizationKnowledgeItem {
+  unit: OrganizationKnowledgeUnit;
+  knowledge: OrganizationKnowledgeDetail;
 }
 
-export interface AppApiKeyListResponse {
-  api_keys: AppApiKey[];
+export interface OrganizationKnowledgeListItem {
+  unit: OrganizationKnowledgeUnit;
+  contribution_count: number;
+  membership_count: number;
+  contributor_user_ids: string[];
+  top_contributor_user_id?: string | null;
+  source_memory_types: string[];
+  primary_source_memory_type?: string | null;
+  published_at: string;
+}
+
+export interface OrganizationKnowledgeListResponse {
+  items: OrganizationKnowledgeListItem[];
   total_count: number;
+  summary: {
+    knowledge_count: number;
+    contribution_count: number;
+    membership_count: number;
+    contributor_count: number;
+  };
 }
 
-export interface CreateApiKeyResponse {
-  api_key: AppApiKey;
-  raw_key: string;
-}
-
-export interface VersionInfo {
-  version: string;
-  build_time: string;
-  features: string[];
+export interface OrganizationKnowledgeMetrics {
+  org_id: string;
+  knowledge_count: number;
+  contribution_count: number;
+  membership_count: number;
+  candidate_contribution_count: number;
+  revoked_contribution_count: number;
+  contributor_count: number;
+  auto_approved_total: number;
+  auto_publish_total: number;
+  rebuild_total: number;
+  revoke_total: number;
+  merged_publication_total: number;
+  source_type_distribution: Array<{
+    key: string;
+    value: number;
+  }>;
 }
 
 export interface AgentSummary {
@@ -273,7 +331,6 @@ export interface L3Task {
   org_id?: string | null;
   user_id: string;
   agent_id?: string | null;
-  app_id: string;
   parent_id?: string | null;
   title: string;
   description: string;
@@ -292,101 +349,14 @@ export interface L3TaskTree {
 }
 
 export interface GoalTree {
-  goal: MemoryUnit;
+  goal: {
+    id: string;
+    content: string;
+    transaction_time: string;
+  };
   tasks: L3TaskTree[];
 }
 
-export interface AppStats {
-  app_id: string;
-  org_id: string;
-  name: string;
-  overview: {
-    total_events: number;
-    total_users: number;
-    total_memories: number;
-    local_memories: number;
-    shared_memories: number;
-    shared_app_memories: number;
-    shared_org_memories: number;
-    agent_memories: number;
-    user_memories: number;
-    l1_count: number;
-    l2_count: number;
-    local_l1_count: number;
-    local_l2_count: number;
-    shared_l1_count: number;
-    shared_l2_count: number;
-    memory_pipeline_status: string;
-    avg_memories_per_user: number;
-    avg_local_memories_per_user: number;
-    memory_by_scope: {
-      local: number;
-      shared: number;
-    };
-    memory_by_domain: {
-      agent: number;
-      user: number;
-      app: number;
-      organization: number;
-    };
-    memory_by_level_and_scope: {
-      local: {
-        l1: number;
-        l2: number;
-      };
-      shared: {
-        l1: number;
-        l2: number;
-      };
-    };
-  };
-  users: Array<{
-    user_id: string;
-    event_count: number;
-    memory_count: number;
-    last_activity: number | null;
-  }>;
-  recent_activity: Array<{
-    timestamp: number;
-    user_id: string;
-    event_type: string;
-    stream_id: string;
-  }>;
-  performance: {
-    total_storage_bytes: number;
-    event_storage_bytes: number;
-    memory_storage_bytes: number;
-    avg_event_size_bytes: number;
-    l1_generation_rate: number;
-    l2_generation_rate: number;
-  };
-}
-
-export interface AppSummary {
-  app_id: string;
-  org_id: string;
-  name: string;
-  total_events: number;
-  total_users: number;
-  total_memories: number;
-  local_memories: number;
-  shared_app_memories: number;
-  shared_org_memories: number;
-  agent_memories: number;
-  user_memories: number;
-  l1_count: number;
-  l2_count: number;
-  local_l1_count: number;
-  local_l2_count: number;
-  shared_l1_count: number;
-  shared_l2_count: number;
-  last_activity: number | null;
-}
-
-export interface AppListResponse {
-  apps: AppSummary[];
-  total_count: number;
-}
 
 export interface RetrieveRequest {
   query: string;
@@ -400,31 +370,13 @@ export interface RetrieveRequest {
   agent_id?: string;
 }
 
-export type RetrieveResponse = SearchResponse;
-
-export interface AddEdgeRequest {
-  source_id: string;
-  target_id: string;
-  relation: string;
-  weight?: number;
+export interface RetrieveResponse extends SearchResponse {
+  stream_id: string;
+  query: string;
 }
 
 export interface PendingCountResponse {
   pending: number;
-}
-
-export interface ClusterInitResponse {
-  status: string;
-  node_id?: number;
-}
-
-export interface ClusterJoinRequest {
-  node_id: number;
-  address: string;
-}
-
-export interface ClusterJoinResponse {
-  status: string;
 }
 
 export type ReadyTask = L3Task;

@@ -168,7 +168,7 @@ mod tests {
         // Demonstrate the performance advantage of batch queries
 
         // Assume there are 100 nodes to query
-        let node_ids: Vec<Uuid> = (0..100).map(|_| Uuid::new_v4()).collect();
+        let _node_ids: Vec<Uuid> = (0..100).map(|_| Uuid::new_v4()).collect();
 
         // ❌ Traditional approach (pseudo-code):
         // let mut all_edges = Vec::new();
