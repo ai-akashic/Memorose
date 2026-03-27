@@ -180,6 +180,20 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  listApiKeys: () =>
+    fetchAPI<import("./types").ApiKeyListResponse>("/api-keys"),
+
+  createApiKey: (body: { org_id: string; name?: string }) =>
+    fetchAPI<import("./types").CreatedApiKey>("/api-keys", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  revokeApiKey: (keyId: string) =>
+    fetchAPI<import("./types").ApiKeySummary>(`/api-keys/${encodeURIComponent(keyId)}`, {
+      method: "DELETE",
+    }),
+
   listOrganizationKnowledge: (orgId: string, params?: {
     q?: string;
     contributor?: string;

@@ -90,6 +90,7 @@ async fn main() {
         node_addresses,
         shard_leaders: RwLock::new(HashMap::new()),
         http_client: reqwest::Client::builder()
+            .no_proxy()
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .expect("Failed to build gateway HTTP client"),

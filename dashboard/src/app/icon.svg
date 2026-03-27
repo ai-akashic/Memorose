@@ -1,61 +1,32 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="memoroseLogoTitle">
+  <title id="memoroseLogoTitle">Memorose logo</title>
   <defs>
-    <!-- Outer petal gradients -->
-    <linearGradient id="o0" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#180d30"/><stop offset="55%" stop-color="#5a35a0"/><stop offset="100%" stop-color="#3a2070"/></linearGradient>
-    <linearGradient id="o1" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#0d1835"/><stop offset="55%" stop-color="#2850a0"/><stop offset="100%" stop-color="#1a3570"/></linearGradient>
-    <linearGradient id="o2" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#0d2820"/><stop offset="55%" stop-color="#20856a"/><stop offset="100%" stop-color="#155a48"/></linearGradient>
-    <linearGradient id="o3" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#2a2510"/><stop offset="55%" stop-color="#8a7528"/><stop offset="100%" stop-color="#5a5018"/></linearGradient>
-    <linearGradient id="o4" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#300d18"/><stop offset="55%" stop-color="#a03555"/><stop offset="100%" stop-color="#702038"/></linearGradient>
-    <!-- Middle petal gradients -->
-    <linearGradient id="m0" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#4040a0"/><stop offset="55%" stop-color="#8888dd"/><stop offset="100%" stop-color="#6868c0"/></linearGradient>
-    <linearGradient id="m1" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#3070a8"/><stop offset="55%" stop-color="#68b0e8"/><stop offset="100%" stop-color="#4890cc"/></linearGradient>
-    <linearGradient id="m2" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#30a880"/><stop offset="55%" stop-color="#68e0bb"/><stop offset="100%" stop-color="#48c0a0"/></linearGradient>
-    <linearGradient id="m3" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#a89030"/><stop offset="55%" stop-color="#e8d068"/><stop offset="100%" stop-color="#ccb048"/></linearGradient>
-    <linearGradient id="m4" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#a84068"/><stop offset="55%" stop-color="#e878a8"/><stop offset="100%" stop-color="#cc5888"/></linearGradient>
-    <!-- Inner petal gradients -->
-    <linearGradient id="i0" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#a088dd"/><stop offset="55%" stop-color="#d8c8ff"/><stop offset="100%" stop-color="#c0a8f0"/></linearGradient>
-    <linearGradient id="i1" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#78b8f0"/><stop offset="55%" stop-color="#c0e0ff"/><stop offset="100%" stop-color="#98d0f8"/></linearGradient>
-    <linearGradient id="i2" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#68e0c0"/><stop offset="55%" stop-color="#b0f8e8"/><stop offset="100%" stop-color="#88ecd8"/></linearGradient>
-    <linearGradient id="i3" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#f0d068"/><stop offset="55%" stop-color="#fff0b0"/><stop offset="100%" stop-color="#f8e088"/></linearGradient>
-    <linearGradient id="i4" x1="0.5" y1="1" x2="0.5" y2="0"><stop offset="0%" stop-color="#f088b0"/><stop offset="55%" stop-color="#ffd0e0"/><stop offset="100%" stop-color="#f8a8c8"/></linearGradient>
-    <!-- Core glow -->
-    <radialGradient id="core" cx="0.5" cy="0.5" r="0.22">
-      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.98"/>
-      <stop offset="35%" stop-color="#f0eaff" stop-opacity="0.6"/>
-      <stop offset="65%" stop-color="#d0c8e8" stop-opacity="0.15"/>
-      <stop offset="100%" stop-color="#d0c8e8" stop-opacity="0"/>
-    </radialGradient>
+    <path id="outerPetal" d="M256 256C224 218 202 180 194 142C189 117 198 94 220 82C236 73 250 75 256 92C262 75 276 73 292 82C314 94 323 117 318 142C310 180 288 218 256 256Z"/>
+    <path id="innerPetal" d="M256 256C236 232 224 209 221 187C219 171 225 157 239 149C247 144 253 146 256 154C259 146 265 144 273 149C287 157 293 171 291 187C288 209 276 232 256 256Z"/>
+    <linearGradient id="outerFill" x1="256" y1="86" x2="256" y2="256" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#E6B8AA"/>
+      <stop offset="1" stop-color="#C97865"/>
+    </linearGradient>
+    <linearGradient id="innerFill" x1="256" y1="146" x2="256" y2="256" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F4DDD2"/>
+      <stop offset="1" stop-color="#D9A08D"/>
+    </linearGradient>
   </defs>
-
-  <!-- Outer petals -->
-  <g opacity="0.75">
-    <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#o0)" transform="rotate(0 256 256)"/>
-    <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#o1)" transform="rotate(72 256 256)"/>
-    <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#o2)" transform="rotate(144 256 256)"/>
-    <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#o3)" transform="rotate(216 256 256)"/>
-    <path d="M256 256 Q200 185 256 80 Q312 185 256 256Z" fill="url(#o4)" transform="rotate(288 256 256)"/>
+  <g opacity="0.98">
+    <g fill="url(#outerFill)">
+      <use href="#outerPetal"/>
+      <use href="#outerPetal" transform="rotate(72 256 256)"/>
+      <use href="#outerPetal" transform="rotate(144 256 256)"/>
+      <use href="#outerPetal" transform="rotate(216 256 256)"/>
+      <use href="#outerPetal" transform="rotate(288 256 256)"/>
+    </g>
+    <g fill="url(#innerFill)">
+      <use href="#innerPetal" transform="rotate(36 256 256)"/>
+      <use href="#innerPetal" transform="rotate(108 256 256)"/>
+      <use href="#innerPetal" transform="rotate(180 256 256)"/>
+      <use href="#innerPetal" transform="rotate(252 256 256)"/>
+      <use href="#innerPetal" transform="rotate(324 256 256)"/>
+    </g>
+    <circle cx="256" cy="256" r="28" fill="#4E5B54"/>
   </g>
-
-  <!-- Middle petals -->
-  <g opacity="0.85">
-    <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#m0)" transform="rotate(36 256 256)"/>
-    <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#m1)" transform="rotate(108 256 256)"/>
-    <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#m2)" transform="rotate(180 256 256)"/>
-    <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#m3)" transform="rotate(252 256 256)"/>
-    <path d="M256 256 Q210 200 256 125 Q302 200 256 256Z" fill="url(#m4)" transform="rotate(324 256 256)"/>
-  </g>
-
-  <!-- Inner petals -->
-  <g opacity="0.93">
-    <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#i0)" transform="rotate(18 256 256)"/>
-    <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#i1)" transform="rotate(90 256 256)"/>
-    <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#i2)" transform="rotate(162 256 256)"/>
-    <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#i3)" transform="rotate(234 256 256)"/>
-    <path d="M256 256 Q224 218 256 170 Q288 218 256 256Z" fill="url(#i4)" transform="rotate(306 256 256)"/>
-  </g>
-
-  <!-- Core glow -->
-  <circle cx="256" cy="256" r="55" fill="url(#core)"/>
-  <!-- Center seed -->
-  <circle cx="256" cy="256" r="5" fill="#ffffff" opacity="0.95"/>
 </svg>

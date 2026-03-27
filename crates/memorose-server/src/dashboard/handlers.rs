@@ -324,6 +324,13 @@ pub struct CreateOrganizationRequest {
     name: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct CreateApiKeyRequest {
+    org_id: String,
+    #[serde(default)]
+    name: Option<String>,
+}
+
 pub async fn list_organizations(
     State(state): State<Arc<crate::AppState>>,
 ) -> axum::response::Response {
@@ -362,6 +369,71 @@ pub async fn create_organization(
             .into_response(),
         Err(error) => (
             axum::http::StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+pub async fn list_api_keys(State(state): State<Arc<crate::AppState>>) -> axum::response::Response {
+    match state.management_registry.list_api_keys().await {
+        Ok(api_keys) => Json(serde_json::json!({
+            "api_keys": api_keys,
+            "total_count": api_keys.len(),
+        }))
+        .into_response(),
+        Err(error) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+pub async fn create_api_key(
+    State(state): State<Arc<crate::AppState>>,
+    Json(payload): Json<CreateApiKeyRequest>,
+) -> axum::response::Response {
+    if let Err(response) = validate_registry_id(&payload.org_id, "org_id") {
+        return response;
+    }
+
+    match state
+        .management_registry
+        .create_api_key(payload.org_id.trim(), payload.name)
+        .await
+    {
+        Ok(record) => Json(record).into_response(),
+        Err(error) if error.to_string().contains("organization does not exist") => (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+        Err(error) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+pub async fn revoke_api_key(
+    State(state): State<Arc<crate::AppState>>,
+    Path(key_id): Path<String>,
+) -> axum::response::Response {
+    if let Err(response) = validate_registry_id(&key_id, "key_id") {
+        return response;
+    }
+
+    match state.management_registry.revoke_api_key(key_id.trim()).await {
+        Ok(Some(record)) => Json(record).into_response(),
+        Ok(None) => (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "API key not found" })),
+        )
+            .into_response(),
+        Err(error) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": error.to_string() })),
         )
             .into_response(),

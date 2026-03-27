@@ -46,7 +46,7 @@ impl GeminiClient {
             task_type,
         );
         Self {
-            client: Client::new(),
+            client: Client::builder().no_proxy().build().unwrap_or_default(),
             api_key,
             base_url,
             model,

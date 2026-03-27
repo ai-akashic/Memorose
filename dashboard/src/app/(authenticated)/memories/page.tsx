@@ -492,27 +492,27 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
   return (
     <div className="space-y-4">
       {/* Filters */}
-      <div className="flex flex-wrap items-center gap-4 bg-card p-2 rounded-xl border border-border">
+      <div className="flex flex-wrap items-center gap-4 bg-card/40 backdrop-blur-md p-2 rounded-2xl border border-white/5 shadow-sm">
         <ToggleGroup
           type="single"
           value={levelFilter}
           onValueChange={(v) => { setLevelFilter(v || "all"); setPage(1); }}
-          className="bg-card p-0.5 rounded-lg border border-border"
+          className="bg-background/50 p-1 rounded-xl border border-white/5"
         >
           {["all", "0", "1", "2", "3"].map(v => (
-            <ToggleGroupItem key={v} value={v} className="h-7 px-3 data-[state=on]:bg-white/10 data-[state=on]:text-white transition-all text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+            <ToggleGroupItem key={v} value={v} className="h-7 px-3.5 rounded-lg data-[state=on]:bg-white/10 data-[state=on]:text-white transition-all text-[11px] font-medium uppercase tracking-widest text-muted-foreground hover:text-foreground">
               {v === "all" ? t("filters.allLevels") : `L${v}`}
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
 
-        <div className="h-4 w-px bg-card mx-1" />
+        <div className="h-5 w-px bg-white/10 mx-1" />
 
         <Select value={agentId} onValueChange={(v) => { setAgentId(v); setPage(1); }}>
-          <SelectTrigger className="w-[140px] h-8 bg-transparent border-border hover:bg-card transition-all text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+          <SelectTrigger className="w-[140px] h-9 bg-background/50 border-white/5 rounded-xl hover:bg-white/5 transition-all text-[11px] font-medium uppercase tracking-widest text-muted-foreground focus:ring-1 focus:ring-primary/50">
             <SelectValue placeholder="AGENT" />
           </SelectTrigger>
-          <SelectContent className="glass-card">
+          <SelectContent className="glass-card border-white/10">
             <SelectItem value="all" className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("filters.allAgents")}</SelectItem>
             {agentsData?.agents.map((a) => (
               <SelectItem key={a.agent_id} value={a.agent_id} className="text-[11px] font-mono">{a.agent_id}</SelectItem>
@@ -521,10 +521,10 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
         </Select>
 
         <Select value={sort} onValueChange={setSort}>
-          <SelectTrigger className="w-[140px] h-8 bg-transparent border-border hover:bg-card transition-all text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+          <SelectTrigger className="w-[140px] h-9 bg-background/50 border-white/5 rounded-xl hover:bg-white/5 transition-all text-[11px] font-medium uppercase tracking-widest text-muted-foreground focus:ring-1 focus:ring-primary/50">
             <SelectValue />
           </SelectTrigger>
-          <SelectContent className="glass-card">
+          <SelectContent className="glass-card border-white/10">
             <SelectItem value="importance" className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("filters.importance")}</SelectItem>
             <SelectItem value="recent" className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("filters.recent")}</SelectItem>
             <SelectItem value="access_count" className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("filters.accessCount")}</SelectItem>
@@ -584,7 +584,7 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
                         handleViewDetail(m.id);
                       }
                     }}
-                    className={`border-white/5 transition-colors ${canOpenDetail ? "cursor-pointer group hover:bg-white/[0.03]" : "opacity-95"}`}
+                    className={`border-white/5 transition-all duration-200 ${canOpenDetail ? "cursor-pointer group hover:bg-white/[0.04] hover:shadow-[inset_2px_0_0_rgba(255,92,92,0.8)]" : "opacity-95"}`}
                   >
                     <TableCell>
                       <span className="text-xs font-mono truncate block max-w-[100px] text-foreground/80">{m.user_id || "—"}</span>
@@ -688,7 +688,7 @@ export default function MemoriesPage() {
   }
 
   return (
-    <div className="space-y-6 h-full flex flex-col relative">
+    <div className="flex-1 space-y-6 flex flex-col min-h-0 relative">
       <div className="absolute top-0 right-0 w-[500px] h-[250px] blob-bg opacity-20 pointer-events-none -z-10 mix-blend-screen" />
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>

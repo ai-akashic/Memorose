@@ -50,7 +50,7 @@ function ChatPanel() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [streaming, setStreaming] = useState(false);
-  const [userId, setUserId] = useStoredString("memorose-playground-chat-user");
+  const [userId, setUserId] = useStoredString("memorose-playground-chat-user", "default-playground-user");
   const { orgId } = useOrgScope();
   const scrollRef = useRef<HTMLDivElement>(null);
   const streamingMessageRef = useRef<string>("");
@@ -64,7 +64,8 @@ function ChatPanel() {
 
   const handleSend = async () => {
     if (!input.trim() || loading) return;
-    if (!userId.trim()) return;
+
+    const currentUserId = userId.trim() || "default-playground-user";
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -82,7 +83,7 @@ function ChatPanel() {
 
     try {
       await api.ingestEvent({
-        user_id: userId.trim(),
+        user_id: currentUserId,
         stream_id: "chat",
         content: {
           type: "text",
@@ -98,7 +99,7 @@ function ChatPanel() {
         },
         body: JSON.stringify({
           message: messageContent,
-          user_id: userId.trim(),
+          user_id: currentUserId,
           ...(scopedOrgId ? { org_id: scopedOrgId } : {}),
           context_limit: 5,
         }),
@@ -181,26 +182,7 @@ function ChatPanel() {
   };
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Config bar */}
-      <motion.div
-        initial={{ opacity: 0, x: 20 }}
-        animate={{ opacity: 1, x: 0 }}
-        transition={{ duration: 0.5, delay: 0.1 }}
-        className="flex gap-6 p-4 glass-card rounded-2xl mb-4 self-end"
-      >
-        <div className="flex flex-col gap-1.5">
-          <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("chat.session")}</label>
-          <Input
-            type="text"
-            value={userId}
-            onChange={(e) => setUserId(e.target.value)}
-            placeholder={t("chat.userId")}
-            className="w-40 h-9 text-[13px] font-mono bg-card border-border"
-          />
-        </div>
-      </motion.div>
-
+    <div className="flex flex-col flex-1 min-h-0">
       {scopedOrgId && (
         <div className="mb-4 self-end rounded-lg border border-border/70 bg-background/50 px-3 py-2 text-[11px] font-mono text-muted-foreground">
           {t("chat.orgScope", { orgId: scopedOrgId })}
@@ -226,11 +208,6 @@ function ChatPanel() {
                   <p className="text-sm opacity-50 max-w-xs text-center leading-relaxed">
                     {t("chat.welcomeDesc")}
                   </p>
-                  {!userId.trim() && (
-                    <p className="mt-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
-                      {t("chat.setCredentials")}
-                    </p>
-                  )}
                 </motion.div>
               )}
             </AnimatePresence>
@@ -254,10 +231,10 @@ function ChatPanel() {
                   )}
                   <div
                     className={cn(
-                      "max-w-[80%] rounded-[20px] px-6 py-4 shadow-sm text-[15px] leading-relaxed",
+                      "max-w-[80%] rounded-[20px] px-6 py-4 text-[14.5px] leading-relaxed backdrop-blur-md",
                       message.role === "user"
-                        ? "bg-primary text-primary-foreground shadow-[0_10px_30px_rgba(255,255,255,0.1)] rounded-tr-sm"
-                        : "glass-card bg-black/40 border-white/[0.03] rounded-tl-sm text-foreground/90 font-medium"
+                        ? "bg-primary text-primary-foreground shadow-[0_8px_24px_rgba(255,92,92,0.25)] rounded-tr-sm"
+                        : "bg-white/[0.03] border border-white/[0.05] rounded-tl-sm text-foreground/90 font-medium shadow-sm"
                     )}
                   >
                     <p className="whitespace-pre-wrap">{message.content}</p>
@@ -277,8 +254,8 @@ function ChatPanel() {
         {/* Input Area */}
         <div className="p-6 z-20">
           <div className="max-w-3xl mx-auto relative group">
-            <div className="absolute -inset-1 rounded-2xl blur-md opacity-20 group-hover:opacity-40 transition duration-1000" />
-            <div className="relative flex gap-4 items-center glass-card rounded-2xl p-2.5">
+            <div className="absolute -inset-1 bg-gradient-to-r from-primary/20 via-primary/10 to-transparent rounded-3xl blur-xl opacity-20 group-hover:opacity-40 transition duration-1000" />
+            <div className="relative flex gap-4 items-center glass-card rounded-2xl p-2 shadow-[0_8px_32px_rgba(0,0,0,0.2)]">
               <Input
                 type="text"
                 value={input}
@@ -286,15 +263,15 @@ function ChatPanel() {
                 onKeyPress={handleKeyPress}
                 placeholder={t("chat.placeholder")}
                 disabled={loading}
-                className="flex-1 bg-transparent border-none focus:ring-0 text-[16px] h-14 px-5 placeholder:text-muted-foreground/20"
+                className="flex-1 bg-transparent border-none focus-visible:ring-0 text-[15px] h-12 px-4 placeholder:text-muted-foreground/30"
               />
               <Button
                 onClick={handleSend}
-                disabled={loading || !input.trim() || !userId.trim()}
+                disabled={loading || !input.trim()}
                 size="icon"
                 className={cn(
-                  "h-12 w-12 rounded-xl transition-all duration-500",
-                  input.trim() ? "bg-primary text-primary-foreground shadow-[0_0_20px_rgba(255,255,255,0.2)]" : "bg-white/5 text-muted-foreground/40"
+                  "h-10 w-10 rounded-xl transition-all duration-300 mr-1",
+                  input.trim() ? "bg-primary text-primary-foreground shadow-[0_0_15px_rgba(255,92,92,0.4)] hover:scale-105" : "bg-white/5 text-muted-foreground/40 hover:bg-white/10"
                 )}
               >
                 {loading ? (
@@ -313,7 +290,7 @@ function ChatPanel() {
 
 function RetrievePanel() {
   const t = useTranslations("Playground");
-  const [userId, setUserId] = useStoredString("memorose-playground-retrieve-user");
+  const [userId, setUserId] = useStoredString("memorose-playground-retrieve-user", "default-playground-user");
   const [streamId, setStreamId] = useStoredString("memorose-playground-retrieve-stream", "chat");
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState("10");
@@ -330,7 +307,10 @@ function RetrievePanel() {
   const [streams] = useState<string[]>(["chat", "system", "logs", "internal"]);
 
   async function handleRetrieve() {
-    if (!query.trim() || !userId.trim() || !streamId.trim()) return;
+    if (!query.trim() || !streamId.trim()) return;
+    
+    const currentUserId = userId.trim() || "default-playground-user";
+    
     setLoading(true);
     setError(null);
     setResults(null);
@@ -345,7 +325,7 @@ function RetrievePanel() {
         ...(asOf ? { as_of: asOf } : {}),
         ...(scopedOrgId ? { org_id: scopedOrgId } : {}),
       };
-      const res = await api.retrieve(userId.trim(), streamId.trim(), body);
+      const res = await api.retrieve(currentUserId, streamId.trim(), body);
       setResults(res);
     } catch (e) {
       setError(e instanceof Error ? e.message : t("retrieve.unknownError"));
@@ -359,16 +339,8 @@ function RetrievePanel() {
       {/* Context + Query */}
       <Card className="glass-card p-6 rounded-3xl">
         <div className="space-y-6">
-          <div className="grid grid-cols-2 gap-6">
-            <div className="space-y-2">
-              <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("retrieve.userId")}</label>
-              <Input
-                value={userId}
-                onChange={(e) => setUserId(e.target.value)}
-                className="h-11 text-[13px] font-mono bg-card border-border"
-              />
-            </div>
-            <div className="space-y-2">
+          <div className="grid grid-cols-1 gap-6">
+            <div className="space-y-2 max-w-sm">
               <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("retrieve.streamId")}</label>
               <Input
                 list="stream-suggestions"
@@ -398,7 +370,7 @@ function RetrievePanel() {
             />
             <Button
               onClick={handleRetrieve}
-              disabled={loading || !query.trim() || !userId.trim() || !streamId.trim()}
+              disabled={loading || !query.trim() || !streamId.trim()}
               className="h-14 px-8 gap-3 rounded-2xl text-[11px] font-medium uppercase tracking-widest text-muted-foreground"
             >
               {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
@@ -483,8 +455,8 @@ function RetrievePanel() {
 export default function PlaygroundPage() {
   const t = useTranslations("Playground");
   return (
-    <div className="flex flex-col h-[calc(100vh-6rem)] max-w-5xl mx-auto w-full relative">
-      <div className="mb-4">
+    <div className="flex-1 flex flex-col min-h-0 w-full max-w-5xl mx-auto relative">
+      <div className="mb-4 shrink-0">
         <motion.div
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
@@ -501,7 +473,7 @@ export default function PlaygroundPage() {
       </div>
 
       <Tabs defaultValue="chat" className="flex-1 flex flex-col min-h-0">
-        <TabsList className="grid w-full max-w-xs grid-cols-2 mb-4">
+        <TabsList className="grid w-full max-w-xs grid-cols-2 mb-4 shrink-0">
           <TabsTrigger value="chat" className="gap-1.5">
             <Bot className="w-3.5 h-3.5" />
             {t("tabs.chat")}
@@ -512,11 +484,11 @@ export default function PlaygroundPage() {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="chat" className="flex-1 flex flex-col min-h-0 mt-0">
+        <TabsContent value="chat" className="flex-1 min-h-0 mt-0 data-[state=active]:flex data-[state=active]:flex-col">
           <ChatPanel />
         </TabsContent>
 
-        <TabsContent value="retrieve" className="flex-1 overflow-y-auto mt-0">
+        <TabsContent value="retrieve" className="flex-1 min-h-0 mt-0 data-[state=active]:flex data-[state=active]:flex-col overflow-y-auto">
           <RetrievePanel />
         </TabsContent>
       </Tabs>

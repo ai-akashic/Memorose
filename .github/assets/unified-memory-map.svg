@@ -25,12 +25,12 @@
   <rect width="1200" height="920" fill="url(#bg)"/>
 
   <text x="64" y="64" class="title">Unified Memory Map</text>
-  <text x="64" y="92" class="body">L0-L3 layered memory, domain scopes, and the memory evolution pipeline in one static diagram.</text>
+  <text x="64" y="92" class="body">Layered memory, scoped sharing, and memory evolution in one static diagram.</text>
 
   <text x="64" y="142" class="section">INPUT</text>
   <rect x="64" y="162" width="260" height="88" class="card"/>
   <text x="94" y="200" class="label">Events</text>
-  <text x="94" y="228" class="body">text, image, audio, video, json</text>
+  <text x="94" y="228" class="body">text, image, audio, video, JSON</text>
 
   <text x="418" y="142" class="section">L0-L3 LAYERED MEMORY</text>
   <rect x="418" y="162" width="360" height="104" class="card"/>
@@ -40,7 +40,7 @@
 
   <rect x="418" y="304" width="360" height="104" class="card"/>
   <text x="448" y="344" class="label">L1 Stable Memory</text>
-  <text x="448" y="372" class="body">facts and procedures</text>
+  <text x="448" y="372" class="body">facts + procedures</text>
   <text x="448" y="392" class="small">primary retrieval layer</text>
 
   <rect x="418" y="446" width="360" height="104" class="card"/>
@@ -50,8 +50,8 @@
 
   <rect x="418" y="588" width="360" height="104" class="card"/>
   <text x="448" y="628" class="label">L3 Goals and Tasks</text>
-  <text x="448" y="656" class="body">goals, milestones, dependencies</text>
-  <text x="448" y="676" class="small">planning and execution coordination</text>
+  <text x="448" y="656" class="body">goals, milestones, tasks</text>
+  <text x="448" y="676" class="small">planning coordination</text>
 
   <text x="860" y="142" class="section">MEMORY EVOLUTION</text>
   <rect x="860" y="162" width="276" height="54" class="card"/>
@@ -66,20 +66,20 @@
   <text x="892" y="477" class="chip">Reflect</text>
   <rect x="860" y="512" width="276" height="54" class="card"/>
   <text x="892" y="547" class="chip">Forget</text>
-  <text x="892" y="565" class="small">L1-L3 decay + prune</text>
+  <text x="892" y="565" class="small">decay + prune on L1-L3</text>
 
   <text x="64" y="760" class="section">MEMORY DOMAINS</text>
   <rect x="64" y="784" width="240" height="84" class="card"/>
   <text x="94" y="826" class="label">Agent</text>
-  <text x="94" y="852" class="body">local native memory</text>
+  <text x="94" y="852" class="body">agent-local memory</text>
 
   <rect x="334" y="784" width="240" height="84" class="card"/>
   <text x="364" y="826" class="label">User</text>
-  <text x="364" y="852" class="body">local native memory</text>
+  <text x="364" y="852" class="body">user memory</text>
 
   <rect x="604" y="784" width="360" height="84" class="card"/>
   <text x="634" y="826" class="label">Organization</text>
-  <text x="634" y="852" class="body">projected shared memory evolved from user memory</text>
+  <text x="634" y="852" class="body">shared org memory evolved from user memory</text>
 
   <line x1="324" y1="206" x2="404" y2="206" stroke="#475569" stroke-width="3" marker-end="url(#arrow)"/>
 
@@ -101,5 +101,5 @@
   <line x1="690" y1="550" x2="784" y2="770" stroke="#475569" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrow)"/>
 
   <text x="876" y="604" class="small">acts on L1-L3 memory units, not raw events</text>
-  <text x="64" y="900" class="small">Static fallback for environments where Mermaid rendering is unavailable.</text>
+  <text x="64" y="900" class="small">Static fallback when Mermaid is unavailable.</text>
 </svg>

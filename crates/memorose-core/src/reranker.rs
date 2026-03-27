@@ -166,6 +166,7 @@ impl HttpReranker {
         Self {
             endpoint,
             client: Client::builder()
+                .no_proxy()
                 .timeout(std::time::Duration::from_secs(10))
                 .build()
                 .unwrap_or_default(),

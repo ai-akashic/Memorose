@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { api } from "./api";
 import type {
+  ApiKeyListResponse,
   AgentListResponse,
   OrganizationListResponse,
   OrganizationKnowledgeItem,
@@ -54,6 +55,12 @@ export function useAgents() {
 
 export function useOrganizations() {
   return useSWR<OrganizationListResponse>("organizations-list", () => api.listOrganizations(), {
+    refreshInterval: 30000,
+  });
+}
+
+export function useApiKeys() {
+  return useSWR<ApiKeyListResponse>("api-keys-list", () => api.listApiKeys(), {
     refreshInterval: 30000,
   });
 }

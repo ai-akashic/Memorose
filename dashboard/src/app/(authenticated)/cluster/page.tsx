@@ -102,7 +102,7 @@ function ShardRaftCard({ shard, t }: { shard: ShardStatus; t: ReturnType<typeof 
   const isHealthy = shard.replication_lag <= 10;
 
   return (
-    <Card className="glass-card transition-colors">
+    <Card className="glass-card overflow-hidden relative">
       <CardHeader className="p-4 pb-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -127,7 +127,7 @@ function RaftStatusCard({ cluster, t }: { cluster: ClusterStatusSingle; t: Retur
   }[cluster.raft_state] || "text-muted-foreground";
 
   return (
-    <Card className="glass-card transition-colors">
+    <Card className="glass-card overflow-hidden relative">
       <CardHeader className="p-4 pb-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -151,7 +151,7 @@ function HeartbeatCard({ cluster, onRemoveNode, t }: { cluster: ClusterStatusSin
   };
 
   return (
-    <Card className="glass-card transition-colors">
+    <Card className="glass-card overflow-hidden relative">
       <CardHeader className="p-4 pb-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -209,7 +209,7 @@ function HeartbeatCard({ cluster, onRemoveNode, t }: { cluster: ClusterStatusSin
 
 function PipelineCard({ stats, t }: { stats: NonNullable<ReturnType<typeof useStats>["data"]>; t: ReturnType<typeof useTranslations> }) {
   return (
-    <Card className="glass-card transition-colors">
+    <Card className="glass-card overflow-hidden relative">
       <CardHeader className="p-4 pb-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">

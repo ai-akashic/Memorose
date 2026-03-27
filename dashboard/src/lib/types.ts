@@ -266,6 +266,30 @@ export interface OrganizationListResponse {
   total_count: number;
 }
 
+export interface ApiKeySummary {
+  key_id: string;
+  org_id: string;
+  name: string;
+  key_prefix: string;
+  created_at: string;
+  revoked_at?: string | null;
+  active: boolean;
+}
+
+export interface ApiKeyListResponse {
+  api_keys: ApiKeySummary[];
+  total_count: number;
+}
+
+export interface CreatedApiKey {
+  key_id: string;
+  org_id: string;
+  name: string;
+  key_prefix: string;
+  key: string;
+  created_at: string;
+}
+
 export interface OrganizationKnowledgeItem {
   unit: OrganizationKnowledgeUnit;
   knowledge: OrganizationKnowledgeDetail;

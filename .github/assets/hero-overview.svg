@@ -36,7 +36,10 @@
   </g>
 
   <text x="84" y="92" class="title">Memorose</text>
-  <text x="84" y="128" class="subtitle">Product-facing memory runtime with a dashboard layer, hybrid retrieval, and a layered memory kernel.</text>
+  <text x="84" y="128" class="subtitle">
+    <tspan x="84" dy="0">Dashboard, hybrid retrieval, and layered memory</tspan>
+    <tspan x="84" dy="24">in one Rust-native runtime.</tspan>
+  </text>
 
   <g filter="url(#shadow)">
     <rect x="72" y="172" width="760" height="620" rx="28" fill="url(#panel)" stroke="#CBD5E1" stroke-width="1.5"/>
@@ -62,7 +65,7 @@
 
   <rect x="286" y="252" width="518" height="94" rx="22" fill="url(#accent)" stroke="#BFDBFE"/>
   <text x="316" y="286" class="section">Memory Overview</text>
-  <text x="316" y="314" class="body">Hybrid retrieval, layered memory, graph associations, and shared memory domains in one operational view.</text>
+  <text x="316" y="314" class="body">Hybrid recall, layered memory, graph links, and shared scopes in one view.</text>
   <rect x="316" y="326" width="92" height="8" rx="4" fill="#2563EB"/>
   <rect x="418" y="326" width="74" height="8" rx="4" fill="#60A5FA"/>
   <rect x="502" y="326" width="58" height="8" rx="4" fill="#93C5FD"/>
@@ -74,7 +77,7 @@
   <rect x="314" y="466" width="190" height="18" rx="9" fill="#DBEAFE"/>
   <rect x="314" y="492" width="160" height="12" rx="6" fill="#CBD5E1"/>
   <rect x="314" y="514" width="176" height="12" rx="6" fill="#CBD5E1"/>
-  <text x="314" y="528" class="body">Dense factual + procedural recall</text>
+  <text x="314" y="528" class="body">Factual + procedural recall</text>
 
   <rect x="558" y="368" width="246" height="170" rx="22" fill="#FFFFFF" stroke="#CBD5E1"/>
   <text x="586" y="402" class="section">Graph View</text>
@@ -85,7 +88,7 @@
   <line x1="632" y1="470" x2="694" y2="438" stroke="#64748B" stroke-width="3"/>
   <line x1="632" y1="470" x2="734" y2="494" stroke="#64748B" stroke-width="3"/>
   <line x1="632" y1="470" x2="598" y2="520" stroke="#64748B" stroke-width="3"/>
-  <text x="586" y="528" class="body">RelatedTo, DerivedFrom, IsSubTaskOf</text>
+  <text x="586" y="528" class="body">Knowledge and task relationships</text>
 
   <rect x="286" y="560" width="518" height="176" rx="22" fill="#FFFFFF" stroke="#CBD5E1"/>
   <text x="314" y="594" class="section">Operational Signals</text>
@@ -103,15 +106,15 @@
     <rect x="872" y="172" width="496" height="620" rx="28" fill="url(#panel)" stroke="#CBD5E1" stroke-width="1.5"/>
   </g>
   <text x="908" y="220" class="section">Architecture Snapshot</text>
-  <text x="908" y="248" class="body">A compact view of the runtime path from ingest to retrieval, reflection, and planning.</text>
+  <text x="908" y="248" class="body">From ingest to retrieval, reflection, and planning.</text>
 
   <rect x="908" y="282" width="424" height="76" rx="20" fill="#FFFFFF" stroke="#CBD5E1"/>
   <text x="936" y="314" class="label">HTTP API + Shard Manager</text>
-  <text x="936" y="340" class="body">Routes events and retrieval across shards and Raft-backed workers</text>
+  <text x="936" y="340" class="body">Routes writes and retrieval across shards and Raft workers</text>
 
   <rect x="908" y="386" width="424" height="116" rx="20" fill="#FFFFFF" stroke="#CBD5E1"/>
   <text x="936" y="418" class="label">Core Runtime</text>
-  <text x="936" y="446" class="body">Background worker, memory engine, hybrid search, graph operations, reflection, forgetting</text>
+  <text x="936" y="446" class="body">Workers, memory engine, hybrid search, graph ops, reflection, forgetting</text>
   <rect x="936" y="460" width="88" height="10" rx="5" fill="#2563EB"/>
   <rect x="1036" y="460" width="72" height="10" rx="5" fill="#60A5FA"/>
   <rect x="1120" y="460" width="96" height="10" rx="5" fill="#93C5FD"/>
@@ -133,5 +136,8 @@
 
   <rect x="908" y="670" width="424" height="92" rx="20" fill="#FFFFFF" stroke="#CBD5E1"/>
   <text x="936" y="704" class="label">Memory Model</text>
-  <text x="936" y="732" class="body">L0 raw events → L1 stable memory → L2 insights → L3 goals, scoped across Agent, User, App, Organization</text>
+  <text x="936" y="720" class="body">
+    <tspan x="936" dy="0">L0 raw events → L1 memory → L2 insights → L3 goals</tspan>
+    <tspan x="936" dy="22">Scoped across Agent, User, App, and Organization</tspan>
+  </text>
 </svg>

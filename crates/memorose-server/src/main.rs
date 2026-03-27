@@ -163,6 +163,7 @@ async fn main() {
         login_limiter,
         dashboard_cache,
         http_client: reqwest::Client::builder()
+            .no_proxy()
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .expect("Failed to build HTTP client"),
@@ -183,6 +184,15 @@ async fn main() {
             "/organizations",
             get(dashboard::handlers::list_organizations)
                 .post(dashboard::handlers::create_organization),
+        )
+        .route(
+            "/api-keys",
+            get(dashboard::handlers::list_api_keys)
+                .post(dashboard::handlers::create_api_key),
+        )
+        .route(
+            "/api-keys/:key_id",
+            delete(dashboard::handlers::revoke_api_key),
         )
         .route(
             "/organizations/:org_id/knowledge",
