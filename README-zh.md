@@ -553,6 +553,9 @@ Docker Compose：
 docker compose up --build memorose-node-0 dashboard
 ```
 
+> **注意 (Docker 部署 Dashboard)：** 
+> 如果你自己编写 `docker-compose.yml` 或使用 `docker run` 部署 Dashboard，你**必须**为 Dashboard 容器设置 `DASHBOARD_API_ORIGIN` 环境变量（例如 `DASHBOARD_API_ORIGIN=http://memorose:3000`），让它知道如何将 API 请求路由给后端。否则，你在登录时会遇到 `connect ECONNREFUSED 127.0.0.1:3000` 报错。
+
 主要能力：
 
 - **Memory Browser**：浏览、搜索、按 organization/user/agent 过滤记忆
