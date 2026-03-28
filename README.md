@@ -1,7 +1,7 @@
 <div align="center">
   <br />
   <a href="https://memorose.io">
-    <img src=".github/assets/logo-512.png" alt="Memorose" width="160" />
+    <img src=".github/assets/logo.svg" alt="Memorose" width="160" />
   </a>
   <h1>Memorose</h1>
   <p><b>The open-source memory runtime for AI agents.</b></p>

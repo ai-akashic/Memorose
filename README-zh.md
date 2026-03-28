@@ -1,7 +1,7 @@
 <div align="center">
   <br />
   <a href="https://memorose.io">
-    <img src=".github/assets/logo-512.png" alt="Memorose" width="160" />
+    <img src=".github/assets/logo.svg" alt="Memorose" width="160" />
   </a>
   <h1>Memorose</h1>
   <p><b>面向 AI Agent 的开源记忆运行时。</b></p>
