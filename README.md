@@ -1,6 +1,6 @@
 <div align="center">
   <br />
-  <a href="https://memorose.io">
+  <a href="https://memorose.dev">
     <img src=".github/assets/logo.svg" alt="Memorose" width="160" />
   </a>
   <h1>Memorose</h1>
@@ -11,8 +11,8 @@
   </p>
   <br />
   <p>
-    <a href="https://memorose.io/docs"><b>Documentation</b></a> &nbsp;&bull;&nbsp;
-    <a href="https://memorose.io"><b>Website</b></a> &nbsp;&bull;&nbsp;
+    <a href="https://memorose.dev/docs"><b>Documentation</b></a> &nbsp;&bull;&nbsp;
+    <a href="https://memorose.dev"><b>Website</b></a> &nbsp;&bull;&nbsp;
     <a href="https://github.com/ai-akashic/Memorose/issues"><b>Issues</b></a> &nbsp;&bull;&nbsp;
     <a href="https://discord.gg/memorose"><b>Discord</b></a>
   </p>
@@ -366,3 +366,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 <div align="center">
   <sub>Built with Rust. Designed for agents that remember.</sub>
 </div>
+

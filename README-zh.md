@@ -1,6 +1,6 @@
 <div align="center">
   <br />
-  <a href="https://memorose.io">
+  <a href="https://memorose.dev">
     <img src=".github/assets/logo.svg" alt="Memorose" width="160" />
   </a>
   <h1>Memorose</h1>
@@ -11,8 +11,8 @@
   </p>
   <br />
   <p>
-    <a href="https://memorose.io/docs"><b>文档</b></a> &nbsp;&bull;&nbsp;
-    <a href="https://memorose.io"><b>官网</b></a> &nbsp;&bull;&nbsp;
+    <a href="https://memorose.dev/docs"><b>文档</b></a> &nbsp;&bull;&nbsp;
+    <a href="https://memorose.dev"><b>官网</b></a> &nbsp;&bull;&nbsp;
     <a href="https://github.com/ai-akashic/Memorose/issues"><b>Issues</b></a> &nbsp;&bull;&nbsp;
     <a href="https://discord.gg/memorose"><b>Discord</b></a>
   </p>
