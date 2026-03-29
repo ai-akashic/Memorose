@@ -79,10 +79,15 @@ Text, image, audio, and video can enter and be searched within the same memory s
 Start with Docker, or build from source if you want the full local stack.
 
 ```bash
-docker run -d -p 3000:3000 \
-  -e GOOGLE_API_KEY=your_key \
-  -e MEMOROSE__LLM__MODEL=gemini-2.0-flash \
-  -e MEMOROSE__LLM__EMBEDDING_MODEL=gemini-embedding-2-preview \
+docker run -d \
+  --name memorose \
+  -p 3000:3000 \
+  -p 3100:3100 \
+  -v memorose_data:/app/data \
+  -e GOOGLE_API_KEY="your_google_api_key_here" \
+  -e MEMOROSE__LLM__MODEL="gemini-3.1-flash-lite-preview" \
+  -e MEMOROSE__LLM__EMBEDDING_MODEL="gemini-embedding-2-preview" \
+  -e DASHBOARD_ADMIN_PASSWORD="your_secure_password" \
   dylan2024/memorose:latest
 ```
 
