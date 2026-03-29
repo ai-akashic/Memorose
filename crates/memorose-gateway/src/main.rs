@@ -1,5 +1,86 @@
 use axum::body::to_bytes;
-use axum::{
+use futures::future::join_all;
+use serde_json::Value;
+
+async fn scatter_gather_request(
+    state: Arc<AppState>,
+    headers: HeaderMap,
+    method: axum::http::Method,
+    path: &str,
+    query: Option<String>,
+) -> Response {
+    let mut limit = 100;
+    let mut offset = 0;
+    
+    if let Some(ref q) = query {
+        for pair in q.split('&') {
+            let mut kv = pair.split('=');
+            if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
+                if k == "limit" { limit = v.parse().unwrap_or(100); }
+                if k == "page" { offset = v.parse::<usize>().unwrap_or(0) * limit; }
+                if k == "offset" { offset = v.parse().unwrap_or(0); }
+            }
+        }
+    }
+    
+    let scatter_limit = offset + limit;
+    let mut scatter_query = query.clone().unwrap_or_default();
+    if scatter_query.contains("limit=") {
+        scatter_query = scatter_query.replace(&format!("limit={}", limit), &format!("limit={}", scatter_limit));
+    } else if !scatter_query.is_empty() {
+        scatter_query = format!("{}&limit={}", scatter_query, scatter_limit);
+    } else {
+        scatter_query = format!("limit={}", scatter_limit);
+    }
+    
+    let mut futures = Vec::new();
+    let client = &state.http_client;
+    
+    for shard_id in 0..state.shard_count {
+        let addr = state.resolve_shard_addr(shard_id).await.unwrap_or_else(|| format!("127.0.0.1:{}", 3000 + shard_id));
+        let url = if scatter_query.is_empty() {
+            format!("http://{}/{}", addr, path)
+        } else {
+            format!("http://{}/{}?{}", addr, path, scatter_query)
+        };
+        let req = client.request(method.clone(), &url).headers(headers.clone()).send();
+        futures.push(req);
+    }
+    
+    let responses = join_all(futures).await;
+    let mut all_results: Vec<Value> = Vec::new();
+    
+    for res in responses {
+        if let Ok(r) = res {
+            if r.status().is_success() {
+                if let Ok(json) = r.json::<Value>().await {
+                    if let Some(items) = json.get("results").and_then(|v| v.as_array()) {
+                        all_results.extend(items.clone());
+                    } else if let Some(items) = json.as_array() {
+                        all_results.extend(items.clone());
+                    }
+                }
+            }
+        }
+    }
+    
+    all_results.sort_by(|a, b| {
+        let ts_a = a.get("timestamp").or_else(|| a.get("created_at")).and_then(|v| v.as_str()).unwrap_or("");
+        let ts_b = b.get("timestamp").or_else(|| b.get("created_at")).and_then(|v| v.as_str()).unwrap_or("");
+        ts_b.cmp(ts_a)
+    });
+    
+    let sliced: Vec<Value> = all_results.into_iter().skip(offset).take(limit).collect();
+    
+    (axum::http::StatusCode::OK, Json(serde_json::json!({
+        "results": sliced,
+        "total": sliced.len(),
+        "scatter_gather": true
+    }))).into_response()
+}
+
+use axum::{Json,
+
     extract::{Request, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
@@ -138,14 +219,18 @@ async fn proxy_handler(
 }
 
 /// Extract user_id from the URL pattern `/v1/users/{user_id}/...`
-fn extract_user_id(path: &str) -> Option<&str> {
+fn extract_routing_key(path: &str) -> Option<&str> {
     let parts: Vec<&str> = path.split('/').collect();
-    if parts.len() >= 3 && parts[0] == "v1" && parts[1] == "users" {
-        Some(parts[2])
+    if parts.len() >= 3 && parts[0] == "v1" {
+        match parts[1] {
+            "users" | "organizations" | "agents" => Some(parts[2]),
+            _ => None,
+        }
     } else {
         None
     }
 }
+
 
 async fn proxy_request_with_retry(
     state: Arc<AppState>,
@@ -156,7 +241,12 @@ async fn proxy_request_with_retry(
     body: Option<Bytes>,
 ) -> Response {
     // Route based on user_id hash
-    let user_id = extract_user_id(path);
+    let routing_key = extract_routing_key(path);
+    if routing_key.is_none() && method == axum::http::Method::GET {
+        return scatter_gather_request(state, headers, method, path, query).await;
+    }
+    
+    let user_id = routing_key;
     let shard_id = user_id
         .map(|uid| user_id_to_shard(uid, state.shard_count))
         .unwrap_or(0); // Non-user routes go to shard 0
@@ -325,22 +415,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_extract_user_id() {
-        assert_eq!(
-            extract_user_id("v1/users/alice/streams/123/events"),
-            Some("alice")
-        );
-        assert_eq!(extract_user_id("v1/users/bob/graph/edges"), Some("bob"));
-        assert_eq!(extract_user_id("v1/cluster/initialize"), None);
-        assert_eq!(extract_user_id("v1/dashboard/stats"), None);
+    fn test_extract_routing_key() {
+        assert_eq!(extract_routing_key("v1/users/alice/streams/123/events"), Some("alice"));
+        assert_eq!(extract_routing_key("v1/organizations/org_abc/knowledge"), Some("org_abc"));
+        assert_eq!(extract_routing_key("v1/agents/agent_007/memory"), Some("agent_007"));
+        assert_eq!(extract_routing_key("v1/memories"), None);
+        assert_eq!(extract_routing_key("v1/stats"), None);
+        assert_eq!(extract_routing_key("invalid/path"), None);
     }
 
     #[test]
     fn test_shard_routing_determinism() {
         let shard_count = 3;
 
-        let uid1 = extract_user_id("v1/users/alice/streams/abc123/events").unwrap();
-        let uid2 = extract_user_id("v1/users/alice/streams/def456/retrieve").unwrap();
+        let uid1 = extract_routing_key("v1/users/alice/streams/abc123/events").unwrap();
+        let uid2 = extract_routing_key("v1/users/alice/streams/def456/retrieve").unwrap();
         assert_eq!(uid1, uid2);
 
         let shard_a = user_id_to_shard(uid1, shard_count);

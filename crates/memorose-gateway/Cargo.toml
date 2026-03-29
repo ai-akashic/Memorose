@@ -24,3 +24,4 @@ tower = "0.4"
 sha2 = "0.10"
 bytes = "1.11.1"
 memorose-common = { path = "../memorose-common" }
+futures = "0.3.32"
