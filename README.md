@@ -83,7 +83,7 @@ docker run -d -p 3000:3000 \
   -e GOOGLE_API_KEY=your_key \
   -e MEMOROSE__LLM__MODEL=gemini-2.0-flash \
   -e MEMOROSE__LLM__EMBEDDING_MODEL=gemini-embedding-2-preview \
-  akashic/memorose:latest
+  dylan2024/memorose:latest
 ```
 
 <details>
