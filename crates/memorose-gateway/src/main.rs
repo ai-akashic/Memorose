@@ -2,6 +2,85 @@ use axum::body::to_bytes;
 use futures::future::join_all;
 use serde_json::Value;
 
+trait AggregationStrategy {
+    fn aggregate(&self, responses: Vec<Value>, limit: usize, offset: usize) -> Response;
+}
+
+struct ListMergeSortStrategy;
+impl AggregationStrategy for ListMergeSortStrategy {
+    fn aggregate(&self, responses: Vec<Value>, limit: usize, offset: usize) -> Response {
+        let mut all_results: Vec<Value> = Vec::new();
+        
+        for json in responses {
+            if let Some(items) = json.get("results").and_then(|v| v.as_array()) {
+                all_results.extend(items.clone());
+            } else if let Some(items) = json.as_array() {
+                all_results.extend(items.clone());
+            }
+        }
+        
+        all_results.sort_by(|a, b| {
+            let ts_a = a.get("timestamp").or_else(|| a.get("created_at")).and_then(|v| v.as_str()).unwrap_or("");
+            let ts_b = b.get("timestamp").or_else(|| b.get("created_at")).and_then(|v| v.as_str()).unwrap_or("");
+            ts_b.cmp(ts_a)
+        });
+        
+        let sliced: Vec<Value> = all_results.into_iter().skip(offset).take(limit).collect();
+        
+        (axum::http::StatusCode::OK, Json(serde_json::json!({
+            "results": sliced,
+            "total": sliced.len(),
+            "scatter_gather": true
+        }))).into_response()
+    }
+}
+
+fn merge_sum(a: Value, b: Value) -> Value {
+    match (a, b) {
+        (Value::Object(mut map_a), Value::Object(map_b)) => {
+            for (k, v) in map_b {
+                let existing = map_a.remove(&k).unwrap_or(Value::Null);
+                map_a.insert(k, merge_sum(existing, v));
+            }
+            Value::Object(map_a)
+        }
+        (Value::Number(num_a), Value::Number(num_b)) => {
+            if num_a.is_u64() && num_b.is_u64() {
+                Value::Number(serde_json::Number::from(num_a.as_u64().unwrap() + num_b.as_u64().unwrap()))
+            } else if num_a.is_i64() && num_b.is_i64() {
+                Value::Number(serde_json::Number::from(num_a.as_i64().unwrap() + num_b.as_i64().unwrap()))
+            } else if let (Some(fa), Some(fb)) = (num_a.as_f64(), num_b.as_f64()) {
+                if let Some(n) = serde_json::Number::from_f64(fa + fb) {
+                    Value::Number(n)
+                } else {
+                    Value::Number(num_a)
+                }
+            } else {
+                Value::Number(num_a)
+            }
+        }
+        (Value::Null, v) => v,
+        (v, Value::Null) => v,
+        (a, _) => a,
+    }
+}
+
+struct SummationStrategy;
+impl AggregationStrategy for SummationStrategy {
+    fn aggregate(&self, responses: Vec<Value>, _limit: usize, _offset: usize) -> Response {
+        let mut result = Value::Object(serde_json::Map::new());
+        for json in responses {
+            result = merge_sum(result, json);
+        }
+
+        if let Value::Object(ref mut map) = result {
+            map.insert("scatter_gather".to_string(), Value::Bool(true));
+        }
+
+        (axum::http::StatusCode::OK, Json(result)).into_response()
+    }
+}
+
 async fn scatter_gather_request(
     state: Arc<AppState>,
     headers: HeaderMap,
@@ -54,29 +133,19 @@ async fn scatter_gather_request(
         if let Ok(r) = res {
             if r.status().is_success() {
                 if let Ok(json) = r.json::<Value>().await {
-                    if let Some(items) = json.get("results").and_then(|v| v.as_array()) {
-                        all_results.extend(items.clone());
-                    } else if let Some(items) = json.as_array() {
-                        all_results.extend(items.clone());
-                    }
+                    all_results.push(json);
                 }
             }
         }
     }
     
-    all_results.sort_by(|a, b| {
-        let ts_a = a.get("timestamp").or_else(|| a.get("created_at")).and_then(|v| v.as_str()).unwrap_or("");
-        let ts_b = b.get("timestamp").or_else(|| b.get("created_at")).and_then(|v| v.as_str()).unwrap_or("");
-        ts_b.cmp(ts_a)
-    });
+    let strategy: Box<dyn AggregationStrategy> = if path.ends_with("stats") {
+        Box::new(SummationStrategy)
+    } else {
+        Box::new(ListMergeSortStrategy)
+    };
     
-    let sliced: Vec<Value> = all_results.into_iter().skip(offset).take(limit).collect();
-    
-    (axum::http::StatusCode::OK, Json(serde_json::json!({
-        "results": sliced,
-        "total": sliced.len(),
-        "scatter_gather": true
-    }))).into_response()
+    strategy.aggregate(all_results, limit, offset)
 }
 
 use axum::{Json,
