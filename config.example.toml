@@ -55,7 +55,7 @@ provider = "gemini"
 # Model for semantic compression
 model = "gemini-3.1-flash-lite-preview"
 # Embedding model
-embedding_model = "text-embedding-004"
+embedding_model = "gemini-embedding-2-preview"
 # API request settings
 max_retries = 3
 timeout_secs = 30

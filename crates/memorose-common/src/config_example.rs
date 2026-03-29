@@ -254,7 +254,7 @@ fn default_entropy_threshold() -> f64 { 2.5 }
 fn default_similarity_threshold() -> f64 { 0.7 }
 fn default_llm_provider() -> String { "gemini".to_string() }
 fn default_llm_model() -> String { "gemini-3.1-flash-lite-preview".to_string() }
-fn default_embedding_model() -> String { "text-embedding-004".to_string() }
+fn default_embedding_model() -> String { "gemini-embedding-2-preview".to_string() }
 fn default_max_retries() -> u32 { 3 }
 fn default_timeout_secs() -> u64 { 30 }
 fn default_temperature() -> f32 { 0.3 }
@@ -379,7 +379,7 @@ mod tests {
                     "llm": {
                         "provider": "gemini",
                         "model": "gemini-3.1-flash-lite-preview",
-                        "embedding_model": "text-embedding-004",
+                        "embedding_model": "gemini-embedding-2-preview",
                         "max_retries": 3,
                         "timeout_secs": 30,
                         "temperature": 0.3

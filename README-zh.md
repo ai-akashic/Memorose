@@ -581,7 +581,7 @@ docker compose up --build memorose-node-0 dashboard
 [llm]
 provider = "Gemini"
 google_api_key = "..."
-model = "gemini-2.0-flash"
+model = "gemini-3.1-flash-lite-preview"
 embedding_model = "gemini-embedding-2-preview"
 embedding_dim = 3072
 # embedding_output_dim = 1536
