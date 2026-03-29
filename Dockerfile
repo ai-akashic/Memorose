@@ -67,3 +67,48 @@ COPY --from=frontend-builder /usr/src/app/dashboard/public ./public
 EXPOSE 3100
 
 CMD ["node", "server.js"]
+
+# ---- Unified Runner (Default for `docker run`) ----
+FROM node:20-bookworm-slim AS unified-runner
+
+# Install SSL certs (needed for Rust HTTP requests)
+RUN apt-get update && apt-get install -y ca-certificates openssl && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy Rust backend binaries
+COPY --from=backend-builder /usr/src/app/target/release/memorose-server /app/
+COPY --from=backend-builder /usr/src/app/target/release/memorose-gateway /app/
+
+# Copy Next.js frontend files
+COPY --from=frontend-builder /usr/src/app/dashboard/.next/standalone /app/dashboard/
+COPY --from=frontend-builder /usr/src/app/dashboard/.next/static /app/dashboard/.next/static
+COPY --from=frontend-builder /usr/src/app/dashboard/public /app/dashboard/public
+
+# Setup environment variables
+ENV RUST_LOG=info
+ENV NODE_ENV=production
+ENV PORT=3100
+ENV HOSTNAME=0.0.0.0
+# Dashboard uses this to proxy API requests internally
+ENV DASHBOARD_API_ORIGIN=http://127.0.0.1:3000
+
+# Expose backend (3000) and frontend (3100) ports
+EXPOSE 3000 3100
+
+# Create a startup script that runs both processes
+RUN echo '#!/bin/bash\n\
+echo "Starting Memorose API Server on port 3000..."\n\
+/app/memorose-server &\n\
+SERVER_PID=$!\n\
+\n\
+echo "Starting Memorose Dashboard on port 3100..."\n\
+cd /app/dashboard && node server.js &\n\
+DASHBOARD_PID=$!\n\
+\n\
+# Wait for any process to exit\n\
+wait -n\n\
+exit $?\n\
+' > /app/start.sh && chmod +x /app/start.sh
+
+CMD ["/app/start.sh"]
