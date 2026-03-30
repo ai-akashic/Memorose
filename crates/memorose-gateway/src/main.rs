@@ -59,6 +59,7 @@ fn merge_sum(a: Value, b: Value) -> Value {
                 Value::Number(num_a)
             }
         }
+        (Value::Bool(ba), Value::Bool(bb)) => Value::Bool(ba && bb),
         (Value::Null, v) => v,
         (v, Value::Null) => v,
         (a, _) => a,
@@ -139,7 +140,7 @@ async fn scatter_gather_request(
         }
     }
     
-    let strategy: Box<dyn AggregationStrategy> = if path.ends_with("stats") {
+    let strategy: Box<dyn AggregationStrategy> = if path.ends_with("stats") || path.ends_with("pending") {
         Box::new(SummationStrategy)
     } else {
         Box::new(ListMergeSortStrategy)
