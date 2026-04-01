@@ -27,6 +27,7 @@ import {
 import { useOrgScope } from "@/lib/org-scope";
 import { formatNumber, truncate } from "@/lib/utils";
 import { useTranslations } from "next-intl";
+import { DashboardHero, DashboardStatRail } from "@/components/dashboard-chrome";
 
 function formatKnowledgeTimestamp(value: string) {
   const date = new Date(value);
@@ -166,25 +167,26 @@ export default function OrganizationsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-            <Building2 className="h-3.5 w-3.5" />
-            {t("sectionLabel")}
+      <DashboardHero
+        icon={Building2}
+        kicker={t("sectionLabel")}
+        title={t("title")}
+        description={t("description")}
+        actions={
+          <div className="dashboard-stat-pill min-w-[11rem]">
+            <span className="dashboard-stat-label">{t("activeOrg")}</span>
+            <span className="dashboard-stat-value font-mono text-primary">{scopedOrgId || "—"}</span>
           </div>
-          <h1 className="mt-2 text-2xl font-bold tracking-tight">{t("title")}</h1>
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            {t("description")}
-          </p>
-        </div>
-
-        <div className="rounded-2xl border border-border/70 bg-card px-4 py-3">
-          <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-            {t("activeOrg")}
-          </div>
-          <div className="mt-1 font-mono text-2xl font-bold">{scopedOrgId}</div>
-        </div>
-      </div>
+        }
+      >
+        <DashboardStatRail
+          items={[
+            { label: t("panel.title"), value: organizations.length, tone: "primary" },
+            { label: t("knowledge.title"), value: knowledgeData?.total_count ?? 0, tone: "success" },
+            { label: t("knowledge.metricPublished"), value: automationMetrics?.auto_publish_total ?? 0, tone: "warning" },
+          ]}
+        />
+      </DashboardHero>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[20rem_minmax(0,1fr)]">
         <Card className="glass-card border-border/70">

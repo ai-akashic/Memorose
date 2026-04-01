@@ -31,6 +31,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import type { GraphData } from "@/lib/types";
 import { motion } from "framer-motion";
 import { useTranslations } from "next-intl";
+import { DashboardHero, DashboardStatRail } from "@/components/dashboard-chrome";
 
 function NumberTicker({ value }: { value: number }) {
   const [displayValue, setDisplayValue] = useState(0);
@@ -319,14 +320,21 @@ export default function MetricsPage() {
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="flex items-center justify-between"
         >
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">{t("title")}</h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              {scopedOrgId ? t("subtitleOrg", { orgId: scopedOrgId }) : t("subtitle")}
-            </p>
-          </div>
+          <DashboardHero
+            icon={Activity}
+            kicker={t("title")}
+            title={t("title")}
+            description={scopedOrgId ? t("subtitleOrg", { orgId: scopedOrgId }) : t("subtitle")}
+          >
+            <DashboardStatRail
+              items={[
+                { label: t("stats.ingested"), value: stats?.total_events ?? 0, tone: "primary" },
+                { label: t("stats.totalMemory"), value: stats?.total_memory_units ?? 0, tone: "success" },
+                { label: t("stats.edges"), value: stats?.total_edges ?? 0, tone: "warning" },
+              ]}
+            />
+          </DashboardHero>
         </motion.div>
 
         <motion.div

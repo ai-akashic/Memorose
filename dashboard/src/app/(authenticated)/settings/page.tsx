@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { getMustChangePassword, setMustChangePassword } from "@/lib/auth";
 import { useApiKeys, useOrganizations } from "@/lib/hooks";
@@ -41,6 +41,7 @@ import {
 } from "@/components/ui/select";
 import { motion } from "framer-motion";
 import { useTranslations } from "next-intl";
+import { DashboardHero, DashboardStatRail } from "@/components/dashboard-chrome";
 
 const sectionIcon: Record<string, React.ElementType> = {
   Raft: Server,
@@ -177,7 +178,7 @@ export default function SettingsPage() {
 
   const { data: organizationsData } = useOrganizations();
   const { data: apiKeysData, mutate: mutateApiKeys, isLoading: apiKeysLoading } = useApiKeys();
-  const organizations = organizationsData?.organizations ?? [];
+  const organizations = useMemo(() => organizationsData?.organizations ?? [], [organizationsData]);
   const apiKeys = apiKeysData?.api_keys ?? [];
 
   useEffect(() => {
@@ -270,17 +271,21 @@ export default function SettingsPage() {
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
-        className="flex flex-col gap-2"
       >
-        <div className="flex items-center gap-3">
-          <div className="rounded-xl border border-border bg-card p-2.5">
-            <SettingsIcon className="h-6 w-6 text-foreground/80" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">{t("title")}</h1>
-            <p className="mt-1 text-sm font-medium text-muted-foreground">{t("subtitle")}</p>
-          </div>
-        </div>
+        <DashboardHero
+          icon={SettingsIcon}
+          kicker={t("title")}
+          title={t("title")}
+          description={t("subtitle")}
+        >
+          <DashboardStatRail
+            items={[
+              { label: t("configuration"), value: configLoading ? "…" : "Ready", tone: "primary" },
+              { label: t("apiKeys.title"), value: apiKeys.length, tone: "success" },
+              { label: t("security.title"), value: mustChange ? "Alert" : "Nominal", tone: mustChange ? "warning" : "neutral" },
+            ]}
+          />
+        </DashboardHero>
       </motion.div>
 
       {mustChange && (

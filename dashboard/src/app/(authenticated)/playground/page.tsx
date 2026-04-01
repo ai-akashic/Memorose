@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import type { RetrieveResponse } from "@/lib/types";
 import { useTranslations } from "next-intl";
+import { DashboardHero, DashboardStatRail } from "@/components/dashboard-chrome";
 
 interface Message {
   id: string;
@@ -50,7 +51,7 @@ function ChatPanel() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [streaming, setStreaming] = useState(false);
-  const [userId, setUserId] = useStoredString("memorose-playground-chat-user", "default-playground-user");
+  const [userId] = useStoredString("memorose-playground-chat-user", "default-playground-user");
   const { orgId } = useOrgScope();
   const scrollRef = useRef<HTMLDivElement>(null);
   const streamingMessageRef = useRef<string>("");
@@ -290,7 +291,7 @@ function ChatPanel() {
 
 function RetrievePanel() {
   const t = useTranslations("Playground");
-  const [userId, setUserId] = useStoredString("memorose-playground-retrieve-user", "default-playground-user");
+  const [userId] = useStoredString("memorose-playground-retrieve-user", "default-playground-user");
   const [streamId, setStreamId] = useStoredString("memorose-playground-retrieve-stream", "chat");
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState("10");
@@ -462,13 +463,19 @@ export default function PlaygroundPage() {
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.5 }}
         >
-          <div className="flex items-center gap-2 mb-1">
-            <Sparkles className="w-5 h-5 text-primary" />
-            <h1 className="text-2xl font-bold tracking-tight">{t("title")}</h1>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            {t("subtitle")}
-          </p>
+          <DashboardHero
+            icon={Sparkles}
+            kicker={t("title")}
+            title={t("title")}
+            description={t("subtitle")}
+          >
+            <DashboardStatRail
+              items={[
+                { label: t("tabs.chat"), value: "Live", tone: "primary" },
+                { label: t("tabs.retrieve"), value: "Search", tone: "success" },
+              ]}
+            />
+          </DashboardHero>
         </motion.div>
       </div>
 

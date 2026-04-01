@@ -11,6 +11,7 @@ import type { DashboardMemoryDetail, SearchResult } from "@/lib/types";
 import { TaskWorkspace } from "@/components/task-workspace";
 import { OrganizationKnowledgeDetail } from "@/components/organization-knowledge-detail";
 import {
+  Database,
   Search,
   ChevronLeft,
   ChevronRight,
@@ -47,6 +48,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useTranslations } from "next-intl";
+import { DashboardHero, DashboardStatRail } from "@/components/dashboard-chrome";
 
 function LevelBadge({ level }: { level: number }) {
   const colors: Record<number, string> = {
@@ -690,26 +692,33 @@ export default function MemoriesPage() {
   return (
     <div className="flex-1 space-y-6 flex flex-col min-h-0 relative">
       <div className="absolute top-0 right-0 w-[500px] h-[250px] blob-bg opacity-20 pointer-events-none -z-10 mix-blend-screen" />
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">{t("title")}</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {scopedOrgId ? t("subtitleOrg", { orgId: scopedOrgId }) : t("subtitle")}
-          </p>
-        </div>
-
-        <div className="flex w-full max-w-xl flex-col gap-2 sm:flex-row sm:items-center">
-          <Input
-            value={userIdInput}
-            onChange={(e) => setUserIdInput(e.target.value)}
-            placeholder={t("setUserId")}
-            className="h-10 font-mono bg-card border-border"
-          />
-        </div>
-      </div>
+      <DashboardHero
+        icon={Database}
+        kicker={t("title")}
+        title={t("title")}
+        description={scopedOrgId ? t("subtitleOrg", { orgId: scopedOrgId }) : t("subtitle")}
+        actions={
+          <div className="flex w-full min-w-[18rem] max-w-xl flex-col gap-2 sm:flex-row sm:items-center">
+            <Input
+              value={userIdInput}
+              onChange={(e) => setUserIdInput(e.target.value)}
+              placeholder={t("setUserId")}
+              className="h-11 min-w-[16rem] font-mono"
+            />
+          </div>
+        }
+      >
+        <DashboardStatRail
+          items={[
+            { label: t("tabs.list"), value: "L0-L3", tone: "primary" },
+            { label: t("tabs.graph"), value: "2D", tone: "success" },
+            { label: t("tabs.tasks"), value: userId || "—", tone: "warning" },
+          ]}
+        />
+      </DashboardHero>
 
       <Tabs value={activeTab} onValueChange={handleTabChange} className="flex-1 flex flex-col min-h-0">
-        <TabsList className="bg-card border border-border self-start p-1 rounded-xl">
+        <TabsList className="self-start">
           <TabsTrigger value="list" className="gap-2 px-4 data-[state=active]:bg-white/5 data-[state=active]:text-white transition-all text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
             <List className="w-3 h-3 opacity-60" /> {t("tabs.list")}
           </TabsTrigger>

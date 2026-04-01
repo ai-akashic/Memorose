@@ -10,6 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  DASHBOARD_LOCALE_COOKIE_KEY,
   DASHBOARD_LOCALE_STORAGE_KEY,
   type DashboardLocale,
 } from "@/lib/locale";
@@ -19,6 +20,7 @@ export function LocaleSwitcher() {
 
   const switchLocale = (locale: DashboardLocale) => {
     localStorage.setItem(DASHBOARD_LOCALE_STORAGE_KEY, locale);
+    document.cookie = `${DASHBOARD_LOCALE_COOKIE_KEY}=${locale}; Path=/; Max-Age=31536000; SameSite=Lax`;
     window.location.reload();
   };
 

@@ -17,6 +17,7 @@ import type { AgentSummary } from "@/lib/types";
 import { motion } from "framer-motion";
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
+import { DashboardHero, DashboardStatRail } from "@/components/dashboard-chrome";
 
 function formatRelativeTime(timestamp: number | null, now: number | null, t: ReturnType<typeof useTranslations>): string {
   if (!timestamp) return t("time.never");
@@ -128,15 +129,19 @@ export default function AgentsPage() {
       <div className="absolute top-0 right-0 w-[500px] h-[300px] blob-bg opacity-20 pointer-events-none -z-10 mix-blend-screen" />
 
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
-        <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-primary/15 bg-primary/10 shrink-0">
-            <Bot className="h-5 w-5 text-primary" />
-          </div>
-          <div>
-            <p className="text-[11px] font-medium uppercase tracking-[0.24em] text-muted-foreground">{t("sectionLabel")}</p>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">{t("title")}</h1>
-          </div>
-        </div>
+        <DashboardHero
+          icon={Bot}
+          kicker={t("sectionLabel")}
+          title={t("title")}
+        >
+          <DashboardStatRail
+            items={[
+              { label: t("kpi.count"), value: data?.total_count ?? 0, tone: "primary" },
+              { label: t("kpi.memories"), value: totalMemories, tone: "success" },
+              { label: t("kpi.events"), value: totalEvents, tone: "warning" },
+            ]}
+          />
+        </DashboardHero>
       </motion.div>
 
       {/* KPI Cards */}

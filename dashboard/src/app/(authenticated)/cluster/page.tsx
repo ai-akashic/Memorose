@@ -8,6 +8,7 @@ import { api } from "@/lib/api";
 import { useOrgScope } from "@/lib/org-scope";
 import { useTranslations } from "next-intl";
 import {
+  LayoutDashboard,
   Activity,
   Database,
   GitBranch,
@@ -23,6 +24,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
+import { DashboardHero, DashboardStatRail } from "@/components/dashboard-chrome";
 
 function StatCard({
   label,
@@ -402,25 +404,41 @@ export default function ClusterPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">
-            {t("title")}
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {scopedOrgId ? `${t("orgScope", { orgId: scopedOrgId })} · ` : ""}
-            {sharded
+      <DashboardHero
+        icon={LayoutDashboard}
+        kicker={t("title")}
+        title={t("title")}
+        description={
+          scopedOrgId
+            ? `${t("orgScope", { orgId: scopedOrgId })} · ${
+                sharded
+                  ? t("subtitleSharded", { count: (cluster as ClusterStatusSharded).shard_count })
+                  : t("subtitleSingle")
+              }`
+            : sharded
               ? t("subtitleSharded", { count: (cluster as ClusterStatusSharded).shard_count })
-              : t("subtitleSingle")}
-          </p>
-        </div>
-        {stats && (
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted/50">
-            <Clock className="w-4 h-4 text-muted-foreground" />
-            <span className="text-sm font-medium">{formatDuration(stats.uptime_seconds)}</span>
-          </div>
-        )}
-      </div>
+              : t("subtitleSingle")
+        }
+        actions={
+          stats ? (
+            <div className="dashboard-stat-pill min-w-[9.5rem]">
+              <span className="dashboard-stat-label">Uptime</span>
+              <span className="dashboard-stat-value flex items-center gap-2 text-primary">
+                <Clock className="h-4 w-4" />
+                {formatDuration(stats.uptime_seconds)}
+              </span>
+            </div>
+          ) : null
+        }
+      >
+        <DashboardStatRail
+          items={[
+            { label: t("stats.totalEvents"), value: stats?.total_events ?? 0, tone: "primary" },
+            { label: t("stats.memoryUnits"), value: stats?.total_memory_units ?? 0, tone: "success" },
+            { label: sharded ? t("stats.shards") : t("stats.nodes"), value: sharded ? (cluster as ClusterStatusSharded).shard_count : (cluster as ClusterStatusSingle)?.voters.length ?? 0, tone: "warning" },
+          ]}
+        />
+      </DashboardHero>
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
