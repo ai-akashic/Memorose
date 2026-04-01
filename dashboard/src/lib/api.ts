@@ -1,9 +1,29 @@
 import { getToken, clearToken } from "./auth";
 
-const DASHBOARD_BASE_PATH = "/dashboard";
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || (typeof window !== "undefined"
-  ? `${window.location.origin}${DASHBOARD_BASE_PATH}`
-  : DASHBOARD_BASE_PATH);
+function normalizeApiBase(rawBase?: string): string {
+  const fallbackOrigin = typeof window !== "undefined" ? window.location.origin : "";
+  const candidate = (rawBase || fallbackOrigin).trim().replace(/\/+$/, "");
+
+  if (!candidate) {
+    return "";
+  }
+
+  const stripKnownSuffixes = (value: string) =>
+    value
+      .replace(/\/v1\/dashboard$/i, "")
+      .replace(/\/dashboard$/i, "")
+      .replace(/\/v1$/i, "");
+
+  try {
+    const parsed = new URL(candidate);
+    const normalizedPath = stripKnownSuffixes(parsed.pathname);
+    return `${parsed.origin}${normalizedPath === "/" ? "" : normalizedPath}`;
+  } catch {
+    return stripKnownSuffixes(candidate);
+  }
+}
+
+const API_BASE = normalizeApiBase(process.env.NEXT_PUBLIC_API_URL);
 
 async function fetchAPI<T>(
   path: string,
