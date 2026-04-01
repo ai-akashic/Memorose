@@ -19,33 +19,23 @@ export default function LoginPage() {
   }, [router]);
 
   return (
-    <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-6 py-10 md:px-10">
-      <div className="absolute inset-0 bg-grid-white/[0.02] bg-[size:44px_44px]" />
-      <div className="absolute left-[-8%] top-[-5%] h-[28rem] w-[28rem] rounded-full bg-[radial-gradient(circle,rgba(255,124,87,0.18),transparent_62%)] blur-3xl" />
-      <div className="absolute right-[-6%] top-[8%] h-[24rem] w-[24rem] rounded-full bg-[radial-gradient(circle,rgba(255,194,120,0.16),transparent_58%)] blur-3xl" />
-      <div className="absolute bottom-[-10%] left-1/2 h-[34rem] w-[34rem] -translate-x-1/2 rounded-full blob-bg opacity-30" />
-      <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-background to-transparent z-0" />
+    <div className="relative flex min-h-screen flex-col items-center justify-center bg-background p-6 md:p-10 overflow-hidden">
+      {/* Dynamic Backgrounds */}
+      <div className="absolute inset-0 bg-grid-white/[0.02] bg-[size:40px_40px]" />
+      {/* Centered violet glow */}
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-[55%] w-[600px] h-[600px] rounded-full bg-violet-600/10 blur-[120px] pointer-events-none" />
+      {/* Top-right accent */}
+      <div className="absolute top-0 right-0 w-[400px] h-[400px] rounded-full bg-indigo-500/5 blur-[100px] pointer-events-none" />
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] blob-bg opacity-20 pointer-events-none mix-blend-screen" />
+      <div className="absolute bottom-0 left-0 right-0 h-1/2 bg-gradient-to-t from-background to-transparent z-0" />
 
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
-        className="relative z-10 w-full max-w-[430px]"
+        className="relative z-10 w-full max-w-[380px]"
       >
-        <div className="mb-8 rounded-[2rem] border border-white/8 bg-white/[0.03] px-5 py-4 backdrop-blur-xl">
-          <div className="flex items-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-[1.2rem] border border-white/10 bg-white/[0.05]">
-              <MemoroseLogo size={28} />
-            </div>
-            <div>
-              <p className="text-[11px] font-medium uppercase tracking-[0.24em] text-muted-foreground">
-                Memorose
-              </p>
-              <p className="text-sm text-foreground/80">Operational dashboard access</p>
-            </div>
-          </div>
-        </div>
-
+        {/* Logo Section */}
         <div className="mb-12 flex flex-col items-center gap-1">
           <motion.div
             whileHover={{ scale: 1.08 }}
@@ -53,14 +43,15 @@ export default function LoginPage() {
             transition={{ type: "spring", stiffness: 260, damping: 22 }}
             className="relative cursor-pointer"
           >
-            <div className="absolute inset-0 -z-10 scale-[1.8] rounded-full bg-primary/25 blur-3xl pointer-events-none" />
+            {/* Ambient glow */}
+            <div className="absolute inset-0 -z-10 blur-3xl opacity-50 bg-violet-500/30 rounded-full scale-[1.8] pointer-events-none" />
             <MemoroseLogo size={72} />
           </motion.div>
 
-          <h1 className="mt-7 text-[2.8rem] font-semibold leading-none tracking-[-0.06em] text-foreground">
+          <h1 className="text-[2.6rem] font-bold tracking-tighter mt-7 bg-clip-text text-transparent bg-gradient-to-b from-white via-white/90 to-white/40 leading-none">
             Memorose
           </h1>
-          <p className="mt-2 text-center text-[0.8rem] font-medium uppercase tracking-[0.2em] text-muted-foreground/80">
+          <p className="text-muted-foreground/70 mt-2 text-[0.8rem] font-medium tracking-[0.2em] uppercase">
             {t("tagline")}
           </p>
         </div>
