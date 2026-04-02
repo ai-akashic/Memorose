@@ -3,6 +3,7 @@ use crate::MemoroseEngine;
 use anyhow::Result;
 use memorose_common::{config::AppConfig, Asset, MemoryUnit};
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::Duration;
@@ -20,6 +21,38 @@ pub struct BackgroundWorker {
 }
 
 impl BackgroundWorker {
+    fn normalize_asset_storage_key(asset_type: &str, storage_key: &str) -> String {
+        let trimmed = storage_key.trim();
+        if trimmed.starts_with("http://")
+            || trimmed.starts_with("https://")
+            || trimmed.starts_with("s3://")
+            || trimmed.starts_with("local://")
+            || trimmed.starts_with("inline://")
+        {
+            return trimmed.to_string();
+        }
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        asset_type.hash(&mut hasher);
+        trimmed.hash(&mut hasher);
+        format!("inline://{}/{:016x}", asset_type, hasher.finish())
+    }
+
+    fn build_asset(
+        storage_key: String,
+        original_name: &str,
+        asset_type: &str,
+        description: Option<String>,
+    ) -> Asset {
+        Asset {
+            storage_key: Self::normalize_asset_storage_key(asset_type, &storage_key),
+            original_name: original_name.to_string(),
+            asset_type: asset_type.to_string(),
+            description,
+            metadata: std::collections::HashMap::new(),
+        }
+    }
+
     pub fn new(engine: MemoroseEngine) -> Self {
         let config = AppConfig::load().unwrap_or_else(|e| {
             tracing::warn!("Failed to load config ({}), using defaults", e);
@@ -262,9 +295,11 @@ impl BackgroundWorker {
     async fn extract_text_and_embed_input(
         event: &memorose_common::Event,
         llm: Option<&dyn crate::llm::LLMClient>,
-    ) -> (String, EmbedInput) {
+    ) -> (String, EmbedInput, Vec<Asset>) {
         match &event.content {
-            memorose_common::EventContent::Text(t) => (t.clone(), EmbedInput::Text(t.clone())),
+            memorose_common::EventContent::Text(t) => {
+                (t.clone(), EmbedInput::Text(t.clone()), vec![])
+            }
             memorose_common::EventContent::Image(url) => {
                 // For native multimodal embedding, try to fetch bytes for inline embedding
                 let text_description = if let Some(client) = llm {
@@ -312,7 +347,16 @@ impl BackgroundWorker {
                     }
                 };
 
-                (text_description, embed_input)
+                (
+                    text_description.clone(),
+                    embed_input,
+                    vec![Self::build_asset(
+                        url.clone(),
+                        "image",
+                        "image",
+                        Some(text_description),
+                    )],
+                )
             }
             memorose_common::EventContent::Audio(url) => {
                 let text_description = if let Some(client) = llm {
@@ -358,7 +402,16 @@ impl BackgroundWorker {
                     }
                 };
 
-                (text_description, embed_input)
+                (
+                    text_description.clone(),
+                    embed_input,
+                    vec![Self::build_asset(
+                        url.clone(),
+                        "audio",
+                        "audio",
+                        Some(text_description),
+                    )],
+                )
             }
             memorose_common::EventContent::Video(url) => {
                 let text_description = if let Some(client) = llm {
@@ -404,38 +457,21 @@ impl BackgroundWorker {
                     }
                 };
 
-                (text_description, embed_input)
+                (
+                    text_description.clone(),
+                    embed_input,
+                    vec![Self::build_asset(
+                        url.clone(),
+                        "video",
+                        "video",
+                        Some(text_description),
+                    )],
+                )
             }
             memorose_common::EventContent::Json(val) => {
                 let text = val.to_string();
-                (text.clone(), EmbedInput::Text(text))
+                (text.clone(), EmbedInput::Text(text), vec![])
             }
-        }
-    }
-
-    fn extract_assets_from_event(event: &memorose_common::Event) -> Vec<memorose_common::Asset> {
-        match &event.content {
-            memorose_common::EventContent::Text(_) | memorose_common::EventContent::Json(_) => {
-                vec![]
-            }
-            memorose_common::EventContent::Image(url) => vec![memorose_common::Asset {
-                storage_key: url.clone(),
-                original_name: "image".to_string(),
-                asset_type: "image".to_string(),
-                metadata: std::collections::HashMap::new(),
-            }],
-            memorose_common::EventContent::Audio(url) => vec![memorose_common::Asset {
-                storage_key: url.clone(),
-                original_name: "audio".to_string(),
-                asset_type: "audio".to_string(),
-                metadata: std::collections::HashMap::new(),
-            }],
-            memorose_common::EventContent::Video(url) => vec![memorose_common::Asset {
-                storage_key: url.clone(),
-                original_name: "video".to_string(),
-                asset_type: "video".to_string(),
-                metadata: std::collections::HashMap::new(),
-            }],
         }
     }
 
@@ -565,7 +601,7 @@ impl BackgroundWorker {
 
                 // For a packed batch, we will extract the common identifiers from the first event
                 let first_event = events.remove(0);
-                let (first_text, first_embed_input) =
+                let (first_text, first_embed_input, mut assets) =
                     Self::extract_text_and_embed_input(&first_event, llm.as_deref()).await;
                 let mut combined_text = format!("Message 1: {}", first_text);
                 // Track the first multimodal embed input for the batch
@@ -585,15 +621,13 @@ impl BackgroundWorker {
                 // We keep all event IDs to mark them as processed later
                 let mut event_ids = vec![first_event.id];
 
-                let mut assets = Self::extract_assets_from_event(&first_event);
-
                 // Append the rest
                 for (i, evt) in events.into_iter().enumerate() {
-                    let (evt_text, _evt_embed_input) =
+                    let (evt_text, _evt_embed_input, evt_assets) =
                         Self::extract_text_and_embed_input(&evt, llm.as_deref()).await;
                     combined_text.push_str(&format!("\nMessage {}: {}", i + 2, evt_text));
                     event_ids.push(evt.id);
-                    assets.extend(Self::extract_assets_from_event(&evt));
+                    assets.extend(evt_assets);
                 }
 
                 // Limit concurrency

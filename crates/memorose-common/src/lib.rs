@@ -331,6 +331,8 @@ pub struct Asset {
     pub storage_key: String, // The internal key (e.g., s3://bucket/uuid.png or local://uuid.png)
     pub original_name: String,
     pub asset_type: String, // e.g., "image/png", "audio/mpeg"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub metadata: HashMap<String, String>,
 }
 

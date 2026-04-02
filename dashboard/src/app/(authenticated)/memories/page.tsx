@@ -10,6 +10,7 @@ import { truncate } from "@/lib/utils";
 import type { DashboardMemoryDetail, SearchResult } from "@/lib/types";
 import { TaskWorkspace } from "@/components/task-workspace";
 import { OrganizationKnowledgeDetail } from "@/components/organization-knowledge-detail";
+import { MemoryAssets } from "@/components/memory-assets";
 import {
   Database,
   Search,
@@ -143,6 +144,15 @@ function MemoryDetailSheet({
                 </div>
               </div>
             )}
+
+            {memory.assets.length > 0 ? (
+              <div className="flex flex-col gap-2">
+                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+                  {t("detail.assets")}
+                </span>
+                <MemoryAssets assets={memory.assets} />
+              </div>
+            ) : null}
 
             {memory.organization_knowledge ? (
               <div className="flex flex-col gap-3">
@@ -412,6 +422,11 @@ function SearchPlayground({
               </span>
             </div>
             <p className="text-sm leading-relaxed">{truncate(r.unit.content, 200)}</p>
+            {r.unit.assets.length > 0 ? (
+              <div className="mt-2">
+                <MemoryAssets assets={r.unit.assets.slice(0, 2)} compact />
+              </div>
+            ) : null}
           </div>
         ))}
       </div>

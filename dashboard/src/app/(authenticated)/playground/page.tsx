@@ -15,6 +15,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import type { RetrieveResponse } from "@/lib/types";
 import { useTranslations } from "next-intl";
 import { DashboardHero, DashboardStatRail } from "@/components/dashboard-chrome";
+import { MemoryAssets } from "@/components/memory-assets";
 
 interface Message {
   id: string;
@@ -443,6 +444,11 @@ function RetrievePanel() {
                       <span key={kw} className="bg-muted/40 rounded px-1.5 py-0.5">{kw}</span>
                     ))}
                   </div>
+                  {r.unit.assets.length > 0 ? (
+                    <div className="mt-3">
+                      <MemoryAssets assets={r.unit.assets.slice(0, 2)} compact />
+                    </div>
+                  ) : null}
                 </div>
               </Card>
             ))

@@ -113,7 +113,15 @@ export interface DashboardMemoryDetail {
   importance: number;
   level: number;
   transaction_time: string;
+  assets: MemoryAsset[];
   organization_knowledge?: OrganizationKnowledgeDetail;
+}
+
+export interface MemoryAsset {
+  storage_key: string;
+  original_name: string;
+  asset_type: string;
+  description?: string | null;
 }
 
 export interface SearchMemoryUnit {
@@ -122,6 +130,7 @@ export interface SearchMemoryUnit {
   content: string;
   keywords: string[];
   level: number;
+  assets: MemoryAsset[];
 }
 
 export interface OrganizationKnowledgeUnit {

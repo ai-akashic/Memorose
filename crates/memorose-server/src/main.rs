@@ -8,12 +8,13 @@ use axum::{
 use chrono::{DateTime, Utc};
 use memorose_common::sharding::decode_raft_node_id;
 use memorose_common::{
-    config::AppConfig, Event, EventContent, GraphEdge, MemoryType, MemoryUnit, RelationType,
+    config::AppConfig, Asset, Event, EventContent, GraphEdge, MemoryType, MemoryUnit, RelationType,
     TimeRange,
 };
 use memorose_core::{LLMClient, MemoroseEngine};
 use moka::future::Cache;
 use serde::{Deserialize, Serialize};
+use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower::ServiceBuilder;
@@ -39,6 +40,47 @@ struct AppState {
     http_client: reqwest::Client,
 }
 
+fn public_asset_storage_key(asset: &Asset) -> String {
+    let key = asset.storage_key.trim();
+    if key.starts_with("http://")
+        || key.starts_with("https://")
+        || key.starts_with("s3://")
+        || key.starts_with("local://")
+        || key.starts_with("inline://")
+    {
+        return key.to_string();
+    }
+
+    if key.is_empty() {
+        return "inline://asset".to_string();
+    }
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    asset.asset_type.hash(&mut hasher);
+    key.hash(&mut hasher);
+    format!("inline://{}/{:016x}", asset.asset_type, hasher.finish())
+}
+
+#[derive(Clone, Serialize)]
+struct RetrievalAssetView {
+    storage_key: String,
+    original_name: String,
+    asset_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+}
+
+impl From<&Asset> for RetrievalAssetView {
+    fn from(asset: &Asset) -> Self {
+        Self {
+            storage_key: public_asset_storage_key(asset),
+            original_name: asset.original_name.clone(),
+            asset_type: asset.asset_type.clone(),
+            description: asset.description.clone(),
+        }
+    }
+}
+
 #[derive(Clone, Serialize)]
 struct RetrievalMemoryUnitView {
     id: Uuid,
@@ -46,6 +88,7 @@ struct RetrievalMemoryUnitView {
     content: String,
     keywords: Vec<String>,
     level: u8,
+    assets: Vec<RetrievalAssetView>,
 }
 
 impl From<&MemoryUnit> for RetrievalMemoryUnitView {
@@ -56,6 +99,7 @@ impl From<&MemoryUnit> for RetrievalMemoryUnitView {
             content: unit.content.clone(),
             keywords: unit.keywords.clone(),
             level: unit.level,
+            assets: unit.assets.iter().map(RetrievalAssetView::from).collect(),
         }
     }
 }
@@ -187,8 +231,7 @@ async fn main() {
         )
         .route(
             "/api-keys",
-            get(dashboard::handlers::list_api_keys)
-                .post(dashboard::handlers::create_api_key),
+            get(dashboard::handlers::list_api_keys).post(dashboard::handlers::create_api_key),
         )
         .route(
             "/api-keys/:key_id",

@@ -3,7 +3,9 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use memorose_common::{Event as MemoryEvent, EventContent, MemoryDomain, MemoryType, MemoryUnit};
+use memorose_common::{
+    Asset, Event as MemoryEvent, EventContent, MemoryDomain, MemoryType, MemoryUnit,
+};
 use memorose_core::engine::{
     OrganizationAutomationCounterSnapshot, OrganizationKnowledgeContributionRecord,
     OrganizationKnowledgeContributionStatus, OrganizationKnowledgeDetailRecord,
@@ -11,6 +13,7 @@ use memorose_core::engine::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 #[derive(Clone, Default, serde::Serialize)]
@@ -425,7 +428,11 @@ pub async fn revoke_api_key(
         return response;
     }
 
-    match state.management_registry.revoke_api_key(key_id.trim()).await {
+    match state
+        .management_registry
+        .revoke_api_key(key_id.trim())
+        .await
+    {
         Ok(Some(record)) => Json(record).into_response(),
         Ok(None) => (
             axum::http::StatusCode::NOT_FOUND,
@@ -456,6 +463,26 @@ struct OrganizationKnowledgeListResponse {
 }
 
 #[derive(Clone, Serialize)]
+struct DashboardAssetView {
+    storage_key: String,
+    original_name: String,
+    asset_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+}
+
+impl From<&Asset> for DashboardAssetView {
+    fn from(asset: &Asset) -> Self {
+        Self {
+            storage_key: public_asset_storage_key(asset),
+            original_name: asset.original_name.clone(),
+            asset_type: asset.asset_type.clone(),
+            description: asset.description.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
 struct DashboardMemoryDetailUnitView {
     id: uuid::Uuid,
     org_id: Option<String>,
@@ -465,6 +492,7 @@ struct DashboardMemoryDetailUnitView {
     importance: f32,
     level: u8,
     transaction_time: chrono::DateTime<chrono::Utc>,
+    assets: Vec<DashboardAssetView>,
 }
 
 impl From<&MemoryUnit> for DashboardMemoryDetailUnitView {
@@ -478,6 +506,7 @@ impl From<&MemoryUnit> for DashboardMemoryDetailUnitView {
             importance: unit.importance,
             level: unit.level,
             transaction_time: unit.transaction_time,
+            assets: unit.assets.iter().map(DashboardAssetView::from).collect(),
         }
     }
 }
@@ -497,6 +526,7 @@ struct DashboardSearchMemoryUnitView {
     content: String,
     keywords: Vec<String>,
     level: u8,
+    assets: Vec<DashboardAssetView>,
 }
 
 impl From<&MemoryUnit> for DashboardSearchMemoryUnitView {
@@ -507,6 +537,7 @@ impl From<&MemoryUnit> for DashboardSearchMemoryUnitView {
             content: unit.content.clone(),
             keywords: unit.keywords.clone(),
             level: unit.level,
+            assets: unit.assets.iter().map(DashboardAssetView::from).collect(),
         }
     }
 }
@@ -703,14 +734,14 @@ fn dashboard_organization_rollup_from_detail(
     let mut contributor_user_ids = contributor_counts.keys().cloned().collect::<Vec<_>>();
     contributor_user_ids.sort();
 
-    let top_contributor_user_id = contributor_counts.into_iter().max_by(
-        |(left_id, left_count), (right_id, right_count)| {
+    let top_contributor_user_id = contributor_counts
+        .into_iter()
+        .max_by(|(left_id, left_count), (right_id, right_count)| {
             left_count
                 .cmp(right_count)
                 .then_with(|| right_id.cmp(left_id))
-        },
-    )
-    .map(|(user_id, _)| user_id);
+        })
+        .map(|(user_id, _)| user_id);
 
     let mut source_type_distribution = source_type_counts.into_iter().collect::<Vec<_>>();
     source_type_distribution.sort_by(|(left_key, left_value), (right_key, right_value)| {
@@ -791,7 +822,9 @@ impl DashboardOrganizationAutomationMetricsView {
                 contributor_user_ids.insert(user_id.clone());
             }
             for (source_type, count) in &rollup.source_type_distribution {
-                *source_type_distribution.entry(source_type.clone()).or_default() += count;
+                *source_type_distribution
+                    .entry(source_type.clone())
+                    .or_default() += count;
             }
         }
         let mut source_type_distribution = source_type_distribution
@@ -888,7 +921,11 @@ pub async fn list_organization_knowledge(
         let matches_query = if query_text.is_empty() {
             true
         } else {
-            list_item.unit.content.to_ascii_lowercase().contains(&query_text)
+            list_item
+                .unit
+                .content
+                .to_ascii_lowercase()
+                .contains(&query_text)
                 || list_item
                     .unit
                     .keywords
@@ -920,11 +957,7 @@ pub async fn list_organization_knowledge(
             right
                 .contribution_count
                 .cmp(&left.contribution_count)
-                .then_with(|| {
-                    right
-                        .membership_count
-                        .cmp(&left.membership_count)
-                })
+                .then_with(|| right.membership_count.cmp(&left.membership_count))
                 .then_with(|| right.published_at.cmp(&left.published_at))
                 .then_with(|| left.unit.id.cmp(&right.unit.id))
         }),
@@ -1069,11 +1102,11 @@ pub async fn get_organization_knowledge_metrics(
                     .into_response();
             }
         };
-        return Json(DashboardOrganizationAutomationMetricsView::from_detail_records(
-            &org_id,
-            &details,
-            counters,
-        ))
+        return Json(
+            DashboardOrganizationAutomationMetricsView::from_detail_records(
+                &org_id, &details, counters,
+            ),
+        )
         .into_response();
     }
 
@@ -1462,6 +1495,126 @@ fn event_content_preview(content: &EventContent) -> (String, bool) {
     }
 }
 
+fn public_asset_storage_key(asset: &Asset) -> String {
+    let key = asset.storage_key.trim();
+    if key.starts_with("http://")
+        || key.starts_with("https://")
+        || key.starts_with("s3://")
+        || key.starts_with("local://")
+        || key.starts_with("inline://")
+    {
+        return key.to_string();
+    }
+
+    if key.is_empty() {
+        return "inline://asset".to_string();
+    }
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    asset.asset_type.hash(&mut hasher);
+    key.hash(&mut hasher);
+    format!("inline://{}/{:016x}", asset.asset_type, hasher.finish())
+}
+
+fn asset_kind_label(asset_type: &str) -> &'static str {
+    let normalized = asset_type.to_ascii_lowercase();
+    if normalized.starts_with("image") {
+        "Image"
+    } else if normalized.starts_with("audio") {
+        "Audio"
+    } else if normalized.starts_with("video") {
+        "Video"
+    } else {
+        "Asset"
+    }
+}
+
+fn asset_source_reference(asset: &Asset) -> String {
+    let key = public_asset_storage_key(asset);
+    let key = key.trim();
+    if key.starts_with("http://")
+        || key.starts_with("https://")
+        || key.starts_with("s3://")
+        || key.starts_with("local://")
+        || key.starts_with("inline://")
+    {
+        key.to_string()
+    } else if !asset.original_name.trim().is_empty() {
+        format!("inline://{}", asset.original_name)
+    } else {
+        "inline://asset".to_string()
+    }
+}
+
+fn format_asset_context(asset: &Asset) -> String {
+    let kind = asset_kind_label(&asset.asset_type);
+    let source = asset_source_reference(asset);
+    match asset.description.as_deref().map(str::trim) {
+        Some(description) if !description.is_empty() => {
+            format!(
+                "[{}: {}] (Source: {})",
+                kind,
+                dashboard_build_content_preview(description, 240),
+                source
+            )
+        }
+        _ => format!("[{}] (Source: {})", kind, source),
+    }
+}
+
+fn format_memory_unit_context(unit: &MemoryUnit) -> String {
+    let mut lines = vec![format!(
+        "- {}",
+        dashboard_build_content_preview(&unit.content, 320)
+    )];
+    if !unit.keywords.is_empty() {
+        lines.push(format!(
+            "  Keywords: {}",
+            unit.keywords
+                .iter()
+                .take(6)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    for asset in unit.assets.iter().take(3) {
+        lines.push(format!("  {}", format_asset_context(asset)));
+    }
+    if unit.assets.len() > 3 {
+        lines.push(format!(
+            "  [Assets: {} more omitted]",
+            unit.assets.len() - 3
+        ));
+    }
+    lines.join("\n")
+}
+
+fn append_context_with_budget(context_text: &mut String, block: &str, budget_chars: usize) -> bool {
+    let used = context_text.chars().count();
+    if used >= budget_chars {
+        return false;
+    }
+
+    let remaining = budget_chars - used;
+    let block_len = block.chars().count();
+
+    if block_len + 1 <= remaining {
+        context_text.push_str(block);
+        context_text.push('\n');
+        return true;
+    }
+
+    if remaining > 24 {
+        context_text.push_str(&dashboard_build_content_preview(
+            block,
+            remaining.saturating_sub(1),
+        ));
+        context_text.push('\n');
+    }
+    false
+}
+
 fn dashboard_memory_detail_view(
     unit: &MemoryUnit,
     organization_knowledge: Option<DashboardOrganizationKnowledgeView>,
@@ -1526,7 +1679,9 @@ fn dashboard_organization_contribution_view_from_record(
             .map(|unit| dashboard_build_content_preview(&unit.content, 160)),
         candidate_at: contribution.candidate_at,
         activated_at: contribution.activated_at,
-        approval_mode: contribution.approval_mode.map(|mode| dashboard_approval_mode_label(&mode)),
+        approval_mode: contribution
+            .approval_mode
+            .map(|mode| dashboard_approval_mode_label(&mode)),
         approved_by: contribution.approved_by,
         revoked_at: contribution.revoked_at,
     }
@@ -1541,7 +1696,10 @@ fn dashboard_organization_membership_view_from_entry(
         source_memory_type: Some(dashboard_memory_type_label(&entry.source_unit.memory_type)),
         source_level: Some(entry.source_unit.level),
         source_keywords: entry.source_unit.keywords,
-        source_content_preview: Some(dashboard_build_content_preview(&entry.source_unit.content, 160)),
+        source_content_preview: Some(dashboard_build_content_preview(
+            &entry.source_unit.content,
+            160,
+        )),
         activated_at: entry
             .contribution
             .as_ref()
@@ -1772,7 +1930,10 @@ fn dashboard_organization_knowledge_view_from_detail(
         .clone()
         .into_iter()
         .map(|entry| {
-            dashboard_organization_contribution_view_from_record(entry.contribution, entry.source_unit)
+            dashboard_organization_contribution_view_from_record(
+                entry.contribution,
+                entry.source_unit,
+            )
         })
         .collect::<Vec<_>>();
     let membership_summary = dashboard_organization_membership_summary(&membership_views);
@@ -2042,11 +2203,7 @@ pub async fn get_memory(
             }
         }
 
-        match shard
-            .engine
-            .get_native_memory_unit_by_index(uuid)
-            .await
-        {
+        match shard.engine.get_native_memory_unit_by_index(uuid).await {
             Ok(Some(mut unit)) => {
                 unit.embedding = None;
                 return Json(dashboard_memory_detail_view(&unit, None)).into_response();
@@ -2132,8 +2289,7 @@ pub async fn graph_data(
             let mut nodes = Vec::new();
             let mut retained_node_ids = std::collections::HashSet::new();
             for unit_id in node_ids_vec {
-                if let Some(hit) = engine.get_shared_search_hit_by_index(unit_id).await?
-                {
+                if let Some(hit) = engine.get_shared_search_hit_by_index(unit_id).await? {
                     let unit = hit.memory_unit();
                     if let Some(ref oid) = org_filter {
                         if unit.org_id.as_deref() != Some(oid.as_str()) {
@@ -2394,7 +2550,9 @@ pub async fn search(
                     {
                         Ok(results) => results
                             .into_iter()
-                            .map(|(u, score)| (DashboardSearchMemoryUnitView::from(u.memory_unit()), score))
+                            .map(|(u, score)| {
+                                (DashboardSearchMemoryUnitView::from(u.memory_unit()), score)
+                            })
                             .collect(),
                         Err(e) => {
                             return (
@@ -2432,10 +2590,7 @@ pub async fn search(
 
     let result_items = results
         .into_iter()
-        .map(|(unit, score)| DashboardSearchResultView {
-            score,
-            unit,
-        })
+        .map(|(unit, score)| DashboardSearchResultView { score, unit })
         .collect();
 
     Json(DashboardSearchResponse {
@@ -2549,23 +2704,31 @@ pub async fn chat(
 
         // Step 2: Build context from search results
         let mut context_text = String::new();
+        let context_budget = context_limit.clamp(1, 10) * 500;
         if !context_results.is_empty() {
             context_text.push_str("## Relevant Context from Memory:\n");
             for (unit, _score) in &context_results {
-                context_text.push_str(&format!("- {}\n", unit.content));
+                if !append_context_with_budget(
+                    &mut context_text,
+                    &format_memory_unit_context(unit.memory_unit()),
+                    context_budget,
+                ) {
+                    break;
+                }
             }
             context_text.push_str("\n");
         }
 
         // Step 3: Build prompt
-        let _system_prompt = format!(
+        let system_prompt = format!(
             "You are a helpful AI assistant with access to the user's memory system. \
-            Use the provided context to give informed and personalized responses.\n\n{}",
+    Use the provided memory context when it is relevant, especially multimodal descriptions and source references. \
+    If the memory context is insufficient, answer honestly and do not invent remembered facts.\n\n{}",
             context_text
         );
 
         // Step 4: Generate response using LLM
-        let full_prompt = format!("User: {}", message);
+        let full_prompt = format!("{}\nUser: {}", system_prompt, message);
         match state.llm_client.generate(&full_prompt).await {
             Ok(response) => {
                 // Stream the response word by word for better UX
