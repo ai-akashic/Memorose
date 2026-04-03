@@ -2,8 +2,8 @@
 
 import { NextIntlClientProvider } from "next-intl";
 import { useEffect } from "react";
-import enMessages from "../../messages/en.json";
-import zhMessages from "../../messages/zh.json";
+import enMessages from "@/messages/en.json";
+import zhMessages from "@/messages/zh.json";
 import { type DashboardLocale, normalizeDashboardLocale } from "@/lib/locale";
 
 export function ClientIntlProvider({

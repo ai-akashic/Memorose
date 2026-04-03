@@ -1,0 +1,457 @@
+{
+  "Navigation": {
+    "cluster": "集群",
+    "organizations": "组织",
+    "memories": "记忆",
+    "playground": "实验台",
+    "agents": "智能体",
+    "metrics": "指标",
+    "settings": "设置",
+    "logout": "退出登录"
+  },
+  "Layout": {
+    "loading": "加载中..."
+  },
+  "LocaleSwitcher": {
+    "en": "English",
+    "zh": "中文"
+  },
+  "CommandPalette": {
+    "placeholder": "输入命令或搜索...",
+    "empty": "没有找到结果。",
+    "navigation": "导航",
+    "actions": "操作",
+    "goToMetrics": "前往指标",
+    "exploreMemories": "浏览记忆",
+    "systemSettings": "系统设置",
+    "logout": "退出登录"
+  },
+  "Cluster": {
+    "title": "集群总览",
+    "subtitleSingle": "单节点 Raft 集群（分布式共识）",
+    "subtitleSharded": "跨分布式节点管理 {count} 个分片",
+    "orgScope": "组织：{orgId}",
+    "loading": "正在加载集群信息...",
+    "stats": {
+      "totalEvents": "总事件数",
+      "memoryUnits": "记忆单元",
+      "graphEdges": "图谱边数",
+      "shards": "分片数",
+      "nodes": "节点数",
+      "pendingQueue": "待处理队列"
+    },
+    "topology": {
+      "title": "集群拓扑",
+      "sharded": "分片集群 · 节点 {node} · {count} 个分片",
+      "leader": "主节点",
+      "follower": "从节点",
+      "candidate": "候选节点",
+      "learner": "学习节点"
+    },
+    "raft": {
+      "consensus": "共识",
+      "state": "状态",
+      "term": "任期",
+      "logIndex": "日志索引",
+      "applied": "已应用",
+      "lag": "复制延迟",
+      "voters": "投票节点"
+    },
+    "heartbeat": {
+      "title": "心跳",
+      "interval": "间隔",
+      "timeout": "超时"
+    },
+    "pipeline": {
+      "title": "处理流程"
+    },
+    "node": {
+      "self": "自身"
+    }
+  },
+  "Memories": {
+    "title": "记忆浏览器",
+    "subtitle": "浏览、搜索并可视化记忆。",
+    "subtitleOrg": "组织范围：{orgId} · 浏览、搜索并可视化记忆。",
+    "setUserId": "设置浏览用户 ID",
+    "tabs": {
+      "list": "列表",
+      "graph": "图谱",
+      "search": "搜索",
+      "tasks": "任务"
+    },
+    "table": {
+      "user": "用户",
+      "agent": "智能体",
+      "level": "层级",
+      "score": "评分",
+      "access": "访问",
+      "refs": "引用",
+      "content": "内容"
+    },
+    "filters": {
+      "allLevels": "全部",
+      "allAgents": "全部智能体",
+      "importance": "重要性",
+      "recent": "最新",
+      "accessCount": "访问量"
+    },
+    "pagination": {
+      "showing": "显示 {from}-{to} / {total}"
+    },
+    "actions": {
+      "view": "查看",
+      "collapse": "收起",
+      "copy": "复制",
+      "copied": "已复制！"
+    },
+    "empty": "暂无记忆",
+    "types": {
+      "procedural": "程序性",
+      "factual": "事实性"
+    },
+    "detail": {
+      "title": "记忆条目",
+      "identifier": "标识符",
+      "user": "用户",
+      "payload": "内容",
+      "hierarchy": "层级",
+      "significance": "重要性",
+      "telemetry": "记录时间",
+      "keywords": "关键词",
+      "assets": "多模态资产",
+      "organizationKnowledge": "组织知识"
+    },
+    "search": {
+      "placeholder": "搜索记忆…",
+      "userIdPlaceholder": "user_id（必填）",
+      "hybrid": "混合",
+      "text": "文本",
+      "vector": "向量",
+      "results": "{count} 条结果 · {time}ms",
+      "noUserId": "搜索需要 user_id，因为共享检索依赖于该用户的共享策略。",
+      "failed": "搜索失败"
+    },
+    "graph": {
+      "loading": "正在加载神经图谱...",
+      "empty": "尚未建立神经路径",
+      "nodes": "节点",
+      "edges": "边"
+    },
+    "taskScope": "请在上方设置具体的用户范围以查看任务树。",
+    "tasks": {
+      "tabs": {
+        "tree": "任务树",
+        "ready": "就绪"
+      },
+      "tree": {
+        "empty": "当前范围下还没有 L3 任务树。",
+        "emptyDescription": "目标被分解成 L3 任务后会显示在这里。",
+        "goalBadge": "目标（L3）",
+        "goalEmpty": "这个目标还没有被分解成任务。",
+        "resultLabel": "结果："
+      },
+      "ready": {
+        "sectionTitle": "可执行任务",
+        "empty": "暂无就绪任务",
+        "emptyDescription": "无待处理依赖的任务将在此显示",
+        "label": "就绪任务",
+        "resultPlaceholder": "关闭此任务前请添加结果摘要",
+        "complete": "完成",
+        "cancel": "取消"
+      },
+      "status": {
+        "Pending": "待处理",
+        "InProgress": "进行中",
+        "Completed": "已完成",
+        "Cancelled": "已取消",
+        "Blocked": "已阻塞：{reason}",
+        "Failed": "已失败：{reason}"
+      }
+    }
+  },
+  "Agents": {
+    "title": "智能体",
+    "sectionLabel": "注册表",
+    "kpi": {
+      "count": "智能体总数",
+      "memories": "记忆总数",
+      "events": "事件总数"
+    },
+    "table": {
+      "agent": "智能体",
+      "memories": "记忆数",
+      "l1": "L1",
+      "l2": "L2",
+      "events": "事件数",
+      "lastActive": "最后活跃"
+    },
+    "empty": "暂无注册智能体",
+    "syncError": "同步错误",
+    "time": {
+      "never": "从未",
+      "justNow": "刚刚",
+      "minutesAgo": "{count} 分钟前",
+      "hoursAgo": "{count} 小时前",
+      "daysAgo": "{count} 天前"
+    }
+  },
+  "Organizations": {
+    "sectionLabel": "组织",
+    "title": "组织工作台",
+    "description": "创建组织、切换活跃范围，并查看规范化的组织知识。",
+    "defaultName": "默认",
+    "activeOrg": "活跃组织",
+    "panel": {
+      "title": "组织"
+    },
+    "createOrg": {
+      "title": "创建组织",
+      "button": "创建组织",
+      "orgIdPlaceholder": "org_id",
+      "displayName": "显示名称"
+    },
+    "switcher": {
+      "ariaLabel": "切换组织",
+      "description": "当前活跃组织决定了你正在查看的 stream 范围和共享组织知识。",
+      "createTitle": "创建组织",
+      "createAndSwitch": "创建并切换",
+      "errorOrgIdRequired": "必须填写 org_id",
+      "errorCreateFailed": "创建组织失败"
+    },
+    "knowledge": {
+      "title": "规范化组织知识",
+      "description": "展示已经发布到 {orgId} 的 canonical 组织知识。",
+      "empty": "该组织还没有已发布的组织知识。",
+      "searchPlaceholder": "搜索 canonical 组织知识",
+      "search": "搜索",
+      "allContributors": "全部贡献者",
+      "allSourceTypes": "全部来源类型",
+      "clearFilters": "清空",
+      "sortPublished": "最新发布",
+      "sortContributions": "贡献数优先",
+      "sortActive": "成员关系数优先",
+      "sortTopic": "主题 A-Z",
+      "metricKnowledge": "知识条目",
+      "metricContributions": "贡献总数",
+      "metricActive": "生效成员关系",
+      "metricContributors": "贡献者数",
+      "metricAutoApproved": "自动批准",
+      "metricPublished": "自动发布",
+      "metricRebuilds": "重建次数",
+      "metricRevokes": "撤销次数",
+      "metricMerged": "合并发布",
+      "policyTitle": "自动化策略",
+      "policyProjection": "投影准入",
+      "policyProjectionValue": "只有完成 canonical 化的 user knowledge 才会进入 organization knowledge。",
+      "policyApproval": "批准方式",
+      "policyApprovalValue": "所有 candidate 都由系统自动批准，不保留人工审核路径。",
+      "policyStorage": "存储模型",
+      "policyStorageValue": "组织知识以 canonical record + 显式 membership/history 状态存储，再物化为读取视图。",
+      "sourceDistribution": "来源类型分布",
+      "select": "选择一条组织知识，查看它的 canonical 内容、当前生效成员和历史贡献。",
+      "detailTitle": "知识详情",
+      "detailDescription": "查看 {orgId} 下 canonical payload、当前生效成员和贡献历史。",
+      "backToList": "返回组织页",
+      "notFound": "未找到该组织知识。",
+      "payload": "规范化内容",
+      "keywords": "关键词",
+      "membershipTitle": "当前生效成员",
+      "historyTitle": "贡献历史",
+      "membershipCount": "成员关系数",
+      "activeMemberships": "生效成员关系",
+      "candidateContributions": "候选中",
+      "revokedContributions": "已撤销",
+      "contributors": "贡献者",
+      "topContributor": "主要贡献者",
+      "primarySourceType": "主来源类型",
+      "membershipContributorGroups": "生效贡献者汇总",
+      "membershipSourceTypeGroups": "生效来源类型汇总",
+      "historyContributorGroups": "历史贡献者汇总",
+      "historySourceTypeGroups": "历史来源类型汇总",
+      "source": "来源",
+      "contributor": "提交者",
+      "approval": "批准方式",
+      "sourceType": "来源类型",
+      "sourcePreview": "来源摘要",
+      "sourceKeywords": "来源关键词",
+      "candidateAt": "候选时间",
+      "activatedAt": "生效时间",
+      "approvedBy": "批准者",
+      "activeContributions": "生效贡献",
+      "totalContributions": "总贡献数",
+      "updatedAtLabel": "更新时间",
+      "updatedAt": "发布时间",
+      "openDetail": "打开详情"
+    }
+  },
+  "Playground": {
+    "title": "实验台",
+    "subtitle": "与记忆增强智能体对话或直接检索记忆。",
+    "tagline": "AI 的认知基础设施",
+    "tabs": {
+      "chat": "对话",
+      "retrieve": "检索",
+      "forget": "遗忘"
+    },
+    "chat": {
+      "session": "会话",
+      "userId": "用户 ID",
+      "orgScope": "组织范围：{orgId}",
+      "welcomeTitle": "初始化数据流",
+      "welcomeDesc": "持久化编码已激活，数据正流向 L0/L1/L2 记忆层级。",
+      "setCredentials": "设置 user_id 以开始会话",
+      "placeholder": "发送神经脉冲...",
+      "emptyResponse": "神经信号检索失败。",
+      "errorPrefix": "错误"
+    },
+    "retrieve": {
+      "userId": "用户 ID",
+      "streamId": "流 ID",
+      "orgScope": "组织范围：{orgId}",
+      "queryPlaceholder": "查询记忆矩阵...",
+      "button": "检索",
+      "parameters": "参数",
+      "params": {
+        "limit": "数量限制",
+        "score": "评分",
+        "depth": "深度",
+        "from": "开始时间",
+        "to": "结束时间",
+        "asOf": "截止时间"
+      },
+      "results": "{count} 条结果",
+      "noResults": "未找到匹配的记忆",
+      "unknownError": "未知错误",
+      "scoreLabel": "分数"
+    },
+    "forget": {
+      "title": "遗忘流程",
+      "description": "先预览将命中的用户本地记忆和源事件，再执行逻辑遗忘或永久删除。",
+      "orgScope": "组织下本地范围：{orgId}",
+      "placeholder": "忘记与……相关的内容",
+      "preview": "预览",
+      "execute": "执行",
+      "previewSummary": "遗忘预览",
+      "previewMemories": "命中记忆",
+      "previewEvents": "命中事件",
+      "emptyMemories": "当前预览没有匹配的记忆。",
+      "emptyEvents": "当前预览没有关联的源事件。",
+      "modeHintLogical": "逻辑遗忘会让内容从检索和对话里消失。",
+      "modeHintHard": "永久删除会真正移除记忆和源事件。",
+      "executeSuccess": "执行完成。已处理 {memories} 条记忆，{events} 条事件。",
+      "modes": {
+        "logical": "逻辑遗忘",
+        "hard": "永久删除"
+      },
+      "summary": {
+        "memories": "{count} 条记忆",
+        "events": "{count} 条事件"
+      },
+      "errors": {
+        "preview": "构建遗忘预览失败",
+        "execute": "执行遗忘请求失败"
+      }
+    }
+  },
+  "Metrics": {
+    "title": "遥测数据",
+    "subtitle": "系统级记忆与处理流程指标。",
+    "subtitleOrg": "范围限定至组织：{orgId}",
+    "stats": {
+      "ingested": "已摄取",
+      "pending": "待处理",
+      "localMemory": "本地记忆",
+      "sharedMemory": "共享记忆",
+      "totalMemory": "总记忆数",
+      "edges": "边数",
+      "agentDomain": "智能体域",
+      "userDomain": "用户域",
+      "orgDomain": "组织域"
+    },
+    "cognitiveFlow": "认知流",
+    "pathways": "路径分布",
+    "pathwaysEmpty": "暂无数据",
+    "density": "密度",
+    "node": {
+      "title": "节点",
+      "heartbeat": "心跳",
+      "election": "选举",
+      "snapshot": "快照",
+      "logs": "条日志"
+    },
+    "domainMix": {
+      "title": "领域分布",
+      "agent": "智能体",
+      "user": "用户",
+      "app": "应用",
+      "organization": "组织"
+    },
+    "levelByScope": {
+      "title": "范围内层级",
+      "localL1": "本地 L1",
+      "localL2": "本地 L2",
+      "sharedL1": "共享 L1",
+      "sharedL2": "共享 L2"
+    }
+  },
+  "Settings": {
+    "title": "设置",
+    "subtitle": "管理系统配置与安全凭证。",
+    "mustChange": {
+      "title": "需要操作",
+      "description": "您当前正在使用默认安装密码，出于安全考虑，请立即更改密码。"
+    },
+    "configuration": "配置",
+    "sections": {
+      "Raft": "Raft",
+      "Worker": "Worker",
+      "LLM": "LLM",
+      "Storage": "存储",
+      "configTitle": "{title} 配置"
+    },
+  "security": {
+    "title": "重置密码",
+    "subtitle": "身份验证管理",
+    "button": "更改凭证",
+      "dialogTitle": "更新密码",
+      "dialogDescription": "输入当前密码并选择新的安全密码，最少需要 8 个字符。",
+      "currentPassword": "当前密码",
+      "newPassword": "新密码",
+      "confirmPassword": "确认新密码",
+      "submit": "更新密码",
+    "success": "密码更新成功",
+    "errorMismatch": "密码不匹配",
+    "errorTooShort": "密码至少需要 8 个字符",
+    "errorFailed": "操作失败"
+  },
+  "apiKeys": {
+    "title": "API Keys",
+    "subtitle": "程序化访问管理",
+    "createButton": "创建 API Key",
+    "dialogTitle": "创建 API Key",
+    "dialogDescription": "为脚本、基准测试或服务集成签发一个可管理的 API key。",
+    "dialogFootnote": "完整 key 只会在创建后显示一次，离开页面前请保存。",
+    "createSubmit": "生成 Key",
+    "createSuccess": "API key 创建成功",
+    "revokeSuccess": "API key 已撤销",
+    "errorFailed": "API key 操作失败",
+    "createOrgRequired": "创建 key 前请先选择组织",
+    "orgLabel": "组织",
+    "orgPlaceholder": "选择组织",
+    "nameLabel": "名称",
+    "namePlaceholder": "Benchmark runner",
+    "createdTitle": "新的 API key 已创建",
+    "createdDescription": "这是唯一一次显示完整密钥的机会。",
+    "rawKeyLabel": "完整密钥",
+    "copy": "复制 Key",
+    "copied": "已复制",
+    "empty": "当前还没有创建任何 API key。",
+    "active": "有效",
+    "revoked": "已撤销",
+    "prefixLabel": "前缀",
+    "createdAtLabel": "创建时间",
+    "revokeButton": "撤销 Key"
+  }
+}
+}

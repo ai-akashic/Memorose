@@ -1,0 +1,457 @@
+{
+  "Navigation": {
+    "cluster": "Cluster",
+    "organizations": "Organizations",
+    "memories": "Memories",
+    "playground": "Playground",
+    "agents": "Agents",
+    "metrics": "Metrics",
+    "settings": "Settings",
+    "logout": "Logout"
+  },
+  "Layout": {
+    "loading": "Loading..."
+  },
+  "LocaleSwitcher": {
+    "en": "English",
+    "zh": "中文"
+  },
+  "CommandPalette": {
+    "placeholder": "Type a command or search...",
+    "empty": "No results found.",
+    "navigation": "Navigation",
+    "actions": "Actions",
+    "goToMetrics": "Go to Metrics",
+    "exploreMemories": "Explore Memories",
+    "systemSettings": "System Settings",
+    "logout": "Logout"
+  },
+  "Cluster": {
+    "title": "Cluster Overview",
+    "subtitleSingle": "Single-node Raft cluster with distributed consensus",
+    "subtitleSharded": "Managing {count} shards across distributed nodes",
+    "orgScope": "Org: {orgId}",
+    "loading": "Loading cluster information...",
+    "stats": {
+      "totalEvents": "Total Events",
+      "memoryUnits": "Memory Units",
+      "graphEdges": "Graph Edges",
+      "shards": "Shards",
+      "nodes": "Nodes",
+      "pendingQueue": "Pending Queue"
+    },
+    "topology": {
+      "title": "Cluster Topology",
+      "sharded": "Sharded Cluster · Node {node} · {count} Shards",
+      "leader": "Leader",
+      "follower": "Follower",
+      "candidate": "Candidate",
+      "learner": "Learner"
+    },
+    "raft": {
+      "consensus": "Consensus",
+      "state": "State",
+      "term": "Term",
+      "logIndex": "Log Index",
+      "applied": "Applied",
+      "lag": "Lag",
+      "voters": "Voters"
+    },
+    "heartbeat": {
+      "title": "Heartbeat",
+      "interval": "Interval",
+      "timeout": "Timeout"
+    },
+    "pipeline": {
+      "title": "Pipeline"
+    },
+    "node": {
+      "self": "Self"
+    }
+  },
+  "Memories": {
+    "title": "Memory Explorer",
+    "subtitle": "Browse, search, and visualize memories.",
+    "subtitleOrg": "Org scope: {orgId} · Browse, search, and visualize memories.",
+    "setUserId": "Set explorer user_id",
+    "tabs": {
+      "list": "List",
+      "graph": "Graph",
+      "search": "Search",
+      "tasks": "Tasks"
+    },
+    "table": {
+      "user": "User",
+      "agent": "Agent",
+      "level": "Level",
+      "score": "Score",
+      "access": "Access",
+      "refs": "Refs",
+      "content": "Content"
+    },
+    "filters": {
+      "allLevels": "ALL",
+      "allAgents": "ALL AGENTS",
+      "importance": "IMPORTANCE",
+      "recent": "RECENT",
+      "accessCount": "ACCESS"
+    },
+    "pagination": {
+      "showing": "Showing {from}-{to} of {total}"
+    },
+    "actions": {
+      "view": "view",
+      "collapse": "collapse",
+      "copy": "copy",
+      "copied": "copied!"
+    },
+    "empty": "No memories found",
+    "types": {
+      "procedural": "Procedural",
+      "factual": "Factual"
+    },
+    "detail": {
+      "title": "Memory Entry",
+      "identifier": "Identifier",
+      "user": "User",
+      "payload": "Payload",
+      "hierarchy": "Hierarchy",
+      "significance": "Significance",
+      "telemetry": "Recorded At",
+      "keywords": "Keywords",
+      "assets": "Assets",
+      "organizationKnowledge": "Organization Knowledge"
+    },
+    "search": {
+      "placeholder": "Search memories…",
+      "userIdPlaceholder": "user_id (required)",
+      "hybrid": "Hybrid",
+      "text": "Text",
+      "vector": "Vector",
+      "results": "{count} results · {time}ms",
+      "noUserId": "Search requires a user_id because shared retrieval depends on that user's share policy.",
+      "failed": "Search failed"
+    },
+    "graph": {
+      "loading": "Loading neural graph...",
+      "empty": "No neural pathways established yet",
+      "nodes": "nodes",
+      "edges": "edges"
+    },
+    "taskScope": "Please set a specific user scope above to view task trees.",
+    "tasks": {
+      "tabs": {
+        "tree": "Task Tree",
+        "ready": "Ready"
+      },
+      "tree": {
+        "empty": "No L3 task trees found for this context.",
+        "emptyDescription": "Goals decomposed into L3 tasks will appear here.",
+        "goalBadge": "Goal (L3)",
+        "goalEmpty": "This goal has not been decomposed into tasks yet.",
+        "resultLabel": "Result:"
+      },
+      "ready": {
+        "sectionTitle": "Ready to Execute",
+        "empty": "No ready tasks",
+        "emptyDescription": "Tasks with no pending dependencies will appear here",
+        "label": "ready task",
+        "resultPlaceholder": "Add result summary before closing this task",
+        "complete": "Complete",
+        "cancel": "Cancel"
+      },
+      "status": {
+        "Pending": "Pending",
+        "InProgress": "In Progress",
+        "Completed": "Completed",
+        "Cancelled": "Cancelled",
+        "Blocked": "Blocked: {reason}",
+        "Failed": "Failed: {reason}"
+      }
+    }
+  },
+  "Agents": {
+    "title": "Agents",
+    "sectionLabel": "Registry",
+    "kpi": {
+      "count": "Total Agents",
+      "memories": "Total Memories",
+      "events": "Total Events"
+    },
+    "table": {
+      "agent": "Agent",
+      "memories": "Memories",
+      "l1": "L1",
+      "l2": "L2",
+      "events": "Events",
+      "lastActive": "Last Active"
+    },
+    "empty": "No agents registered",
+    "syncError": "Sync Error",
+    "time": {
+      "never": "Never",
+      "justNow": "Just now",
+      "minutesAgo": "{count}m ago",
+      "hoursAgo": "{count}h ago",
+      "daysAgo": "{count}d ago"
+    }
+  },
+  "Organizations": {
+    "sectionLabel": "Organizations",
+    "title": "Organization Workspace",
+    "description": "Create organizations, switch active scope, and inspect canonical organization knowledge.",
+    "defaultName": "Default",
+    "activeOrg": "Active Org",
+    "panel": {
+      "title": "Organizations"
+    },
+    "createOrg": {
+      "title": "Create Organization",
+      "button": "Create Organization",
+      "orgIdPlaceholder": "org_id",
+      "displayName": "Display name"
+    },
+    "switcher": {
+      "ariaLabel": "Switch organization",
+      "description": "The active organization controls which streams and shared organization knowledge you are viewing.",
+      "createTitle": "Create Organization",
+      "createAndSwitch": "Create And Switch",
+      "errorOrgIdRequired": "org_id is required",
+      "errorCreateFailed": "Failed to create organization"
+    },
+    "knowledge": {
+      "title": "Canonical Knowledge",
+      "description": "Shared organization knowledge published into the canonical org scope for {orgId}.",
+      "empty": "No organization knowledge has been published yet.",
+      "searchPlaceholder": "Search canonical knowledge",
+      "search": "Search",
+      "allContributors": "All Contributors",
+      "allSourceTypes": "All Source Types",
+      "clearFilters": "Clear",
+      "sortPublished": "Newest",
+      "sortContributions": "Most Contributions",
+      "sortActive": "Most Memberships",
+      "sortTopic": "Topic A-Z",
+      "metricKnowledge": "Knowledge",
+      "metricContributions": "Contributions",
+      "metricActive": "Active Memberships",
+      "metricContributors": "Contributors",
+      "metricAutoApproved": "Auto Approved",
+      "metricPublished": "Published",
+      "metricRebuilds": "Rebuilds",
+      "metricRevokes": "Revokes",
+      "metricMerged": "Merged Topics",
+      "policyTitle": "Automation Policy",
+      "policyProjection": "Projection",
+      "policyProjectionValue": "Only canonicalized user knowledge is promoted into organization knowledge.",
+      "policyApproval": "Approval",
+      "policyApprovalValue": "Every candidate is approved automatically by the system. No manual review path is retained.",
+      "policyStorage": "Storage",
+      "policyStorageValue": "Organization knowledge is stored as canonical records plus explicit membership and history state, then materialized into read views.",
+      "sourceDistribution": "Source Type Distribution",
+      "select": "Select a knowledge item to inspect its canonical payload, active memberships, and history.",
+      "detailTitle": "Knowledge Detail",
+      "detailDescription": "Inspect the canonical payload, active memberships, and contribution history for {orgId}.",
+      "backToList": "Back To Organization",
+      "notFound": "Organization knowledge not found.",
+      "payload": "Canonical Payload",
+      "keywords": "Keywords",
+      "membershipTitle": "Current Membership",
+      "historyTitle": "Contribution History",
+      "membershipCount": "Memberships",
+      "activeMemberships": "Active Memberships",
+      "candidateContributions": "Candidates",
+      "revokedContributions": "Revoked",
+      "contributors": "Contributors",
+      "topContributor": "Top Contributor",
+      "primarySourceType": "Primary Source Type",
+      "membershipContributorGroups": "Membership Contributors",
+      "membershipSourceTypeGroups": "Membership Source Types",
+      "historyContributorGroups": "History Contributors",
+      "historySourceTypeGroups": "History Source Types",
+      "source": "Source",
+      "contributor": "Contributor",
+      "approval": "Approval",
+      "sourceType": "Source Type",
+      "sourcePreview": "Source Preview",
+      "sourceKeywords": "Source Keywords",
+      "candidateAt": "Candidate At",
+      "activatedAt": "Activated At",
+      "approvedBy": "Approved By",
+      "activeContributions": "Active Contributions",
+      "totalContributions": "Total Contributions",
+      "updatedAtLabel": "Updated At",
+      "updatedAt": "Published",
+      "openDetail": "Open Detail"
+    }
+  },
+  "Playground": {
+    "title": "Playground",
+    "subtitle": "Chat with a memory-augmented agent or retrieve memories directly.",
+    "tagline": "Cognitive Infrastructure for AI",
+    "tabs": {
+      "chat": "Chat",
+      "retrieve": "Retrieve",
+      "forget": "Forget"
+    },
+    "chat": {
+      "session": "Session",
+      "userId": "User ID",
+      "orgScope": "org scope: {orgId}",
+      "welcomeTitle": "Initialize Stream",
+      "welcomeDesc": "Persistent encoding active. Data flowing to L0/L1/L2 memory hierarchy.",
+      "setCredentials": "Set user_id to start a session",
+      "placeholder": "Send neural pulse...",
+      "emptyResponse": "Failed to retrieve neural signal.",
+      "errorPrefix": "Error"
+    },
+    "retrieve": {
+      "userId": "User ID",
+      "streamId": "Stream ID",
+      "orgScope": "org scope: {orgId}",
+      "queryPlaceholder": "Query memory matrix...",
+      "button": "Retrieve",
+      "parameters": "Parameters",
+      "params": {
+        "limit": "Limit",
+        "score": "Score",
+        "depth": "Depth",
+        "from": "From",
+        "to": "To",
+        "asOf": "As Of"
+      },
+      "results": "{count} results",
+      "noResults": "No matching memories found",
+      "unknownError": "Unknown error",
+      "scoreLabel": "Score"
+    },
+    "forget": {
+      "title": "Forget Flow",
+      "description": "Preview which user-local memories and source events match a forgetting request, then execute logical forgetting or permanent deletion.",
+      "orgScope": "org-local scope: {orgId}",
+      "placeholder": "Forget everything related to...",
+      "preview": "Preview",
+      "execute": "Execute",
+      "previewSummary": "Forget Preview",
+      "previewMemories": "Matched Memories",
+      "previewEvents": "Matched Events",
+      "emptyMemories": "No matching memories in this preview.",
+      "emptyEvents": "No source events linked to this preview.",
+      "modeHintLogical": "Logical forgetting hides items from retrieval.",
+      "modeHintHard": "Hard delete permanently removes memories and source events.",
+      "executeSuccess": "Completed. Forgot {memories} memories and {events} events.",
+      "modes": {
+        "logical": "Logical",
+        "hard": "Hard Delete"
+      },
+      "summary": {
+        "memories": "{count} memories",
+        "events": "{count} events"
+      },
+      "errors": {
+        "preview": "Failed to build forget preview",
+        "execute": "Failed to execute forget request"
+      }
+    }
+  },
+  "Metrics": {
+    "title": "Telemetry",
+    "subtitle": "System-wide memory and pipeline metrics.",
+    "subtitleOrg": "Scoped to org: {orgId}",
+    "stats": {
+      "ingested": "Ingested",
+      "pending": "Pending",
+      "localMemory": "Local Memory",
+      "sharedMemory": "Shared Memory",
+      "totalMemory": "Total Memory",
+      "edges": "Edges",
+      "agentDomain": "Agent Domain",
+      "userDomain": "User Domain",
+      "orgDomain": "Org Domain"
+    },
+    "cognitiveFlow": "Cognitive Flow",
+    "pathways": "Pathways",
+    "pathwaysEmpty": "Empty",
+    "density": "Density",
+    "node": {
+      "title": "Node",
+      "heartbeat": "Heartbeat",
+      "election": "Election",
+      "snapshot": "Snapshot",
+      "logs": "logs"
+    },
+    "domainMix": {
+      "title": "Domain Mix",
+      "agent": "Agent",
+      "user": "User",
+      "app": "App",
+      "organization": "Organization"
+    },
+    "levelByScope": {
+      "title": "Level By Scope",
+      "localL1": "Local L1",
+      "localL2": "Local L2",
+      "sharedL1": "Shared L1",
+      "sharedL2": "Shared L2"
+    }
+  },
+  "Settings": {
+    "title": "Settings",
+    "subtitle": "Manage system configuration and security credentials.",
+    "mustChange": {
+      "title": "Action Required",
+      "description": "You are currently using the default installation password. For security reasons, please change your password immediately."
+    },
+    "configuration": "Configuration",
+    "sections": {
+      "Raft": "Raft",
+      "Worker": "Worker",
+      "LLM": "LLM",
+      "Storage": "Storage",
+      "configTitle": "{title} Configuration"
+    },
+  "security": {
+    "title": "Reset Password",
+    "subtitle": "Authentication Management",
+    "button": "Change Credentials",
+      "dialogTitle": "Update Password",
+      "dialogDescription": "Enter your current password and choose a new secure password. Minimum 8 characters required.",
+      "currentPassword": "Current Password",
+      "newPassword": "New Password",
+      "confirmPassword": "Confirm New Password",
+      "submit": "Update Password",
+    "success": "Password updated successfully",
+    "errorMismatch": "Passwords do not match",
+    "errorTooShort": "Password must be at least 8 characters",
+    "errorFailed": "Failed"
+  },
+  "apiKeys": {
+    "title": "API Keys",
+    "subtitle": "Programmatic access management",
+    "createButton": "Create API Key",
+    "dialogTitle": "Create API Key",
+    "dialogDescription": "Issue a scoped API key for scripts, benchmarks, or service integrations.",
+    "dialogFootnote": "The full key is shown only once after creation. Store it before leaving this page.",
+    "createSubmit": "Generate Key",
+    "createSuccess": "API key created successfully",
+    "revokeSuccess": "API key revoked",
+    "errorFailed": "API key operation failed",
+    "createOrgRequired": "Select an organization before creating a key",
+    "orgLabel": "Organization",
+    "orgPlaceholder": "Select organization",
+    "nameLabel": "Name",
+    "namePlaceholder": "Benchmark runner",
+    "createdTitle": "New API key created",
+    "createdDescription": "This is the only time the full secret will be shown.",
+    "rawKeyLabel": "Secret key",
+    "copy": "Copy Key",
+    "copied": "Copied",
+    "empty": "No API keys have been created yet.",
+    "active": "Active",
+    "revoked": "Revoked",
+    "prefixLabel": "Prefix",
+    "createdAtLabel": "Created",
+    "revokeButton": "Revoke Key"
+  }
+}
+}
