@@ -50,6 +50,14 @@ pub struct MilestoneDTO {
     pub dependencies: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemoryCorrectionAction {
+    pub target_id: uuid::Uuid,
+    pub relation: RelationType,
+    pub reason: String,
+    pub confidence: f32,
+}
+
 #[derive(Clone)]
 pub struct Arbitrator {
     llm_client: Option<Arc<dyn LLMClient>>,
@@ -490,6 +498,109 @@ impl Arbitrator {
         Ok(edges)
     }
 
+    /// Compare a new factual memory against existing user memories and return
+    /// structured correction actions for obsolete or contradictory historical facts.
+    pub async fn detect_memory_corrections(
+        &self,
+        new_memory: &MemoryUnit,
+        context_memories: &[MemoryUnit],
+    ) -> Result<Vec<MemoryCorrectionAction>> {
+        let client = match &self.llm_client {
+            Some(c) => c,
+            None => return Ok(Vec::new()),
+        };
+
+        if context_memories.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let (context_str, included, total) = build_bounded_context(
+            context_memories.iter().map(|memory| {
+                format!(
+                    "ID: {}\nTimestamp: {}\nContent: {}",
+                    memory.id, memory.transaction_time, memory.content
+                )
+            }),
+            "\n---\n",
+        );
+        if included < total {
+            tracing::warn!(
+                "detect_memory_corrections: truncated context to {}/{} memories to stay within token budget",
+                included,
+                total
+            );
+        }
+
+        let system_prompt = "You are a memory correction engine. \
+            Compare the New Memory against Existing Memories and identify old facts that are now obsolete or contradicted. \
+            Return ONLY valid JSON in this format: \
+            [{\"target_id\":\"UUID\",\"action\":\"OBSOLETE|CONTRADICTS\",\"reason\":\"short reason\",\"confidence\":0.0-1.0}] \
+            Use OBSOLETE when the new memory updates/replaces an older fact. \
+            Use CONTRADICTS only when both versions should remain linked as conflicting claims. \
+            Return [] when no correction is needed.";
+
+        let user_prompt = format!(
+            "Existing Memories:\n{}\n\nNew Memory:\nTimestamp: {}\nContent: {}",
+            context_str, new_memory.transaction_time, new_memory.content
+        );
+
+        let result = match client
+            .generate(&format!("{}\n\n{}", system_prompt, user_prompt))
+            .await
+        {
+            Ok(response) => response.data,
+            Err(error) => {
+                tracing::warn!(
+                    "Memory correction LLM call failed: {:?}. Skipping correction pass.",
+                    error
+                );
+                return Ok(Vec::new());
+            }
+        };
+
+        let clean_json = result
+            .trim()
+            .trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim();
+
+        #[derive(serde::Deserialize)]
+        struct MemoryCorrectionDTO {
+            target_id: String,
+            action: String,
+            #[serde(default)]
+            reason: String,
+            #[serde(default = "default_correction_confidence")]
+            confidence: f32,
+        }
+
+        fn default_correction_confidence() -> f32 {
+            1.0
+        }
+
+        let dtos: Vec<MemoryCorrectionDTO> = serde_json::from_str(clean_json).unwrap_or_default();
+        let mut actions = Vec::new();
+        for dto in dtos {
+            let Ok(target_id) = uuid::Uuid::parse_str(&dto.target_id) else {
+                continue;
+            };
+            let relation = match dto.action.as_str() {
+                "OBSOLETE" => RelationType::EvolvedTo,
+                "CONTRADICTS" => RelationType::Contradicts,
+                _ => continue,
+            };
+            actions.push(MemoryCorrectionAction {
+                target_id,
+                relation,
+                reason: dto.reason,
+                confidence: dto.confidence.clamp(0.0, 1.0),
+            });
+        }
+
+        Ok(actions)
+    }
+
     /// Summarize a detected community of memories into a high-level insight.
     pub async fn summarize_community(&self, memories: Vec<String>) -> Result<CommunityInsight> {
         let client = match &self.llm_client {
@@ -646,5 +757,47 @@ mod tests {
 
         assert_eq!(insight.name, "Rust Programming");
         assert!(insight.summary.contains("memory safety"));
+    }
+
+    #[tokio::test]
+    async fn test_detect_memory_corrections_parses_obsolete_action() {
+        let target_id = uuid::Uuid::new_v4();
+        let client = Arc::new(MockLLM {
+            response: format!(
+                r#"[{{"target_id":"{}","action":"OBSOLETE","reason":"Address updated","confidence":0.91}}]"#,
+                target_id
+            ),
+        });
+        let arbitrator = Arbitrator::with_client(client);
+
+        let new_memory = MemoryUnit::new(
+            None,
+            "test-user".into(),
+            None,
+            uuid::Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I now live in Beijing".into(),
+            None,
+        );
+        let old_memory = MemoryUnit::new(
+            None,
+            "test-user".into(),
+            None,
+            uuid::Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I live in Shanghai".into(),
+            None,
+        );
+
+        let actions = arbitrator
+            .detect_memory_corrections(&new_memory, &[old_memory])
+            .await
+            .unwrap();
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].target_id, target_id);
+        assert_eq!(actions[0].relation, RelationType::EvolvedTo);
+        assert_eq!(actions[0].reason, "Address updated");
+        assert_eq!(actions[0].confidence, 0.91);
     }
 }

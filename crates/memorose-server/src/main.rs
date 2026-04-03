@@ -275,6 +275,10 @@ async fn main() {
             post(retrieve_memory),
         )
         .route(
+            "/v1/users/:user_id/memories/:id",
+            delete(delete_memory_unit_hard),
+        )
+        .route(
             "/v1/users/:user_id/streams/:stream_id/tasks/tree",
             get(get_task_tree),
         )
@@ -953,6 +957,62 @@ async fn retrieve_memory(
     }
 }
 
+async fn hard_delete_memory_unit_for_user(
+    engine: &MemoroseEngine,
+    user_id: &str,
+    unit_id: Uuid,
+) -> anyhow::Result<bool> {
+    if engine
+        .get_memory_unit_including_forgotten(user_id, unit_id)?
+        .is_none()
+    {
+        return Ok(false);
+    }
+
+    engine.delete_memory_unit_hard(user_id, unit_id).await?;
+    Ok(true)
+}
+
+async fn delete_memory_unit_hard(
+    State(state): State<Arc<AppState>>,
+    Path((user_id, id)): Path<(String, String)>,
+) -> axum::response::Response {
+    if let Err(r) = validate_id(&user_id, "user_id") {
+        return r;
+    }
+
+    let unit_id = match Uuid::parse_str(&id) {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Invalid memory ID format" })),
+            )
+                .into_response();
+        }
+    };
+
+    let shard = state.shard_manager.shard_for_user(&user_id);
+    match hard_delete_memory_unit_for_user(&shard.engine, &user_id, unit_id).await {
+        Ok(true) => Json(serde_json::json!({
+            "status": "deleted",
+            "memory_id": unit_id,
+            "mode": "hard"
+        }))
+        .into_response(),
+        Ok(false) => (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "Memory not found" })),
+        )
+            .into_response(),
+        Err(error) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 #[derive(Deserialize)]
 struct JoinRequest {
     node_id: u32,
@@ -1281,6 +1341,8 @@ async fn build_l3_task_tree(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use memorose_common::{ForgetMode, ForgetTargetKind, ForgettingTombstone, MemoryType};
+    use tempfile::tempdir;
 
     #[test]
     fn test_parse_ingest_content_rejects_invalid_json() {
@@ -1295,5 +1357,57 @@ mod tests {
             EventContent::Json(value) => assert_eq!(value["ok"], serde_json::json!(true)),
             _ => panic!("expected json content"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_hard_delete_memory_unit_for_user_deletes_forgotten_memory() -> anyhow::Result<()>
+    {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let unit = MemoryUnit::new(
+            None,
+            "test-user".into(),
+            None,
+            Uuid::new_v4(),
+            MemoryType::Factual,
+            "Delete me permanently".into(),
+            Some(vec![1.0; 768]),
+        );
+        let unit_id = unit.id;
+        engine.store_memory_unit(unit).await?;
+
+        let tombstone = ForgettingTombstone {
+            user_id: "test-user".into(),
+            org_id: None,
+            target_kind: ForgetTargetKind::MemoryUnit,
+            target_id: unit_id.to_string(),
+            reason_query: "forget this".into(),
+            created_at: Utc::now(),
+            preview_id: Some(Uuid::new_v4().to_string()),
+            mode: ForgetMode::Logical,
+        };
+        engine.mark_memory_unit_forgotten("test-user", unit_id, &tombstone)?;
+
+        assert!(hard_delete_memory_unit_for_user(&engine, "test-user", unit_id).await?);
+        assert!(engine
+            .get_memory_unit_including_forgotten("test-user", unit_id)?
+            .is_none());
+        assert!(!engine.is_memory_unit_forgotten("test-user", unit_id)?);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_hard_delete_memory_unit_for_user_returns_false_when_missing() -> anyhow::Result<()>
+    {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        assert!(!hard_delete_memory_unit_for_user(&engine, "test-user", Uuid::new_v4()).await?);
+
+        Ok(())
     }
 }

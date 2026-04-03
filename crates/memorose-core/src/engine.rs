@@ -1,4 +1,4 @@
-use crate::arbitrator::Arbitrator;
+use crate::arbitrator::{Arbitrator, MemoryCorrectionAction};
 use crate::reranker::Reranker;
 use crate::storage::graph::GraphStore;
 use crate::storage::index::TextIndex;
@@ -3306,6 +3306,17 @@ impl MemoroseEngine {
                 if !Self::is_local_domain(&unit.domain) {
                     return;
                 }
+                if let Err(e) = engine.reconcile_conflicting_memory_unit(&unit).await {
+                    tracing::error!("Memory reconciliation failed for unit {}: {:?}", unit.id, e);
+                }
+                match engine.is_visible_memory_unit(&unit) {
+                    Ok(true) => {}
+                    Ok(false) => return,
+                    Err(e) => {
+                        tracing::error!("Failed to check visibility for unit {}: {:?}", unit.id, e);
+                        return;
+                    }
+                }
                 if let Err(e) = engine.auto_link_memory(&unit).await {
                     tracing::error!("Auto-linking failed for unit {}: {:?}", unit.id, e);
                 }
@@ -3378,6 +3389,86 @@ impl MemoroseEngine {
             }
         }
         Ok(())
+    }
+
+    async fn reconcile_conflicting_memory_unit(&self, unit: &MemoryUnit) -> Result<Vec<Uuid>> {
+        if unit.level != 1
+            || unit.memory_type != MemoryType::Factual
+            || !Self::is_local_domain(&unit.domain)
+        {
+            return Ok(Vec::new());
+        }
+
+        let mut context = self
+            .search_text(&unit.user_id, &unit.content, 8, false, None)
+            .await?;
+        context.retain(|existing| {
+            existing.id != unit.id
+                && existing.level == 1
+                && existing.memory_type == MemoryType::Factual
+                && existing.transaction_time < unit.transaction_time
+        });
+        if context.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let actions = self
+            .arbitrator
+            .detect_memory_corrections(unit, &context)
+            .await?;
+        self.apply_memory_correction_actions(unit, actions).await
+    }
+
+    async fn apply_memory_correction_actions(
+        &self,
+        unit: &MemoryUnit,
+        actions: Vec<MemoryCorrectionAction>,
+    ) -> Result<Vec<Uuid>> {
+        let mut affected_ids = Vec::new();
+
+        for action in actions {
+            if action.target_id == unit.id
+                || self
+                    .get_memory_unit_including_forgotten(&unit.user_id, action.target_id)?
+                    .is_none()
+            {
+                continue;
+            }
+
+            let reason = if action.reason.trim().is_empty() {
+                format!("Superseded by memory {}", unit.id)
+            } else {
+                action.reason.clone()
+            };
+            let tombstone = ForgettingTombstone {
+                user_id: unit.user_id.clone(),
+                org_id: unit.org_id.clone(),
+                target_kind: memorose_common::ForgetTargetKind::MemoryUnit,
+                target_id: action.target_id.to_string(),
+                reason_query: reason,
+                created_at: chrono::Utc::now(),
+                preview_id: Some(unit.id.to_string()),
+                mode: memorose_common::ForgetMode::Logical,
+            };
+            self.mark_memory_unit_forgotten(&unit.user_id, action.target_id, &tombstone)?;
+
+            let edge = GraphEdge::new(
+                unit.user_id.clone(),
+                unit.id,
+                action.target_id,
+                action.relation,
+                action.confidence,
+            );
+            self.graph.add_edge(&edge).await?;
+            affected_ids.push(action.target_id);
+        }
+
+        if !affected_ids.is_empty() {
+            self.invalidate_query_cache(&unit.user_id).await;
+            let _ = self.set_needs_community(&unit.user_id);
+        }
+
+        Ok(affected_ids)
     }
 
     // ── Search ──────────────────────────────────────────────────────
@@ -4142,6 +4233,17 @@ impl MemoroseEngine {
         if self.is_memory_unit_forgotten(user_id, id)? {
             return Ok(None);
         }
+        self.get_memory_unit_raw(user_id, id)
+    }
+
+    /// Return a native memory unit even if it has been logically forgotten.
+    /// This is useful for irreversible cleanup flows that must remove
+    /// previously tombstoned storage from all backends.
+    pub fn get_memory_unit_including_forgotten(
+        &self,
+        user_id: &str,
+        id: Uuid,
+    ) -> Result<Option<MemoryUnit>> {
         self.get_memory_unit_raw(user_id, id)
     }
 
@@ -5759,6 +5861,61 @@ mod tests {
 
         assert!(!engine.is_memory_unit_forgotten(TEST_USER, unit_id)?);
         assert!(engine.get_memory_unit(TEST_USER, unit_id).await?.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_apply_memory_correction_actions_tombstones_target_and_links_relation(
+    ) -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let old_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I live in Shanghai".into(),
+            Some(vec![1.0; 768]),
+        );
+        let old_id = old_unit.id;
+        let new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I now live in Beijing".into(),
+            Some(vec![1.0; 768]),
+        );
+        let new_id = new_unit.id;
+        engine
+            .store_memory_units(vec![old_unit, new_unit.clone()])
+            .await?;
+
+        let affected = engine
+            .apply_memory_correction_actions(
+                &new_unit,
+                vec![MemoryCorrectionAction {
+                    target_id: old_id,
+                    relation: RelationType::EvolvedTo,
+                    reason: "Address updated".into(),
+                    confidence: 0.95,
+                }],
+            )
+            .await?;
+
+        assert_eq!(affected, vec![old_id]);
+        assert!(engine.is_memory_unit_forgotten(TEST_USER, old_id)?);
+        assert!(engine.get_memory_unit(TEST_USER, old_id).await?.is_none());
+
+        let outgoing = engine.graph.get_outgoing_edges(TEST_USER, new_id).await?;
+        assert!(outgoing
+            .iter()
+            .any(|edge| edge.target_id == old_id && edge.relation == RelationType::EvolvedTo));
 
         Ok(())
     }
