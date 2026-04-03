@@ -188,7 +188,11 @@ impl ManagementRegistry {
         let mut data = self.read_data()?;
         ensure_default_org(&mut data);
 
-        let Some(record) = data.api_keys.iter_mut().find(|record| record.key_id == key_id) else {
+        let Some(record) = data
+            .api_keys
+            .iter_mut()
+            .find(|record| record.key_id == key_id)
+        else {
             return Ok(None);
         };
 

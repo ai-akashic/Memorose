@@ -397,6 +397,38 @@ impl GraphStore {
         Ok(Self::dedup_edges(edges))
     }
 
+    pub async fn delete_edges_for_node(&self, user_id: &str, node_id: Uuid) -> Result<usize> {
+        let escaped_user_id = user_id.replace("'", "''");
+        let filter = format!(
+            "user_id = '{}' AND (source_id = '{}' OR target_id = '{}')",
+            escaped_user_id, node_id, node_id
+        );
+
+        let deleted_in_buffer = {
+            let mut buf = self.buffer.lock().await;
+            let before = buf.len();
+            buf.retain(|edge| {
+                !(edge.user_id == user_id
+                    && (edge.source_id == node_id || edge.target_id == node_id))
+            });
+            before.saturating_sub(buf.len())
+        };
+
+        let table = self.db.open_table(&self.table_name).execute().await?;
+        let existing = table
+            .query()
+            .only_if(filter.clone())
+            .execute()
+            .await?
+            .try_collect::<Vec<RecordBatch>>()
+            .await?;
+        let deleted_in_store = self.batches_to_edges(existing)?.len();
+
+        table.delete(&filter).await?;
+
+        Ok(deleted_in_buffer + deleted_in_store)
+    }
+
     /// 批量查询多个节点的出边（使用 SQL IN 子句，性能优化版本）
     pub async fn batch_get_outgoing_edges(
         &self,

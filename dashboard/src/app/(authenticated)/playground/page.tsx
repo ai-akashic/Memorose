@@ -9,10 +9,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, Send, Bot, Sparkles, Search, SlidersHorizontal } from "lucide-react";
+import { Loader2, Send, Bot, Sparkles, Search, SlidersHorizontal, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
-import type { RetrieveResponse } from "@/lib/types";
+import type { ForgetPreviewResponse, RetrieveResponse } from "@/lib/types";
 import { useTranslations } from "next-intl";
 import { DashboardHero, DashboardStatRail } from "@/components/dashboard-chrome";
 import { MemoryAssets } from "@/components/memory-assets";
@@ -459,6 +459,265 @@ function RetrievePanel() {
   );
 }
 
+function ForgetPanel() {
+  const t = useTranslations("Playground");
+  const [userId] = useStoredString("memorose-playground-forget-user", "default-playground-user");
+  const { orgId } = useOrgScope();
+  const scopedOrgId = orgId.trim();
+  const [query, setQuery] = useState("");
+  const [mode, setMode] = useState<"logical" | "hard">("logical");
+  const [limit, setLimit] = useState("10");
+  const [preview, setPreview] = useState<ForgetPreviewResponse | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [executing, setExecuting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  async function handlePreview() {
+    const currentUserId = userId.trim() || "default-playground-user";
+    if (!query.trim()) return;
+
+    setLoadingPreview(true);
+    setError(null);
+    setSuccess(null);
+    setPreview(null);
+    try {
+      const result = await api.forgetPreview({
+        user_id: currentUserId,
+        query: query.trim(),
+        mode,
+        ...(limit ? { limit: Number(limit) } : {}),
+        ...(scopedOrgId ? { org_id: scopedOrgId } : {}),
+      });
+      setPreview(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("forget.errors.preview"));
+    } finally {
+      setLoadingPreview(false);
+    }
+  }
+
+  async function handleExecute() {
+    const currentUserId = userId.trim() || "default-playground-user";
+    if (!preview) return;
+
+    setExecuting(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const result = await api.forgetExecute({
+        user_id: currentUserId,
+        preview_id: preview.preview_id,
+        confirm: true,
+        ...(scopedOrgId ? { org_id: scopedOrgId } : {}),
+      });
+      setSuccess(
+        t("forget.executeSuccess", {
+          memories: result.forgotten_memory_unit_count,
+          events: result.forgotten_event_count,
+        })
+      );
+      setPreview(null);
+      setQuery("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("forget.errors.execute"));
+    } finally {
+      setExecuting(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <Card className="glass-card p-6 rounded-3xl">
+        <div className="space-y-6">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Trash2 className="h-4 w-4 text-primary/70" />
+              <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+                {t("forget.title")}
+              </span>
+            </div>
+            <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+              {t("forget.description")}
+            </p>
+          </div>
+
+          {scopedOrgId && (
+            <div className="rounded-lg border border-border/70 bg-background/50 px-3 py-2 text-[11px] font-mono text-muted-foreground">
+              {t("forget.orgScope", { orgId: scopedOrgId })}
+            </div>
+          )}
+
+          <div className="grid gap-4 md:grid-cols-[1fr_180px_120px]">
+            <Input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={t("forget.placeholder")}
+              className="h-12 bg-card border-border text-base px-4"
+              onKeyDown={(event) => event.key === "Enter" && handlePreview()}
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                type="button"
+                variant={mode === "logical" ? "default" : "outline"}
+                className="h-12"
+                onClick={() => setMode("logical")}
+              >
+                {t("forget.modes.logical")}
+              </Button>
+              <Button
+                type="button"
+                variant={mode === "hard" ? "destructive" : "outline"}
+                className="h-12"
+                onClick={() => setMode("hard")}
+              >
+                {t("forget.modes.hard")}
+              </Button>
+            </div>
+            <Input
+              value={limit}
+              onChange={(event) => setLimit(event.target.value)}
+              placeholder="10"
+              className="h-12 bg-card border-border text-[13px] font-mono"
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              onClick={handlePreview}
+              disabled={loadingPreview || executing || !query.trim()}
+              className="gap-2"
+            >
+              {loadingPreview ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+              {t("forget.preview")}
+            </Button>
+            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+              {mode === "hard" ? t("forget.modeHintHard") : t("forget.modeHintLogical")}
+            </span>
+          </div>
+        </div>
+      </Card>
+
+      {error ? (
+        <div className="text-sm text-destructive bg-destructive/10 rounded-lg px-4 py-2 border border-destructive/20">
+          {error}
+        </div>
+      ) : null}
+
+      {success ? (
+        <div className="text-sm text-emerald-300 bg-emerald-500/10 rounded-lg px-4 py-2 border border-emerald-500/20">
+          {success}
+        </div>
+      ) : null}
+
+      {preview ? (
+        <div className="space-y-4">
+          <Card className="glass-card p-6 rounded-3xl">
+            <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+              <div className="space-y-2">
+                <p className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+                  {t("forget.previewSummary")}
+                </p>
+                <p className="text-sm text-foreground/90">{preview.query}</p>
+                <div className="flex flex-wrap gap-2 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+                  <span>{t("forget.summary.memories", { count: preview.summary.memory_unit_count })}</span>
+                  <span>{t("forget.summary.events", { count: preview.summary.event_count })}</span>
+                  <span>{preview.mode === "hard" ? t("forget.modes.hard") : t("forget.modes.logical")}</span>
+                </div>
+              </div>
+              <Button
+                onClick={handleExecute}
+                disabled={executing}
+                variant={preview.mode === "hard" ? "destructive" : "default"}
+                className="gap-2"
+              >
+                {executing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                {t("forget.execute")}
+              </Button>
+            </div>
+          </Card>
+
+          <div className="grid gap-4 xl:grid-cols-2">
+            <Card className="glass-card p-5 rounded-3xl">
+              <div className="mb-4 flex items-center justify-between">
+                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+                  {t("forget.previewMemories")}
+                </span>
+                <span className="text-[11px] font-mono text-muted-foreground">
+                  {preview.matched_units.length}
+                </span>
+              </div>
+              <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
+                {preview.matched_units.length === 0 ? (
+                  <div className="rounded-2xl border border-border/60 bg-card/40 p-4 text-sm text-muted-foreground">
+                    {t("forget.emptyMemories")}
+                  </div>
+                ) : (
+                  preview.matched_units.map((unit) => (
+                    <div key={unit.id} className="rounded-2xl border border-border/60 bg-card/40 p-4">
+                      <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+                        <span className="font-mono">{unit.id.slice(0, 8)}</span>
+                        <span>L{unit.level}</span>
+                        <span>{unit.memory_type}</span>
+                      </div>
+                      <p className="text-sm leading-relaxed text-foreground/90">{unit.content}</p>
+                      {unit.keywords.length > 0 ? (
+                        <div className="mt-3 flex flex-wrap gap-1.5">
+                          {unit.keywords.slice(0, 6).map((keyword) => (
+                            <span
+                              key={keyword}
+                              className="rounded-full border border-border/70 bg-background/30 px-2 py-0.5 text-[10px] font-medium uppercase tracking-widest text-muted-foreground"
+                            >
+                              {keyword}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                      {unit.assets.length > 0 ? (
+                        <div className="mt-3">
+                          <MemoryAssets assets={unit.assets.slice(0, 2)} compact />
+                        </div>
+                      ) : null}
+                    </div>
+                  ))
+                )}
+              </div>
+            </Card>
+
+            <Card className="glass-card p-5 rounded-3xl">
+              <div className="mb-4 flex items-center justify-between">
+                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+                  {t("forget.previewEvents")}
+                </span>
+                <span className="text-[11px] font-mono text-muted-foreground">
+                  {preview.matched_events.length}
+                </span>
+              </div>
+              <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
+                {preview.matched_events.length === 0 ? (
+                  <div className="rounded-2xl border border-border/60 bg-card/40 p-4 text-sm text-muted-foreground">
+                    {t("forget.emptyEvents")}
+                  </div>
+                ) : (
+                  preview.matched_events.map((event) => (
+                    <div key={event.id} className="rounded-2xl border border-border/60 bg-card/40 p-4">
+                      <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+                        <span className="font-mono">{event.id.slice(0, 8)}</span>
+                        <span>{new Date(event.transaction_time).toLocaleString()}</span>
+                      </div>
+                      <p className="text-sm leading-relaxed text-foreground/90">{event.content}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </Card>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function PlaygroundPage() {
   const t = useTranslations("Playground");
   return (
@@ -479,6 +738,7 @@ export default function PlaygroundPage() {
               items={[
                 { label: t("tabs.chat"), value: "Live", tone: "primary" },
                 { label: t("tabs.retrieve"), value: "Search", tone: "success" },
+                { label: t("tabs.forget"), value: "Forget", tone: "warning" },
               ]}
             />
           </DashboardHero>
@@ -486,7 +746,7 @@ export default function PlaygroundPage() {
       </div>
 
       <Tabs defaultValue="chat" className="flex-1 flex flex-col min-h-0">
-        <TabsList className="grid w-full max-w-xs grid-cols-2 mb-4 shrink-0">
+        <TabsList className="grid w-full max-w-md grid-cols-3 mb-4 shrink-0">
           <TabsTrigger value="chat" className="gap-1.5">
             <Bot className="w-3.5 h-3.5" />
             {t("tabs.chat")}
@@ -494,6 +754,10 @@ export default function PlaygroundPage() {
           <TabsTrigger value="retrieve" className="gap-1.5">
             <Search className="w-3.5 h-3.5" />
             {t("tabs.retrieve")}
+          </TabsTrigger>
+          <TabsTrigger value="forget" className="gap-1.5">
+            <Trash2 className="w-3.5 h-3.5" />
+            {t("tabs.forget")}
           </TabsTrigger>
         </TabsList>
 
@@ -503,6 +767,10 @@ export default function PlaygroundPage() {
 
         <TabsContent value="retrieve" className="flex-1 min-h-0 mt-0 data-[state=active]:flex data-[state=active]:flex-col overflow-y-auto">
           <RetrievePanel />
+        </TabsContent>
+
+        <TabsContent value="forget" className="flex-1 min-h-0 mt-0 data-[state=active]:flex data-[state=active]:flex-col overflow-y-auto">
+          <ForgetPanel />
         </TabsContent>
       </Tabs>
     </div>

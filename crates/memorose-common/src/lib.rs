@@ -336,6 +336,33 @@ pub struct Asset {
     pub metadata: HashMap<String, String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ForgetTargetKind {
+    MemoryUnit,
+    Event,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ForgetMode {
+    Logical,
+    Hard,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForgettingTombstone {
+    pub user_id: String,
+    pub org_id: Option<String>,
+    pub target_kind: ForgetTargetKind,
+    pub target_id: String,
+    pub reason_query: String,
+    pub created_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_id: Option<String>,
+    pub mode: ForgetMode,
+}
+
 /// Represents a consolidated memory unit (L1/L2).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

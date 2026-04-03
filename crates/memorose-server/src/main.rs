@@ -222,6 +222,8 @@ async fn main() {
         .route("/memories/:id", get(dashboard::handlers::get_memory))
         .route("/graph", get(dashboard::handlers::graph_data))
         .route("/search", post(dashboard::handlers::search))
+        .route("/forget/preview", post(dashboard::handlers::forget_preview))
+        .route("/forget/execute", post(dashboard::handlers::forget_execute))
         .route("/chat", post(dashboard::handlers::chat))
         .route("/config", get(dashboard::handlers::get_config))
         .route(

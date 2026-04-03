@@ -257,6 +257,37 @@ export interface SearchResponse {
   query_time_ms: number;
 }
 
+export interface ForgetEventPreview {
+  id: string;
+  content: string;
+  transaction_time: string;
+  org_id?: string | null;
+  agent_id?: string | null;
+}
+
+export interface ForgetPreviewResponse {
+  preview_id: string;
+  query: string;
+  mode: "logical" | "hard";
+  created_at: string;
+  expires_at: string;
+  summary: {
+    memory_unit_count: number;
+    event_count: number;
+  };
+  matched_units: SearchMemoryUnit[];
+  matched_events: ForgetEventPreview[];
+}
+
+export interface ForgetExecuteResponse {
+  status: "executed";
+  preview_id: string;
+  mode: "logical" | "hard";
+  query: string;
+  forgotten_memory_unit_count: number;
+  forgotten_event_count: number;
+}
+
 export interface RuntimeConfig {
   raft: Record<string, unknown>;
   worker: Record<string, unknown>;

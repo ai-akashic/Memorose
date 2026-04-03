@@ -41,6 +41,11 @@ impl KvStore {
         Ok(())
     }
 
+    pub fn write_batch(&self, batch: rocksdb::WriteBatch) -> Result<()> {
+        self.db.write(batch)?;
+        Ok(())
+    }
+
     pub fn flush(&self) -> Result<()> {
         self.db.flush()?;
         Ok(())

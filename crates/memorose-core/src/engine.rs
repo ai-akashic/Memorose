@@ -13,8 +13,8 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use lancedb::connect;
 use memorose_common::{
-    Event, GraphEdge, MemoryDomain, MemoryType, MemoryUnit, RelationType, SharePolicy, ShareTarget,
-    TimeRange,
+    Event, ForgettingTombstone, GraphEdge, MemoryDomain, MemoryType, MemoryUnit, RelationType,
+    SharePolicy, ShareTarget, TimeRange,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -161,8 +161,12 @@ pub struct OrganizationKnowledgeSearchHit {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SharedSearchHit {
-    NativeMemory { unit: MemoryUnit },
-    OrganizationKnowledge { knowledge: OrganizationKnowledgeSearchHit },
+    NativeMemory {
+        unit: MemoryUnit,
+    },
+    OrganizationKnowledge {
+        knowledge: OrganizationKnowledgeSearchHit,
+    },
 }
 
 impl SharedSearchHit {
@@ -193,7 +197,6 @@ impl SharedSearchHit {
             Self::OrganizationKnowledge { knowledge } => knowledge.unit,
         }
     }
-
 }
 
 impl Deref for SharedSearchHit {
@@ -271,11 +274,15 @@ impl MemoroseEngine {
             .collect::<HashMap<_, _>>();
         let mut membership_entries = membership_sources
             .into_iter()
-            .map(|(membership, source_unit)| OrganizationKnowledgeMembershipEntry {
-                contribution: contribution_records_by_source.get(&membership.source_id).cloned(),
-                membership,
-                source_unit,
-            })
+            .map(
+                |(membership, source_unit)| OrganizationKnowledgeMembershipEntry {
+                    contribution: contribution_records_by_source
+                        .get(&membership.source_id)
+                        .cloned(),
+                    membership,
+                    source_unit,
+                },
+            )
             .collect::<Vec<_>>();
         membership_entries.sort_by(|left, right| {
             let left_activated_at = left
@@ -1585,21 +1592,37 @@ impl MemoroseEngine {
         Ok(())
     }
 
-    pub async fn get_event(&self, user_id: &str, id: &str) -> Result<Option<Event>> {
+    fn get_event_raw(&self, user_id: &str, id: &str) -> Result<Option<Event>> {
         let key = format!("u:{}:event:{}", user_id, id);
         let val = self._kv.get(key.as_bytes())?;
         match val {
-            Some(bytes) => {
-                let event: Event = serde_json::from_slice(&bytes)?;
-                Ok(Some(event))
-            }
+            Some(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
             None => Ok(None),
         }
     }
 
+    pub async fn get_event(&self, user_id: &str, id: &str) -> Result<Option<Event>> {
+        if self.is_event_forgotten(user_id, id)? {
+            return Ok(None);
+        }
+        self.get_event_raw(user_id, id)
+    }
+
     pub async fn delete_event(&self, user_id: &str, id: &str) -> Result<()> {
         let key = format!("u:{}:event:{}", user_id, id);
-        self._kv.delete(key.as_bytes())?;
+        let pending_key = format!("pending:{}", id);
+        let retry_key = format!("retry_count:{}", id);
+        let failed_key = format!("failed:{}", id);
+        let forgotten_key = Self::forgotten_event_key(user_id, id);
+
+        let mut batch = rocksdb::WriteBatch::default();
+        batch.delete(key.as_bytes());
+        batch.delete(pending_key.as_bytes());
+        batch.delete(retry_key.as_bytes());
+        batch.delete(failed_key.as_bytes());
+        batch.delete(forgotten_key.as_bytes());
+
+        self._kv.write_batch(batch)?;
         Ok(())
     }
 
@@ -2130,10 +2153,7 @@ impl MemoroseEngine {
             && source.content != "No memories provided."
     }
 
-    async fn load_organization_source_units(
-        &self,
-        source_ids: &[Uuid],
-    ) -> Result<Vec<MemoryUnit>> {
+    async fn load_organization_source_units(&self, source_ids: &[Uuid]) -> Result<Vec<MemoryUnit>> {
         let mut sources = Vec::new();
 
         for source_id in source_ids {
@@ -2838,10 +2858,7 @@ impl MemoroseEngine {
         Ok(())
     }
 
-    async fn delete_materialized_organization_view_storage(
-        &self,
-        unit: &MemoryUnit,
-    ) -> Result<()> {
+    async fn delete_materialized_organization_view_storage(&self, unit: &MemoryUnit) -> Result<()> {
         let unit_key = format!("u:{}:unit:{}", unit.user_id, unit.id).into_bytes();
         self.delete_memory_unit_storage_by_key(unit_key, unit.id)
             .await
@@ -2853,7 +2870,8 @@ impl MemoroseEngine {
         unit: MemoryUnit,
     ) -> Result<()> {
         self.store_organization_knowledge(&record)?;
-        self.delete_materialized_organization_view_storage(&unit).await
+        self.delete_materialized_organization_view_storage(&unit)
+            .await
     }
 
     async fn publish_organization_knowledge(
@@ -3145,9 +3163,7 @@ impl MemoroseEngine {
         let mut published_count = 0;
 
         for unit in units {
-            if unit.domain != MemoryDomain::User
-                || unit.level != 2
-            {
+            if unit.domain != MemoryDomain::User || unit.level != 2 {
                 continue;
             }
 
@@ -3179,7 +3195,7 @@ impl MemoroseEngine {
                             self.delete_organization_membership_or_relation_by_key(
                                 &stale_relation_key,
                             )
-                                .ok();
+                            .ok();
                         }
                         published_count += 1;
                     }
@@ -3561,6 +3577,7 @@ impl MemoroseEngine {
     pub async fn search_hybrid(
         &self,
         user_id: &str,
+        org_id: Option<&str>,
         agent_id: Option<&str>,
         query_text: &str,
         vector: &[f32],
@@ -3573,13 +3590,18 @@ impl MemoroseEngine {
     ) -> Result<Vec<(MemoryUnit, f32)>> {
         let time_filter = self.build_time_filter(valid_time.clone());
         let agent_filter = agent_id.map(|aid| format!("agent_id = '{}'", aid.replace('\'', "''")));
-        let local_filter = "(domain = 'agent' OR domain = 'user')".to_string();
-        let extra = match (time_filter, agent_filter) {
-            (Some(tf), Some(af)) => Some(format!("{} AND {} AND {}", local_filter, tf, af)),
-            (Some(tf), None) => Some(format!("{} AND {}", local_filter, tf)),
-            (None, Some(af)) => Some(format!("{} AND {}", local_filter, af)),
-            (None, None) => Some(local_filter),
-        };
+        let org_filter = org_id.map(|oid| format!("org_id = '{}'", oid.replace('\'', "''")));
+        let mut filters = vec!["(domain = 'agent' OR domain = 'user')".to_string()];
+        if let Some(filter) = time_filter {
+            filters.push(filter);
+        }
+        if let Some(filter) = agent_filter {
+            filters.push(filter);
+        }
+        if let Some(filter) = org_filter {
+            filters.push(filter);
+        }
+        let extra = Some(filters.join(" AND "));
         let vec_filter = self.build_user_filter(user_id, extra);
 
         let vector_future = self
@@ -3590,6 +3612,7 @@ impl MemoroseEngine {
         let q_text = query_text.to_string();
         let vt = valid_time.clone();
         let tt = transaction_time.clone();
+        let oid = org_id.map(|s| s.to_string());
         let uid = Some(user_id.to_string());
         let agid = agent_id.map(|s| s.to_string());
         let text_future = tokio::task::spawn_blocking(move || {
@@ -3600,7 +3623,7 @@ impl MemoroseEngine {
                 limit * 2,
                 vt,
                 tt,
-                None,
+                oid.as_deref(),
                 uid.as_deref(),
                 agid.as_deref(),
                 None,
@@ -3653,7 +3676,12 @@ impl MemoroseEngine {
             .take(limit * 3)
             .map(|(id, _)| id.clone())
             .collect();
-        let units: Vec<MemoryUnit> = self.fetch_units(user_id, candidates_to_fetch).await?;
+        let units: Vec<MemoryUnit> = self
+            .fetch_units(user_id, candidates_to_fetch)
+            .await?
+            .into_iter()
+            .filter(|unit| org_id.map_or(true, |oid| unit.org_id.as_deref() == Some(oid)))
+            .collect();
 
         let mut seeds = Vec::new();
         for unit in units {
@@ -3667,6 +3695,9 @@ impl MemoroseEngine {
 
         // Graph Expansion (BFS)
         let mut expanded_units = self.expand_subgraph(user_id, seeds, graph_depth).await?;
+        if let Some(org_id) = org_id {
+            expanded_units.retain(|(unit, _)| unit.org_id.as_deref() == Some(org_id));
+        }
 
         expanded_units.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
@@ -3781,9 +3812,7 @@ impl MemoroseEngine {
                     org_id, query_text, vector, limit, min_score, valid_time,
                 )
                 .await?;
-            return self
-                .materialize_organization_search_hits(record_hits)
-                .await;
+            return self.materialize_organization_search_hits(record_hits).await;
         }
 
         let shared_agent_filter = match domain {
@@ -3857,6 +3886,7 @@ impl MemoroseEngine {
         let mut combined = self
             .search_hybrid(
                 user_id,
+                org_id,
                 agent_id,
                 query_text,
                 vector,
@@ -4099,16 +4129,20 @@ impl MemoroseEngine {
 
     // ── Memory Retrieval ────────────────────────────────────────────
 
-    pub async fn get_memory_unit(&self, user_id: &str, id: Uuid) -> Result<Option<MemoryUnit>> {
+    fn get_memory_unit_raw(&self, user_id: &str, id: Uuid) -> Result<Option<MemoryUnit>> {
         let key = format!("u:{}:unit:{}", user_id, id);
         let val = self._kv.get(key.as_bytes())?;
         match val {
-            Some(bytes) => {
-                let unit: MemoryUnit = serde_json::from_slice(&bytes)?;
-                Ok(Some(unit))
-            }
+            Some(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
             None => Ok(None),
         }
+    }
+
+    pub async fn get_memory_unit(&self, user_id: &str, id: Uuid) -> Result<Option<MemoryUnit>> {
+        if self.is_memory_unit_forgotten(user_id, id)? {
+            return Ok(None);
+        }
+        self.get_memory_unit_raw(user_id, id)
     }
 
     pub async fn get_native_memory_unit_by_index(&self, id: Uuid) -> Result<Option<MemoryUnit>> {
@@ -4121,7 +4155,10 @@ impl MemoroseEngine {
         }
     }
 
-    pub async fn get_shared_search_hit_by_index(&self, id: Uuid) -> Result<Option<SharedSearchHit>> {
+    pub async fn get_shared_search_hit_by_index(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<SharedSearchHit>> {
         if let Some(record) = self.load_organization_knowledge(id)? {
             let unit = self
                 .materialize_organization_read_view_for_record(&record)
@@ -4136,6 +4173,93 @@ impl MemoroseEngine {
     }
 
     // ── Forgetting ──────────────────────────────────────────────────
+
+    fn forgotten_memory_unit_key(user_id: &str, id: Uuid) -> String {
+        format!("forget:unit:{}:{}", user_id, id)
+    }
+
+    fn forgotten_event_key(user_id: &str, id: &str) -> String {
+        format!("forget:event:{}:{}", user_id, id)
+    }
+
+    pub fn mark_memory_unit_forgotten(
+        &self,
+        user_id: &str,
+        unit_id: Uuid,
+        tombstone: &ForgettingTombstone,
+    ) -> Result<()> {
+        let bytes = serde_json::to_vec(tombstone)?;
+        self.system_kv().put(
+            Self::forgotten_memory_unit_key(user_id, unit_id).as_bytes(),
+            &bytes,
+        )
+    }
+
+    pub fn mark_event_forgotten(
+        &self,
+        user_id: &str,
+        event_id: &str,
+        tombstone: &ForgettingTombstone,
+    ) -> Result<()> {
+        let bytes = serde_json::to_vec(tombstone)?;
+        self.system_kv().put(
+            Self::forgotten_event_key(user_id, event_id).as_bytes(),
+            &bytes,
+        )
+    }
+
+    pub fn is_memory_unit_forgotten(&self, user_id: &str, unit_id: Uuid) -> Result<bool> {
+        Ok(self
+            .system_kv()
+            .get(Self::forgotten_memory_unit_key(user_id, unit_id).as_bytes())?
+            .is_some())
+    }
+
+    pub fn is_event_forgotten(&self, user_id: &str, event_id: &str) -> Result<bool> {
+        Ok(self
+            .system_kv()
+            .get(Self::forgotten_event_key(user_id, event_id).as_bytes())?
+            .is_some())
+    }
+
+    pub fn clear_memory_unit_forgotten(&self, user_id: &str, unit_id: Uuid) -> Result<()> {
+        self.system_kv()
+            .delete(Self::forgotten_memory_unit_key(user_id, unit_id).as_bytes())?;
+        Ok(())
+    }
+
+    pub fn clear_event_forgotten(&self, user_id: &str, event_id: &str) -> Result<()> {
+        self.system_kv()
+            .delete(Self::forgotten_event_key(user_id, event_id).as_bytes())?;
+        Ok(())
+    }
+
+    pub fn is_visible_memory_unit(&self, unit: &MemoryUnit) -> Result<bool> {
+        if unit.domain == MemoryDomain::Organization {
+            return Ok(true);
+        }
+
+        Ok(!self.is_memory_unit_forgotten(&unit.user_id, unit.id)?)
+    }
+
+    pub async fn delete_memory_unit_hard(&self, user_id: &str, unit_id: Uuid) -> Result<()> {
+        let unit = self.get_memory_unit_raw(user_id, unit_id)?;
+        let unit_key = format!("u:{}:unit:{}", user_id, unit_id).into_bytes();
+        self.delete_memory_unit_storage_by_key(unit_key, unit_id)
+            .await?;
+        let _ = self.graph.delete_edges_for_node(user_id, unit_id).await?;
+        self.invalidate_query_cache(user_id).await;
+        self.clear_memory_unit_forgotten(user_id, unit_id)?;
+
+        if let Some(unit) = unit {
+            if unit.level == 1 {
+                let key = format!("l1_count:{}", user_id);
+                self.system_kv().delete(key.as_bytes())?;
+            }
+        }
+
+        Ok(())
+    }
 
     /// Apply importance decay to memories for a specific user.
     /// Updates only the KV store — does NOT re-index into LanceDB/Tantivy
@@ -4691,6 +4815,9 @@ impl MemoroseEngine {
         for (i, res) in db_results.into_iter().enumerate() {
             if let Some(bytes) = res {
                 if let Ok(unit) = serde_json::from_slice::<MemoryUnit>(&bytes) {
+                    if self.is_memory_unit_forgotten(user_id, unit.id)? {
+                        continue;
+                    }
                     final_results.push((unit, results[i].1));
                 }
             }
@@ -4713,8 +4840,7 @@ impl MemoroseEngine {
                 Err(_) => continue,
             };
 
-            if let Some(hit) = self.get_shared_search_hit_by_index(parsed).await?
-            {
+            if let Some(hit) = self.get_shared_search_hit_by_index(parsed).await? {
                 final_results.push((hit, score));
             }
         }
@@ -4743,6 +4869,9 @@ impl MemoroseEngine {
         for res in results {
             if let Some(bytes) = res {
                 if let Ok(unit) = serde_json::from_slice::<MemoryUnit>(&bytes) {
+                    if self.is_memory_unit_forgotten(user_id, unit.id)? {
+                        continue;
+                    }
                     units.push(unit);
                 }
             }
@@ -4762,18 +4891,24 @@ impl MemoroseEngine {
         let kv = self._kv.clone();
         let pairs = tokio::task::spawn_blocking(move || kv.scan(&prefix)).await??;
 
-        let mut units: Vec<MemoryUnit> = pairs
-            .into_iter()
-            .filter(|(key, _)| {
-                if user_id_filter.is_some() {
-                    true
-                } else {
-                    key.windows(6).any(|window| window == b":unit:")
-                }
-            })
-            .filter_map(|(_, val)| serde_json::from_slice::<MemoryUnit>(&val).ok())
-            .filter(|unit| unit.domain != MemoryDomain::Organization)
-            .collect();
+        let mut units = Vec::new();
+        for (key, val) in pairs {
+            let is_unit_key = if user_id_filter.is_some() {
+                true
+            } else {
+                key.windows(6).any(|window| window == b":unit:")
+            };
+            if !is_unit_key {
+                continue;
+            }
+            let Ok(unit) = serde_json::from_slice::<MemoryUnit>(&val) else {
+                continue;
+            };
+            if unit.domain == MemoryDomain::Organization || !self.is_visible_memory_unit(&unit)? {
+                continue;
+            }
+            units.push(unit);
+        }
 
         if user_id_filter.is_none() {
             units.extend(self.list_organization_read_units(None).await?);
@@ -4822,8 +4957,10 @@ impl MemoroseEngine {
     ) -> Result<OrganizationAutomationCounterSnapshot> {
         Ok(OrganizationAutomationCounterSnapshot {
             org_id: org_id.to_string(),
-            auto_approved_total: self.get_organization_metric_counter(org_id, "auto_approved_total")?,
-            auto_publish_total: self.get_organization_metric_counter(org_id, "auto_publish_total")?,
+            auto_approved_total: self
+                .get_organization_metric_counter(org_id, "auto_approved_total")?,
+            auto_publish_total: self
+                .get_organization_metric_counter(org_id, "auto_publish_total")?,
             rebuild_total: self.get_organization_metric_counter(org_id, "rebuild_total")?,
             revoke_total: self.get_organization_metric_counter(org_id, "revoke_total")?,
             merged_publication_total: self
@@ -4861,7 +4998,10 @@ impl MemoroseEngine {
             let unit = self
                 .materialize_organization_read_view_for_record(&record)
                 .await?;
-            materialized.push((SharedSearchHit::organization_knowledge(&record, unit), score));
+            materialized.push((
+                SharedSearchHit::organization_knowledge(&record, unit),
+                score,
+            ));
         }
         Ok(materialized)
     }
@@ -5448,6 +5588,7 @@ mod tests {
             .search_hybrid(
                 TEST_USER,
                 None,
+                None,
                 "relevant",
                 &vec![1.0; 768],
                 10,
@@ -5461,6 +5602,63 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0.id, u1.id);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_hybrid_applies_org_filter_before_ranking() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut org_unit = MemoryUnit::new(
+            Some("org_alpha".into()),
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Alpha org incident playbook".into(),
+            Some(vec![1.0; 768]),
+        );
+        org_unit.importance = 1.0;
+
+        let mut other_unit = MemoryUnit::new(
+            Some("org_beta".into()),
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Beta org incident playbook".into(),
+            Some(vec![1.0; 768]),
+        );
+        other_unit.importance = 1.0;
+
+        engine
+            .store_memory_units(vec![org_unit.clone(), other_unit.clone()])
+            .await?;
+        engine.index.commit()?;
+        engine.index.reload()?;
+
+        let results = engine
+            .search_hybrid(
+                TEST_USER,
+                Some("org_alpha"),
+                None,
+                "incident playbook",
+                &vec![1.0; 768],
+                10,
+                false,
+                Some(0.0),
+                0,
+                None,
+                None,
+            )
+            .await?;
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0.id, org_unit.id);
 
         Ok(())
     }
@@ -5510,6 +5708,7 @@ mod tests {
             .search_hybrid(
                 TEST_USER,
                 None,
+                None,
                 "Test",
                 &vec![1.0; 768],
                 10,
@@ -5521,6 +5720,45 @@ mod tests {
             )
             .await?;
         assert!(results.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_hard_delete_clears_forgetting_tombstone() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "Delete me after logical forgetting".into(),
+            Some(vec![1.0; 768]),
+        );
+        let unit_id = unit.id;
+        engine.store_memory_unit(unit).await?;
+
+        let tombstone = ForgettingTombstone {
+            user_id: TEST_USER.into(),
+            org_id: None,
+            target_kind: memorose_common::ForgetTargetKind::MemoryUnit,
+            target_id: unit_id.to_string(),
+            reason_query: "forget this".into(),
+            created_at: Utc::now(),
+            preview_id: Some(Uuid::new_v4().to_string()),
+            mode: memorose_common::ForgetMode::Logical,
+        };
+        engine.mark_memory_unit_forgotten(TEST_USER, unit_id, &tombstone)?;
+        assert!(engine.is_memory_unit_forgotten(TEST_USER, unit_id)?);
+
+        engine.delete_memory_unit_hard(TEST_USER, unit_id).await?;
+
+        assert!(!engine.is_memory_unit_forgotten(TEST_USER, unit_id)?);
+        assert!(engine.get_memory_unit(TEST_USER, unit_id).await?.is_none());
 
         Ok(())
     }
@@ -5917,7 +6155,9 @@ mod tests {
             .load_organization_knowledge(read_view.id)?
             .expect("expected canonical organization knowledge");
         assert_eq!(
-            engine.resolve_organization_record_source_ids(&record).await?,
+            engine
+                .resolve_organization_record_source_ids(&record)
+                .await?,
             vec![source.id]
         );
         assert_eq!(record.org_id, "org_alpha");
@@ -6349,7 +6589,10 @@ mod tests {
         assert_eq!(membership.source_unit.memory_type, MemoryType::Factual);
         assert_eq!(membership.source_unit.level, 2);
         assert_eq!(membership.source_unit.keywords, vec!["Credential Rotation"]);
-        assert!(membership.source_unit.content.contains("rotate credentials"));
+        assert!(membership
+            .source_unit
+            .content
+            .contains("rotate credentials"));
         assert!(membership.contribution.is_some());
         assert!(matches!(
             membership
@@ -6807,7 +7050,9 @@ mod tests {
         let record = engine
             .load_organization_knowledge(read_view.id)?
             .expect("expected organization knowledge record");
-        let source_ids = engine.resolve_organization_record_source_ids(&record).await?;
+        let source_ids = engine
+            .resolve_organization_record_source_ids(&record)
+            .await?;
         assert_eq!(source_ids.len(), 2);
         assert!(source_ids.contains(&source_a.id));
         assert!(source_ids.contains(&source_b.id));
@@ -7139,7 +7384,10 @@ mod tests {
             .load_organization_knowledge(read_view.id)?
             .expect("expected organization knowledge record");
         assert_eq!(
-            engine.resolve_organization_record_source_ids(&record).await?.len(),
+            engine
+                .resolve_organization_record_source_ids(&record)
+                .await?
+                .len(),
             2
         );
 
@@ -7240,7 +7488,9 @@ mod tests {
             .load_organization_knowledge(read_view.id)?
             .expect("expected organization knowledge record");
         assert_eq!(
-            engine.resolve_organization_record_source_ids(&record).await?,
+            engine
+                .resolve_organization_record_source_ids(&record)
+                .await?,
             vec![source_b.id]
         );
 
@@ -7365,7 +7615,9 @@ mod tests {
             .load_organization_knowledge(read_view.id)?
             .expect("expected organization knowledge record");
         assert_eq!(
-            engine.resolve_organization_record_source_ids(&record).await?,
+            engine
+                .resolve_organization_record_source_ids(&record)
+                .await?,
             vec![source_b.id]
         );
         assert_eq!(

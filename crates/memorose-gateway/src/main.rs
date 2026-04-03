@@ -10,7 +10,7 @@ struct ListMergeSortStrategy;
 impl AggregationStrategy for ListMergeSortStrategy {
     fn aggregate(&self, responses: Vec<Value>, limit: usize, offset: usize) -> Response {
         let mut all_results: Vec<Value> = Vec::new();
-        
+
         for json in responses {
             if let Some(items) = json.get("results").and_then(|v| v.as_array()) {
                 all_results.extend(items.clone());
@@ -18,20 +18,32 @@ impl AggregationStrategy for ListMergeSortStrategy {
                 all_results.extend(items.clone());
             }
         }
-        
+
         all_results.sort_by(|a, b| {
-            let ts_a = a.get("timestamp").or_else(|| a.get("created_at")).and_then(|v| v.as_str()).unwrap_or("");
-            let ts_b = b.get("timestamp").or_else(|| b.get("created_at")).and_then(|v| v.as_str()).unwrap_or("");
+            let ts_a = a
+                .get("timestamp")
+                .or_else(|| a.get("created_at"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let ts_b = b
+                .get("timestamp")
+                .or_else(|| b.get("created_at"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             ts_b.cmp(ts_a)
         });
-        
+
         let sliced: Vec<Value> = all_results.into_iter().skip(offset).take(limit).collect();
-        
-        (axum::http::StatusCode::OK, Json(serde_json::json!({
-            "results": sliced,
-            "total": sliced.len(),
-            "scatter_gather": true
-        }))).into_response()
+
+        (
+            axum::http::StatusCode::OK,
+            Json(serde_json::json!({
+                "results": sliced,
+                "total": sliced.len(),
+                "scatter_gather": true
+            })),
+        )
+            .into_response()
     }
 }
 
@@ -46,9 +58,13 @@ fn merge_sum(a: Value, b: Value) -> Value {
         }
         (Value::Number(num_a), Value::Number(num_b)) => {
             if num_a.is_u64() && num_b.is_u64() {
-                Value::Number(serde_json::Number::from(num_a.as_u64().unwrap() + num_b.as_u64().unwrap()))
+                Value::Number(serde_json::Number::from(
+                    num_a.as_u64().unwrap() + num_b.as_u64().unwrap(),
+                ))
             } else if num_a.is_i64() && num_b.is_i64() {
-                Value::Number(serde_json::Number::from(num_a.as_i64().unwrap() + num_b.as_i64().unwrap()))
+                Value::Number(serde_json::Number::from(
+                    num_a.as_i64().unwrap() + num_b.as_i64().unwrap(),
+                ))
             } else if let (Some(fa), Some(fb)) = (num_a.as_f64(), num_b.as_f64()) {
                 if let Some(n) = serde_json::Number::from_f64(fa + fb) {
                     Value::Number(n)
@@ -91,45 +107,60 @@ async fn scatter_gather_request(
 ) -> Response {
     let mut limit = 100;
     let mut offset = 0;
-    
+
     if let Some(ref q) = query {
         for pair in q.split('&') {
             let mut kv = pair.split('=');
             if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
-                if k == "limit" { limit = v.parse().unwrap_or(100); }
-                if k == "page" { offset = v.parse::<usize>().unwrap_or(0) * limit; }
-                if k == "offset" { offset = v.parse().unwrap_or(0); }
+                if k == "limit" {
+                    limit = v.parse().unwrap_or(100);
+                }
+                if k == "page" {
+                    offset = v.parse::<usize>().unwrap_or(0) * limit;
+                }
+                if k == "offset" {
+                    offset = v.parse().unwrap_or(0);
+                }
             }
         }
     }
-    
+
     let scatter_limit = offset + limit;
     let mut scatter_query = query.clone().unwrap_or_default();
     if scatter_query.contains("limit=") {
-        scatter_query = scatter_query.replace(&format!("limit={}", limit), &format!("limit={}", scatter_limit));
+        scatter_query = scatter_query.replace(
+            &format!("limit={}", limit),
+            &format!("limit={}", scatter_limit),
+        );
     } else if !scatter_query.is_empty() {
         scatter_query = format!("{}&limit={}", scatter_query, scatter_limit);
     } else {
         scatter_query = format!("limit={}", scatter_limit);
     }
-    
+
     let mut futures = Vec::new();
     let client = &state.http_client;
-    
+
     for shard_id in 0..state.shard_count {
-        let addr = state.resolve_shard_addr(shard_id).await.unwrap_or_else(|| format!("127.0.0.1:{}", 3000 + shard_id));
+        let addr = state
+            .resolve_shard_addr(shard_id)
+            .await
+            .unwrap_or_else(|| format!("127.0.0.1:{}", 3000 + shard_id));
         let url = if scatter_query.is_empty() {
             format!("http://{}/{}", addr, path)
         } else {
             format!("http://{}/{}?{}", addr, path, scatter_query)
         };
-        let req = client.request(method.clone(), &url).headers(headers.clone()).send();
+        let req = client
+            .request(method.clone(), &url)
+            .headers(headers.clone())
+            .send();
         futures.push(req);
     }
-    
+
     let responses = join_all(futures).await;
     let mut all_results: Vec<Value> = Vec::new();
-    
+
     for res in responses {
         if let Ok(r) = res {
             if r.status().is_success() {
@@ -139,22 +170,22 @@ async fn scatter_gather_request(
             }
         }
     }
-    
-    let strategy: Box<dyn AggregationStrategy> = if path.ends_with("stats") || path.ends_with("pending") {
-        Box::new(SummationStrategy)
-    } else {
-        Box::new(ListMergeSortStrategy)
-    };
-    
+
+    let strategy: Box<dyn AggregationStrategy> =
+        if path.ends_with("stats") || path.ends_with("pending") {
+            Box::new(SummationStrategy)
+        } else {
+            Box::new(ListMergeSortStrategy)
+        };
+
     strategy.aggregate(all_results, limit, offset)
 }
 
-use axum::{Json,
-
+use axum::{
     extract::{Request, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    Router,
+    Json, Router,
 };
 use bytes::Bytes;
 use memorose_common::sharding::{decode_raft_node_id, user_id_to_shard};
@@ -301,7 +332,6 @@ fn extract_routing_key(path: &str) -> Option<&str> {
     }
 }
 
-
 async fn proxy_request_with_retry(
     state: Arc<AppState>,
     headers: HeaderMap,
@@ -315,7 +345,7 @@ async fn proxy_request_with_retry(
     if routing_key.is_none() && method == axum::http::Method::GET {
         return scatter_gather_request(state, headers, method, path, query).await;
     }
-    
+
     let user_id = routing_key;
     let shard_id = user_id
         .map(|uid| user_id_to_shard(uid, state.shard_count))
@@ -486,9 +516,18 @@ mod tests {
 
     #[test]
     fn test_extract_routing_key() {
-        assert_eq!(extract_routing_key("v1/users/alice/streams/123/events"), Some("alice"));
-        assert_eq!(extract_routing_key("v1/organizations/org_abc/knowledge"), Some("org_abc"));
-        assert_eq!(extract_routing_key("v1/agents/agent_007/memory"), Some("agent_007"));
+        assert_eq!(
+            extract_routing_key("v1/users/alice/streams/123/events"),
+            Some("alice")
+        );
+        assert_eq!(
+            extract_routing_key("v1/organizations/org_abc/knowledge"),
+            Some("org_abc")
+        );
+        assert_eq!(
+            extract_routing_key("v1/agents/agent_007/memory"),
+            Some("agent_007")
+        );
         assert_eq!(extract_routing_key("v1/memories"), None);
         assert_eq!(extract_routing_key("v1/stats"), None);
         assert_eq!(extract_routing_key("invalid/path"), None);

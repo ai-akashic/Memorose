@@ -165,6 +165,29 @@ export const api = {
       body: JSON.stringify(params),
     }),
 
+  forgetPreview: (params: {
+    user_id: string;
+    query: string;
+    org_id?: string;
+    mode?: "logical" | "hard";
+    limit?: number;
+  }) =>
+    fetchAPI<import("./types").ForgetPreviewResponse>("/forget/preview", {
+      method: "POST",
+      body: JSON.stringify(params),
+    }),
+
+  forgetExecute: (params: {
+    user_id: string;
+    preview_id: string;
+    org_id?: string;
+    confirm: boolean;
+  }) =>
+    fetchAPI<import("./types").ForgetExecuteResponse>("/forget/execute", {
+      method: "POST",
+      body: JSON.stringify(params),
+    }),
+
   ingestEvent: (params: {
     user_id: string;
     stream_id: string;
