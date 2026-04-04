@@ -346,6 +346,17 @@ async fn main() {
         http_addr,
         dashboard_ui_origin()
     );
+
+    let auto_init = match config.sharding.as_ref() {
+        Some(s) if s.enabled => s.nodes.len() <= 1,
+        _ => true,
+    };
+
+    if auto_init {
+        tracing::info!("Single node environment detected, auto-initializing Raft cluster...");
+        let _ = state.shard_manager.initialize_all(&config).await;
+    }
+
     let listener = tokio::net::TcpListener::bind(http_addr).await.unwrap();
 
     let state_for_shutdown = state.clone();
