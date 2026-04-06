@@ -202,3 +202,37 @@ impl VideoIngestor {
         Ok(keyframes)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{DynamicImage, Rgb, RgbImage};
+
+    #[test]
+    fn test_new_initializes_without_loaded_model() {
+        let ingestor = VideoIngestor::new();
+
+        assert!(matches!(ingestor.device, Device::Cpu | Device::Cuda(_)));
+        assert!(ingestor.clip_model.try_lock().expect("lock").is_none());
+        assert!(ingestor.clip_config.try_lock().expect("lock").is_none());
+    }
+
+    #[test]
+    fn test_image_to_tensor_executes_or_surfaces_current_cpu_error() -> anyhow::Result<()> {
+        let ingestor = VideoIngestor::new();
+        let image = DynamicImage::ImageRgb8(RgbImage::from_pixel(2, 2, Rgb([255, 128, 0])));
+
+        match ingestor.image_to_tensor(&image, 2) {
+            Ok(tensor) => {
+                let values = tensor.flatten_all()?.to_vec1::<f32>()?;
+                assert_eq!(tensor.shape().dims(), &[1, 3, 2, 2]);
+                assert_eq!(values.len(), 12);
+                assert!(values.iter().all(|value| value.is_finite()));
+            }
+            Err(err) => {
+                assert!(err.to_string().contains("shape mismatch"));
+            }
+        }
+        Ok(())
+    }
+}

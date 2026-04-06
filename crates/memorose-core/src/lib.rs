@@ -1,6 +1,7 @@
 pub mod arbitrator;
 pub mod community;
 pub mod engine;
+pub(crate) mod fact_extraction;
 pub mod graph;
 pub mod ingest;
 pub mod llm;

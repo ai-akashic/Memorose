@@ -249,9 +249,153 @@ impl BatchExecutor {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use lancedb::connect;
+    use memorose_common::RelationType;
+    use std::sync::Arc;
+
+    async fn test_graph_store(edges: &[GraphEdge]) -> Result<GraphStore> {
+        let db_path = std::env::temp_dir().join(format!("memorose-batch-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&db_path)?;
+        let db = Arc::new(connect(db_path.to_str().unwrap()).execute().await?);
+        let store = GraphStore::new(db).await?;
+        for edge in edges {
+            store.add_edge(edge).await?;
+        }
+        store.flush().await?;
+        Ok(store)
+    }
+
+    fn edge(source_id: Uuid, target_id: Uuid, weight: f32) -> GraphEdge {
+        GraphEdge::new(
+            "user1".to_string(),
+            source_id,
+            target_id,
+            RelationType::RelatedTo,
+            weight,
+        )
+    }
+
+    fn relaxed_config() -> DetectionConfig {
+        DetectionConfig {
+            algorithm: crate::community::Algorithm::LabelPropagation,
+            min_community_size: 1,
+            ..Default::default()
+        }
+    }
+
     #[tokio::test]
-    async fn test_batch_community_detection() {
-        // 需要真实的 GraphStore 才能测试
-        // 这里只是结构验证
+    async fn test_batch_community_detection_direct_path() -> Result<()> {
+        let node_a = Uuid::new_v4();
+        let node_b = Uuid::new_v4();
+        let node_c = Uuid::new_v4();
+        let node_d = Uuid::new_v4();
+        let edges = vec![
+            edge(node_a, node_b, 1.0),
+            edge(node_b, node_c, 0.8),
+            edge(node_c, node_d, 0.7),
+        ];
+
+        let detector = BatchCommunityDetector::new(
+            test_graph_store(&edges).await?,
+            relaxed_config(),
+        );
+
+        let result = detector
+            .detect_communities_for_user("user1", &[node_a, node_b, node_c, node_d])
+            .await?;
+
+        assert!(result.node_to_community.contains_key(&node_a));
+        assert!(result.node_to_community.contains_key(&node_d));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_batch_community_detection_batched_path() -> Result<()> {
+        let node_a = Uuid::new_v4();
+        let node_b = Uuid::new_v4();
+        let node_c = Uuid::new_v4();
+        let edges = vec![edge(node_a, node_b, 1.0), edge(node_b, node_c, 0.9)];
+        let detector = BatchCommunityDetector::new(
+            test_graph_store(&edges).await?,
+            relaxed_config(),
+        );
+
+        let mut all_node_ids = vec![node_a, node_b, node_c];
+        while all_node_ids.len() < 1000 {
+            all_node_ids.push(Uuid::new_v4());
+        }
+
+        let result = detector
+            .detect_communities_for_user("user1", &all_node_ids)
+            .await?;
+
+        assert!(result.node_to_community.contains_key(&node_a));
+        assert!(result.node_to_community.contains_key(&node_c));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_incremental_update_recomputes_affected_subgraph() -> Result<()> {
+        let node_a = Uuid::new_v4();
+        let node_b = Uuid::new_v4();
+        let node_c = Uuid::new_v4();
+        let node_d = Uuid::new_v4();
+        let initial_edges = vec![edge(node_a, node_b, 1.0), edge(node_b, node_c, 0.8)];
+        let store = test_graph_store(&initial_edges).await?;
+        let detector = BatchCommunityDetector::new(store.clone(), relaxed_config());
+
+        let initial = detector
+            .detect_communities_for_user("user1", &[node_a, node_b, node_c])
+            .await?;
+
+        let new_edge = edge(node_c, node_d, 0.95);
+        store.add_edge(&new_edge).await?;
+        store.flush().await?;
+
+        let updated = detector
+            .incremental_update("user1", &initial.node_to_community, &[new_edge])
+            .await?;
+
+        assert!(updated.node_to_community.contains_key(&node_c));
+        assert!(updated.node_to_community.contains_key(&node_d));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_two_phase_detection_runs_refinement_on_large_community() -> Result<()> {
+        let nodes: Vec<Uuid> = (0..12).map(|_| Uuid::new_v4()).collect();
+        let mut edges = Vec::new();
+        for window in nodes.windows(2) {
+            edges.push(edge(window[0], window[1], 1.0));
+        }
+        edges.push(edge(nodes[0], *nodes.last().unwrap(), 0.9));
+
+        let detector = BatchCommunityDetector::new(test_graph_store(&edges).await?, relaxed_config());
+
+        let result = detector.two_phase_detection("user1", &nodes).await?;
+
+        assert!(result.num_communities >= 1);
+        assert!(nodes
+            .iter()
+            .all(|node_id| result.node_to_community.contains_key(node_id)));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_batch_community_detection() -> Result<()> {
+        let node_a = Uuid::new_v4();
+        let node_b = Uuid::new_v4();
+        let detector = BatchCommunityDetector::new(
+            test_graph_store(&[edge(node_a, node_b, 1.0)]).await?,
+            relaxed_config(),
+        );
+
+        let result = detector
+            .detect_communities_for_user("user1", &[node_a, node_b])
+            .await?;
+
+        assert_eq!(result.node_to_community.len(), 2);
+        Ok(())
     }
 }

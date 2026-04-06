@@ -25,7 +25,7 @@ from langchain.llms import OpenAI
 # 1. Initialize the Retriever connecting to your Memorose Cluster
 retriever = MemoroseRetriever(
     api_url="http://localhost:3000",
-    tenant_id="user_john_doe",
+    user_id="user_john_doe",
     stream_id="session_001",
     top_k=5
 )
@@ -40,6 +40,18 @@ qa_chain = RetrievalQA.from_chain_type(llm=llm, retriever=retriever)
 
 response = qa_chain.run("What kind of coffee should I buy for John?")
 print(response) # "You should buy him an oat milk latte."
+
+# 4. Semantic update / forget flows use the user-scoped semantic orchestration API
+retriever.semantic_update(
+    "John moved from Shanghai to Beijing and changed his email to john@newmail.com",
+    reviewer="langchain-agent"
+)
+
+retriever.semantic_forget(
+    "Forget John's old internship address",
+    forget_mode="logical",
+    reviewer="langchain-agent"
+)
 ```
 
 ## Why use Memorose as a Retriever?

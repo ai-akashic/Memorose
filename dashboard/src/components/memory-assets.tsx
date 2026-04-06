@@ -46,7 +46,7 @@ export function MemoryAssets({
           key={`${asset.storage_key}-${index}`}
           className="rounded-xl border border-border/60 bg-card/60 p-3"
         >
-          <div className="mb-1.5 flex items-center gap-2 text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+          <div className="mb-1.5 flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
             <span className="rounded-full border border-border px-2 py-0.5">
               {assetKindLabel(asset.asset_type)}
             </span>

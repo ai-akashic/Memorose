@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import type { ForgetPreviewResponse, RetrieveResponse } from "@/lib/types";
 import { useTranslations } from "next-intl";
-import { DashboardHero, DashboardStatRail } from "@/components/dashboard-chrome";
+import { DashboardHero } from "@/components/dashboard-chrome";
 import { MemoryAssets } from "@/components/memory-assets";
 
 interface Message {
@@ -22,6 +22,56 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   timestamp: Date;
+}
+
+function ScopeBadge({
+  text,
+  tone = "neutral",
+}: {
+  text: string;
+  tone?: "neutral" | "danger";
+}) {
+  return (
+    <div
+      className={cn(
+        "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em]",
+        tone === "danger"
+          ? "border-destructive/20 bg-destructive/8 text-destructive/90"
+          : "border-border/70 bg-background/55 text-muted-foreground/85"
+      )}
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
+      <span className="font-mono normal-case tracking-normal">{text}</span>
+    </div>
+  );
+}
+
+function PanelIntro({
+  icon: Icon,
+  eyebrow,
+  title,
+  description,
+  trailing,
+}: {
+  icon: React.ElementType;
+  eyebrow: string;
+  title: string;
+  description?: string;
+  trailing?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground/70">
+          <Icon className="h-3.5 w-3.5 text-primary/70" />
+          {eyebrow}
+        </div>
+        <h3 className="mt-3 text-lg font-semibold tracking-tight text-foreground/92">{title}</h3>
+        {description ? <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">{description}</p> : null}
+      </div>
+      {trailing ? <div className="shrink-0">{trailing}</div> : null}
+    </div>
+  );
 }
 
 function TypingIndicator() {
@@ -184,32 +234,44 @@ function ChatPanel() {
   };
 
   return (
-    <div className="flex flex-col flex-1 min-h-0">
-      {scopedOrgId && (
-        <div className="mb-4 self-end rounded-lg border border-border/70 bg-background/50 px-3 py-2 text-[11px] font-mono text-muted-foreground">
-          {t("chat.orgScope", { orgId: scopedOrgId })}
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <Card className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-[2rem] border border-white/8 bg-card/75 shadow-[0_24px_80px_rgba(0,0,0,0.24)]">
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),transparent)]" />
+        <div className="shrink-0 border-b border-white/6 px-6 py-4 md:px-7">
+          <PanelIntro
+            icon={Bot}
+            eyebrow={t("tabs.chat")}
+            title={t("chat.welcomeTitle")}
+            trailing={
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                {scopedOrgId ? <ScopeBadge text={t("chat.orgScope", { orgId: scopedOrgId })} /> : null}
+                <div className="rounded-2xl border border-border/70 bg-background/45 px-4 py-2.5 text-right">
+                  <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground/70">
+                    {t("tabs.chat")}
+                  </div>
+                  <div className="mt-1 font-mono text-lg font-semibold text-foreground/90">
+                    {messages.length}
+                  </div>
+                </div>
+              </div>
+            }
+          />
         </div>
-      )}
 
-      <Card className="flex-1 flex flex-col overflow-hidden glass-card rounded-3xl relative">
-
-        <div className="flex-1 overflow-y-auto p-8 z-10 scroll-smooth" ref={scrollRef}>
-          <div className="space-y-8 max-w-3xl mx-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 scroll-smooth md:px-6" ref={scrollRef}>
+          <div className="mx-auto max-w-3xl space-y-6">
             <AnimatePresence>
               {messages.length === 0 && (
                 <motion.div
                   initial={{ opacity: 0, scale: 0.98 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.98 }}
-                  className="flex flex-col items-center justify-center h-[50vh] text-muted-foreground"
+                  className="flex min-h-[min(36vh,22rem)] flex-col items-center justify-center rounded-[2rem] border border-dashed border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.015))] px-8 text-muted-foreground"
                 >
-                  <div className="w-20 h-20 rounded-[40px] bg-card border border-border flex items-center justify-center mb-8">
-                    <Bot className="w-10 h-10 opacity-30" />
+                  <div className="mb-7 flex h-20 w-20 items-center justify-center rounded-[2rem] border border-primary/15 bg-primary/10 text-primary shadow-[0_16px_40px_rgba(255,92,92,0.12)]">
+                    <Bot className="h-10 w-10 opacity-70" />
                   </div>
-                  <h3 className="text-xl font-bold tracking-tight text-foreground/80 mb-3 uppercase tracking-[0.2em]">{t("chat.welcomeTitle")}</h3>
-                  <p className="text-sm opacity-50 max-w-xs text-center leading-relaxed">
-                    {t("chat.welcomeDesc")}
-                  </p>
+                  <h3 className="mb-3 text-xl font-semibold tracking-tight text-foreground/85">{t("chat.welcomeTitle")}</h3>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -233,10 +295,10 @@ function ChatPanel() {
                   )}
                   <div
                     className={cn(
-                      "max-w-[80%] rounded-[20px] px-6 py-4 text-[14.5px] leading-relaxed backdrop-blur-md",
+                      "max-w-[82%] rounded-[1.45rem] px-5 py-4 text-[14.5px] leading-7 backdrop-blur-md",
                       message.role === "user"
-                        ? "bg-primary text-primary-foreground shadow-[0_8px_24px_rgba(255,92,92,0.25)] rounded-tr-sm"
-                        : "bg-white/[0.03] border border-white/[0.05] rounded-tl-sm text-foreground/90 font-medium shadow-sm"
+                        ? "rounded-tr-md bg-primary text-primary-foreground shadow-[0_14px_34px_rgba(255,92,92,0.24)]"
+                        : "rounded-tl-md border border-white/[0.06] bg-white/[0.03] text-foreground/90 shadow-[0_10px_24px_rgba(0,0,0,0.12)]"
                     )}
                   >
                     <p className="whitespace-pre-wrap">{message.content}</p>
@@ -253,11 +315,11 @@ function ChatPanel() {
           </div>
         </div>
 
-        {/* Input Area */}
-        <div className="p-6 z-20">
-          <div className="max-w-3xl mx-auto relative group">
-            <div className="absolute -inset-1 bg-gradient-to-r from-primary/20 via-primary/10 to-transparent rounded-3xl blur-xl opacity-20 group-hover:opacity-40 transition duration-1000" />
-            <div className="relative flex gap-4 items-center glass-card rounded-2xl p-2 shadow-[0_8px_32px_rgba(0,0,0,0.2)]">
+        <div className="sticky bottom-0 z-20 shrink-0 border-t border-white/6 bg-card/90 px-5 py-4 backdrop-blur md:px-6">
+          <div className="group relative mx-auto max-w-3xl">
+            <div className="absolute -inset-1 rounded-[1.7rem] bg-gradient-to-r from-primary/18 via-primary/8 to-transparent blur-xl opacity-20 transition duration-1000 group-hover:opacity-40" />
+            <div className="relative rounded-[1.7rem] border border-white/8 bg-background/60 p-2.5 shadow-[0_16px_48px_rgba(0,0,0,0.22)] backdrop-blur-xl">
+              <div className="flex items-center gap-4">
               <Input
                 type="text"
                 value={input}
@@ -265,15 +327,17 @@ function ChatPanel() {
                 onKeyPress={handleKeyPress}
                 placeholder={t("chat.placeholder")}
                 disabled={loading}
-                className="flex-1 bg-transparent border-none focus-visible:ring-0 text-[15px] h-12 px-4 placeholder:text-muted-foreground/30"
+                className="h-12 flex-1 border-none bg-transparent px-4 text-[15px] focus-visible:ring-0 placeholder:text-muted-foreground/35"
               />
               <Button
                 onClick={handleSend}
                 disabled={loading || !input.trim()}
                 size="icon"
                 className={cn(
-                  "h-10 w-10 rounded-xl transition-all duration-300 mr-1",
-                  input.trim() ? "bg-primary text-primary-foreground shadow-[0_0_15px_rgba(255,92,92,0.4)] hover:scale-105" : "bg-white/5 text-muted-foreground/40 hover:bg-white/10"
+                  "mr-1 h-10 w-10 rounded-xl transition-all duration-300",
+                  input.trim()
+                    ? "bg-primary text-primary-foreground shadow-[0_0_18px_rgba(255,92,92,0.32)] hover:scale-[1.03]"
+                    : "bg-white/5 text-muted-foreground/40 hover:bg-white/10"
                 )}
               >
                 {loading ? (
@@ -282,6 +346,7 @@ function ChatPanel() {
                   <Send className="w-5 h-5" />
                 )}
               </Button>
+              </div>
             </div>
           </div>
         </div>
@@ -338,58 +403,67 @@ function RetrievePanel() {
 
   return (
     <div className="space-y-6">
-      {/* Context + Query */}
-      <Card className="glass-card p-6 rounded-3xl">
+      <Card className="rounded-[2rem] border border-white/8 bg-card/75 p-6 shadow-[0_22px_64px_rgba(0,0,0,0.2)]">
         <div className="space-y-6">
-          <div className="grid grid-cols-1 gap-6">
+          <PanelIntro
+            icon={Search}
+            eyebrow={t("tabs.retrieve")}
+            title={t("retrieve.button")}
+            description={t("subtitle")}
+            trailing={
+              scopedOrgId ? (
+                <ScopeBadge text={t("retrieve.orgScope", { orgId: scopedOrgId })} />
+              ) : undefined
+            }
+          />
+
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,17rem)_minmax(0,1fr)]">
             <div className="space-y-2 max-w-sm">
-              <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("retrieve.streamId")}</label>
+              <label className="px-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("retrieve.streamId")}</label>
               <Input
                 list="stream-suggestions"
                 value={streamId}
                 onChange={(e) => setStreamId(e.target.value)}
-                className="h-11 text-[13px] font-mono bg-card border-border"
+                className="h-11 border-border/70 bg-background/45 text-[13px] font-mono"
               />
               <datalist id="stream-suggestions">
                 {streams.map(s => <option key={s} value={s} />)}
               </datalist>
             </div>
-          </div>
 
-          {scopedOrgId && (
-            <div className="rounded-lg border border-border/70 bg-background/50 px-3 py-2 text-[11px] font-mono text-muted-foreground">
-              {t("retrieve.orgScope", { orgId: scopedOrgId })}
-            </div>
-          )}
-
-          <div className="flex gap-4">
+            <div className="flex flex-col gap-4 lg:justify-end">
             <Input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={t("retrieve.queryPlaceholder")}
-              className="flex-1 h-14 bg-card border-border text-base px-6 placeholder:text-muted-foreground/10"
+                className="h-14 flex-1 border-border/70 bg-background/45 px-6 text-base placeholder:text-muted-foreground/20"
               onKeyDown={(e) => e.key === "Enter" && handleRetrieve()}
             />
-            <Button
-              onClick={handleRetrieve}
-              disabled={loading || !query.trim() || !streamId.trim()}
-              className="h-14 px-8 gap-3 rounded-2xl text-[11px] font-medium uppercase tracking-widest text-muted-foreground"
-            >
-              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
-              {t("retrieve.button")}
-            </Button>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  onClick={handleRetrieve}
+                  disabled={loading || !query.trim() || !streamId.trim()}
+                  className="h-12 gap-3 rounded-2xl px-6 text-[10px] font-bold uppercase tracking-[0.16em]"
+                >
+                  {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
+                  {t("retrieve.button")}
+                </Button>
+                <span className="rounded-full border border-border/70 bg-background/35 px-3 py-1 text-[11px] font-mono text-muted-foreground/75">
+                  {streamId.trim() || "chat"}
+                </span>
+              </div>
+            </div>
           </div>
         </div>
       </Card>
 
-      {/* Advanced params */}
-      <Card className="glass-card p-6 rounded-3xl">
+      <Card className="rounded-[2rem] border border-white/8 bg-card/70 p-6">
         <div className="space-y-4">
-          <div className="flex items-center gap-2 mb-2">
-            <SlidersHorizontal className="w-3.5 h-3.5 text-muted-foreground/40" />
-            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("retrieve.parameters")}</span>
+          <div className="mb-2 flex items-center gap-2">
+            <SlidersHorizontal className="h-3.5 w-3.5 text-muted-foreground/45" />
+            <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">{t("retrieve.parameters")}</span>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
             {[
               { label: t("retrieve.params.limit"), value: limit, setter: setLimit, placeholder: "10" },
               { label: t("retrieve.params.score"), value: minScore, setter: setMinScore, placeholder: "0.0" },
@@ -399,8 +473,8 @@ function RetrievePanel() {
               { label: t("retrieve.params.asOf"), value: asOf, setter: setAsOf, placeholder: "NOW" },
             ].map((p) => (
               <div key={p.label} className="space-y-2">
-                <label className="px-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{p.label}</label>
-                <Input value={p.value} onChange={(e) => p.setter(e.target.value)} placeholder={p.placeholder} className="h-10 text-[11px] font-mono bg-card border-border" />
+                <label className="px-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{p.label}</label>
+                <Input value={p.value} onChange={(e) => p.setter(e.target.value)} placeholder={p.placeholder} className="h-10 border-border/70 bg-background/45 text-[11px] font-mono" />
               </div>
             ))}
           </div>
@@ -417,31 +491,33 @@ function RetrievePanel() {
       {/* Results */}
       {results && (
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-medium">{t("retrieve.results", { count: results.results.length })}</span>
-            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{results.query_time_ms.toFixed(1)}ms</span>
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-sm font-medium text-foreground/90">{t("retrieve.results", { count: results.results.length })}</span>
+            <span className="rounded-full border border-border/70 bg-background/45 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
+              {results.query_time_ms.toFixed(1)}ms
+            </span>
           </div>
           {results.results.length === 0 ? (
-            <Card>
-              <div className="p-6 text-center text-muted-foreground text-sm">{t("retrieve.noResults")}</div>
+            <Card className="rounded-[1.6rem] border border-dashed border-border/70 bg-card/60">
+              <div className="p-8 text-center text-sm text-muted-foreground">{t("retrieve.noResults")}</div>
             </Card>
           ) : (
             results.results.map((r, i) => (
-              <Card key={r.unit.id || i} className="glass-card">
-                <div className="p-4">
-                  <div className="flex items-start justify-between gap-3 mb-2">
-                    <p className="text-sm leading-relaxed flex-1">{r.unit.content}</p>
+              <Card key={r.unit.id || i} className="rounded-[1.7rem] border border-white/8 bg-card/75 shadow-[0_16px_40px_rgba(0,0,0,0.12)]">
+                <div className="p-5">
+                  <div className="mb-3 flex items-start justify-between gap-4">
+                    <p className="flex-1 text-sm leading-7 text-foreground/92">{r.unit.content}</p>
                     <div className="shrink-0 text-right">
                       <div className="text-sm font-mono font-semibold text-primary">{(r.score * 100).toFixed(1)}%</div>
-                      <div className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("retrieve.scoreLabel")}</div>
+                      <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">{t("retrieve.scoreLabel")}</div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3 flex-wrap text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
-                    <span className="font-mono">{r.unit.id.substring(0, 8)}</span>
-                    <span>L{r.unit.level}</span>
-                    {r.unit.memory_type && <span className="capitalize">{r.unit.memory_type}</span>}
+                  <div className="flex flex-wrap items-center gap-2.5 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
+                    <span className="rounded-full border border-border/70 bg-background/35 px-2.5 py-1 font-mono">{r.unit.id.substring(0, 8)}</span>
+                    <span className="rounded-full border border-border/70 bg-background/35 px-2.5 py-1">L{r.unit.level}</span>
+                    {r.unit.memory_type && <span className="rounded-full border border-border/70 bg-background/35 px-2.5 py-1 capitalize">{r.unit.memory_type}</span>}
                     {r.unit.keywords.slice(0, 4).map((kw) => (
-                      <span key={kw} className="bg-muted/40 rounded px-1.5 py-0.5">{kw}</span>
+                      <span key={kw} className="rounded-full border border-white/8 bg-white/[0.03] px-2.5 py-1">{kw}</span>
                     ))}
                   </div>
                   {r.unit.assets.length > 0 ? (
@@ -528,47 +604,41 @@ function ForgetPanel() {
 
   return (
     <div className="space-y-6">
-      <Card className="glass-card p-6 rounded-3xl">
+      <Card className="rounded-[2rem] border border-white/8 bg-card/75 p-6 shadow-[0_22px_64px_rgba(0,0,0,0.2)]">
         <div className="space-y-6">
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <Trash2 className="h-4 w-4 text-primary/70" />
-              <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
-                {t("forget.title")}
-              </span>
-            </div>
-            <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
-              {t("forget.description")}
-            </p>
-          </div>
-
-          {scopedOrgId && (
-            <div className="rounded-lg border border-border/70 bg-background/50 px-3 py-2 text-[11px] font-mono text-muted-foreground">
-              {t("forget.orgScope", { orgId: scopedOrgId })}
-            </div>
-          )}
+          <PanelIntro
+            icon={Trash2}
+            eyebrow={t("tabs.forget")}
+            title={t("forget.title")}
+            description={t("forget.description")}
+            trailing={
+              scopedOrgId ? (
+                <ScopeBadge text={t("forget.orgScope", { orgId: scopedOrgId })} tone={mode === "hard" ? "danger" : "neutral"} />
+              ) : undefined
+            }
+          />
 
           <div className="grid gap-4 md:grid-cols-[1fr_180px_120px]">
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder={t("forget.placeholder")}
-              className="h-12 bg-card border-border text-base px-4"
+              className="h-12 border-border/70 bg-background/45 px-4 text-base"
               onKeyDown={(event) => event.key === "Enter" && handlePreview()}
             />
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-2 rounded-2xl border border-border/70 bg-background/45 p-1.5">
               <Button
                 type="button"
-                variant={mode === "logical" ? "default" : "outline"}
-                className="h-12"
+                variant={mode === "logical" ? "default" : "ghost"}
+                className="h-11 rounded-xl"
                 onClick={() => setMode("logical")}
               >
                 {t("forget.modes.logical")}
               </Button>
               <Button
                 type="button"
-                variant={mode === "hard" ? "destructive" : "outline"}
-                className="h-12"
+                variant={mode === "hard" ? "destructive" : "ghost"}
+                className="h-11 rounded-xl"
                 onClick={() => setMode("hard")}
               >
                 {t("forget.modes.hard")}
@@ -578,7 +648,7 @@ function ForgetPanel() {
               value={limit}
               onChange={(event) => setLimit(event.target.value)}
               placeholder="10"
-              className="h-12 bg-card border-border text-[13px] font-mono"
+              className="h-12 border-border/70 bg-background/45 text-[13px] font-mono"
             />
           </div>
 
@@ -591,7 +661,7 @@ function ForgetPanel() {
               {loadingPreview ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
               {t("forget.preview")}
             </Button>
-            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+            <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
               {mode === "hard" ? t("forget.modeHintHard") : t("forget.modeHintLogical")}
             </span>
           </div>
@@ -612,17 +682,17 @@ function ForgetPanel() {
 
       {preview ? (
         <div className="space-y-4">
-          <Card className="glass-card p-6 rounded-3xl">
+          <Card className="rounded-[2rem] border border-white/8 bg-card/75 p-6">
             <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
               <div className="space-y-2">
-                <p className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
                   {t("forget.previewSummary")}
                 </p>
                 <p className="text-sm text-foreground/90">{preview.query}</p>
-                <div className="flex flex-wrap gap-2 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
-                  <span>{t("forget.summary.memories", { count: preview.summary.memory_unit_count })}</span>
-                  <span>{t("forget.summary.events", { count: preview.summary.event_count })}</span>
-                  <span>{preview.mode === "hard" ? t("forget.modes.hard") : t("forget.modes.logical")}</span>
+                <div className="flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
+                  <span className="rounded-full border border-border/70 bg-background/35 px-2.5 py-1">{t("forget.summary.memories", { count: preview.summary.memory_unit_count })}</span>
+                  <span className="rounded-full border border-border/70 bg-background/35 px-2.5 py-1">{t("forget.summary.events", { count: preview.summary.event_count })}</span>
+                  <span className="rounded-full border border-border/70 bg-background/35 px-2.5 py-1">{preview.mode === "hard" ? t("forget.modes.hard") : t("forget.modes.logical")}</span>
                 </div>
               </div>
               <Button
@@ -638,12 +708,12 @@ function ForgetPanel() {
           </Card>
 
           <div className="grid gap-4 xl:grid-cols-2">
-            <Card className="glass-card p-5 rounded-3xl">
+            <Card className="rounded-[1.8rem] border border-white/8 bg-card/70 p-5">
               <div className="mb-4 flex items-center justify-between">
-                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+                <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
                   {t("forget.previewMemories")}
                 </span>
-                <span className="text-[11px] font-mono text-muted-foreground">
+                <span className="text-[10px] font-mono text-muted-foreground">
                   {preview.matched_units.length}
                 </span>
               </div>
@@ -655,10 +725,10 @@ function ForgetPanel() {
                 ) : (
                   preview.matched_units.map((unit) => (
                     <div key={unit.id} className="rounded-2xl border border-border/60 bg-card/40 p-4">
-                      <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
-                        <span className="font-mono">{unit.id.slice(0, 8)}</span>
-                        <span>L{unit.level}</span>
-                        <span>{unit.memory_type}</span>
+                      <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
+                        <span className="rounded-full border border-border/70 bg-background/35 px-2.5 py-1 font-mono">{unit.id.slice(0, 8)}</span>
+                        <span className="rounded-full border border-border/70 bg-background/35 px-2.5 py-1">L{unit.level}</span>
+                        <span className="rounded-full border border-border/70 bg-background/35 px-2.5 py-1">{unit.memory_type}</span>
                       </div>
                       <p className="text-sm leading-relaxed text-foreground/90">{unit.content}</p>
                       {unit.keywords.length > 0 ? (
@@ -666,7 +736,7 @@ function ForgetPanel() {
                           {unit.keywords.slice(0, 6).map((keyword) => (
                             <span
                               key={keyword}
-                              className="rounded-full border border-border/70 bg-background/30 px-2 py-0.5 text-[10px] font-medium uppercase tracking-widest text-muted-foreground"
+                              className="rounded-full border border-border/70 bg-background/30 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground"
                             >
                               {keyword}
                             </span>
@@ -684,12 +754,12 @@ function ForgetPanel() {
               </div>
             </Card>
 
-            <Card className="glass-card p-5 rounded-3xl">
+            <Card className="rounded-[1.8rem] border border-white/8 bg-card/70 p-5">
               <div className="mb-4 flex items-center justify-between">
-                <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+                <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
                   {t("forget.previewEvents")}
                 </span>
-                <span className="text-[11px] font-mono text-muted-foreground">
+                <span className="text-[10px] font-mono text-muted-foreground">
                   {preview.matched_events.length}
                 </span>
               </div>
@@ -701,9 +771,9 @@ function ForgetPanel() {
                 ) : (
                   preview.matched_events.map((event) => (
                     <div key={event.id} className="rounded-2xl border border-border/60 bg-card/40 p-4">
-                      <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
-                        <span className="font-mono">{event.id.slice(0, 8)}</span>
-                        <span>{new Date(event.transaction_time).toLocaleString()}</span>
+                      <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
+                        <span className="rounded-full border border-border/70 bg-background/35 px-2.5 py-1 font-mono">{event.id.slice(0, 8)}</span>
+                        <span className="rounded-full border border-border/70 bg-background/35 px-2.5 py-1">{new Date(event.transaction_time).toLocaleString()}</span>
                       </div>
                       <p className="text-sm leading-relaxed text-foreground/90">{event.content}</p>
                     </div>
@@ -721,8 +791,9 @@ function ForgetPanel() {
 export default function PlaygroundPage() {
   const t = useTranslations("Playground");
   return (
-    <div className="flex-1 flex flex-col min-h-0 w-full max-w-5xl mx-auto relative">
-      <div className="mb-4 shrink-0">
+    <div className="relative mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col overflow-hidden">
+      <div className="pointer-events-none absolute right-0 top-0 -z-10 h-[300px] w-[520px] blob-bg opacity-20 mix-blend-screen" />
+      <div className="mb-5 shrink-0">
         <motion.div
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
@@ -734,34 +805,27 @@ export default function PlaygroundPage() {
             title={t("title")}
             description={t("subtitle")}
           >
-            <DashboardStatRail
-              items={[
-                { label: t("tabs.chat"), value: "Live", tone: "primary" },
-                { label: t("tabs.retrieve"), value: "Search", tone: "success" },
-                { label: t("tabs.forget"), value: "Forget", tone: "warning" },
-              ]}
-            />
           </DashboardHero>
         </motion.div>
       </div>
 
-      <Tabs defaultValue="chat" className="flex-1 flex flex-col min-h-0">
-        <TabsList className="grid w-full max-w-md grid-cols-3 mb-4 shrink-0">
-          <TabsTrigger value="chat" className="gap-1.5">
+      <Tabs defaultValue="chat" className="flex min-h-0 flex-1 flex-col">
+        <TabsList className="mb-5 grid w-full max-w-lg shrink-0 grid-cols-3 rounded-2xl border border-white/8 bg-card/65 p-1.5">
+          <TabsTrigger value="chat" className="gap-1.5 rounded-xl text-[11px] font-bold uppercase tracking-[0.14em]">
             <Bot className="w-3.5 h-3.5" />
             {t("tabs.chat")}
           </TabsTrigger>
-          <TabsTrigger value="retrieve" className="gap-1.5">
+          <TabsTrigger value="retrieve" className="gap-1.5 rounded-xl text-[11px] font-bold uppercase tracking-[0.14em]">
             <Search className="w-3.5 h-3.5" />
             {t("tabs.retrieve")}
           </TabsTrigger>
-          <TabsTrigger value="forget" className="gap-1.5">
+          <TabsTrigger value="forget" className="gap-1.5 rounded-xl text-[11px] font-bold uppercase tracking-[0.14em]">
             <Trash2 className="w-3.5 h-3.5" />
             {t("tabs.forget")}
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="chat" className="flex-1 min-h-0 mt-0 data-[state=active]:flex data-[state=active]:flex-col">
+        <TabsContent value="chat" className="mt-0 min-h-0 flex-1 overflow-hidden data-[state=active]:flex data-[state=active]:flex-col">
           <ChatPanel />
         </TabsContent>
 

@@ -24,7 +24,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
-import { DashboardHero, DashboardStatRail } from "@/components/dashboard-chrome";
 
 function StatCard({
   label,
@@ -32,12 +31,14 @@ function StatCard({
   icon: Icon,
   color = "text-primary",
   delay = 0,
+  compact = false,
 }: {
   label: string;
   value: string | number;
   icon: React.ElementType;
   color?: string;
   delay?: number;
+  compact?: boolean;
 }) {
   return (
     <motion.div
@@ -47,14 +48,14 @@ function StatCard({
       className="h-full"
     >
       <Card className="glass-card group relative overflow-hidden transition-all duration-500 h-full">
-        <CardContent className="p-5 flex flex-col gap-4 h-full relative z-10">
-          <div className="flex items-center gap-2">
-            <Icon className={`w-4 h-4 ${color} opacity-60 group-hover:opacity-100 transition-opacity shrink-0`} />
-            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground truncate">
+        <CardContent className={`relative z-10 flex h-full flex-col ${compact ? "gap-2.5 p-3.5" : "gap-4 p-5"}`}>
+          <div className={`flex items-center ${compact ? "gap-1.5" : "gap-2"}`}>
+            <Icon className={`${compact ? "h-3.5 w-3.5" : "h-4 w-4"} ${color} opacity-60 group-hover:opacity-100 transition-opacity shrink-0`} />
+            <span className={`${compact ? "text-[9px]" : "text-[10px]"} font-bold uppercase tracking-wider text-muted-foreground truncate`}>
               {label}
             </span>
           </div>
-          <div className="text-3xl font-bold tracking-tighter font-mono text-foreground/90 group-hover:text-white transition-colors">
+          <div className={`${compact ? "text-2xl xl:text-[1.65rem]" : "text-3xl"} font-bold tracking-tighter font-mono text-foreground/90 group-hover:text-white transition-colors`}>
             {typeof value === "number" ? formatNumber(value) : value}
           </div>
         </CardContent>
@@ -67,27 +68,27 @@ function RaftMetricsGrid({ data, stateColor, t }: { data: ShardStatus | ClusterS
   return (
     <div className="grid grid-cols-3 gap-2 mt-4">
       <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center">
-        <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("raft.state")}</span>
+        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("raft.state")}</span>
         <span className={`text-xs font-bold uppercase mt-1 ${stateColor}`}>{data.raft_state}</span>
       </div>
       <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center">
-        <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("raft.term")}</span>
+        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("raft.term")}</span>
         <span className="text-xs font-mono font-bold text-foreground/80 mt-1">{data.current_term}</span>
       </div>
       <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center">
-        <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("raft.logIndex")}</span>
+        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("raft.logIndex")}</span>
         <span className="text-xs font-mono font-bold text-foreground/80 mt-1">{data.last_log_index}</span>
       </div>
       <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center">
-        <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("raft.applied")}</span>
+        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("raft.applied")}</span>
         <span className="text-xs font-mono font-bold text-foreground/80 mt-1">{data.last_applied}</span>
       </div>
       <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center">
-        <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("raft.lag")}</span>
+        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("raft.lag")}</span>
         <span className={`text-xs font-mono font-bold mt-1 ${data.replication_lag > 10 ? "text-warning" : "text-success"}`}>{data.replication_lag}</span>
       </div>
       <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center">
-        <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("raft.voters")}</span>
+        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("raft.voters")}</span>
         <span className="text-xs font-mono font-bold text-foreground/80 mt-1">{data.voters?.length ?? 0}</span>
       </div>
     </div>
@@ -109,7 +110,7 @@ function ShardRaftCard({ shard, t }: { shard: ShardStatus; t: ReturnType<typeof 
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Layers className="w-4 h-4 text-primary opacity-60" />
-            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">S{shard.shard_id}</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">S{shard.shard_id}</span>
           </div>
           <div className={`w-2 h-2 rounded-full ${isHealthy ? 'bg-success shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-warning shadow-[0_0_8px_rgba(245,158,11,0.5)]'} animate-pulse`} />
         </div>
@@ -134,7 +135,7 @@ function RaftStatusCard({ cluster, t }: { cluster: ClusterStatusSingle; t: Retur
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <GitBranch className="w-4 h-4 text-primary opacity-60" />
-            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("raft.consensus")}</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("raft.consensus")}</span>
           </div>
           <div className={`w-2 h-2 rounded-full ${cluster.replication_lag <= 10 ? 'bg-success shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-warning shadow-[0_0_8px_rgba(245,158,11,0.5)]'} animate-pulse`} />
         </div>
@@ -158,18 +159,18 @@ function HeartbeatCard({ cluster, onRemoveNode, t }: { cluster: ClusterStatusSin
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Activity className="w-4 h-4 text-primary opacity-60" />
-            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("heartbeat.title")}</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("heartbeat.title")}</span>
           </div>
         </div>
       </CardHeader>
       <CardContent className="p-4 pt-4 space-y-4">
         <div className="grid grid-cols-2 gap-2">
           <div className="glass-card p-2 rounded-lg flex flex-col items-center justify-center">
-            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("heartbeat.interval")}</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("heartbeat.interval")}</span>
             <span className="text-xs font-mono font-bold text-foreground/80 mt-1">{config.heartbeat_interval_ms}ms</span>
           </div>
           <div className="glass-card p-2 rounded-lg flex flex-col items-center justify-center">
-            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("heartbeat.timeout")}</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("heartbeat.timeout")}</span>
             <span className="text-xs font-mono font-bold text-foreground/80 mt-1">{config.election_timeout_min_ms}ms</span>
           </div>
         </div>
@@ -185,7 +186,7 @@ function HeartbeatCard({ cluster, onRemoveNode, t }: { cluster: ClusterStatusSin
                 <div className="flex items-center gap-2">
                   <div className={`w-1.5 h-1.5 rounded-full ${isHealthy ? 'bg-success shadow-[0_0_5px_rgba(34,197,94,0.5)]' : 'bg-warning shadow-[0_0_5px_rgba(245,158,11,0.5)]'} animate-pulse`} />
                   <span className="text-xs font-mono text-foreground/80">N{nodeId}</span>
-                  {isSelf && <span className="ml-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">({t("node.self")})</span>}
+                  {isSelf && <span className="ml-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">({t("node.self")})</span>}
                 </div>
                 <div className="flex items-center gap-2">
                   {isLeader && <Star className="w-3 h-3 text-success opacity-80" />}
@@ -216,7 +217,7 @@ function PipelineCard({ stats, t }: { stats: NonNullable<ReturnType<typeof useSt
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Zap className="w-4 h-4 text-primary opacity-60" />
-            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("pipeline.title")}</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("pipeline.title")}</span>
           </div>
         </div>
       </CardHeader>
@@ -228,7 +229,7 @@ function PipelineCard({ stats, t }: { stats: NonNullable<ReturnType<typeof useSt
         ].map((level) => (
           <div key={level.label} className="relative">
             <div className="flex justify-between items-end mb-1.5">
-              <span className="font-mono text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{level.label}</span>
+              <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{level.label}</span>
               <span className="text-xs font-mono text-foreground/80">{formatNumber(level.count)}</span>
             </div>
             <div className="h-1 bg-card rounded-full overflow-hidden border border-border">
@@ -254,7 +255,7 @@ function SingleShardTopology({ cluster, t }: { cluster: ClusterStatusSingle; t: 
           <div className="p-1.5 rounded-md bg-primary/10 border border-primary/20">
             <Server className="w-3.5 h-3.5 text-primary" />
           </div>
-          <span className="uppercase tracking-widest text-muted-foreground/80 font-bold">{t("topology.title")}</span>
+          <span className="uppercase tracking-wider text-muted-foreground/80 font-bold">{t("topology.title")}</span>
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -279,10 +280,10 @@ function SingleShardTopology({ cluster, t }: { cluster: ClusterStatusSingle; t: 
                       </span>
                     </div>
                   </div>
-                  <div className="mt-3 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+                  <div className="mt-3 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                     {isLeader ? <span className="text-success">{t("topology.leader")}</span> : t("topology.follower")}
                   </div>
-                  <div className="font-mono mt-0.5 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+                  <div className="font-mono mt-0.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                     :{3000 + nodeId - 1}
                   </div>
                 </div>
@@ -293,7 +294,7 @@ function SingleShardTopology({ cluster, t }: { cluster: ClusterStatusSingle; t: 
                 <div className="w-16 h-16 rounded-2xl flex items-center justify-center border-2 border-dashed border-border bg-card mx-auto">
                   <span className="text-sm font-mono text-muted-foreground/50">N{nodeId}</span>
                 </div>
-                <div className="mt-3 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("topology.learner")}</div>
+                <div className="mt-3 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("topology.learner")}</div>
               </div>
             ))}
           </div>
@@ -305,7 +306,7 @@ function SingleShardTopology({ cluster, t }: { cluster: ClusterStatusSingle; t: 
                 <span className="text-sm font-mono font-bold text-white">N{cluster.node_id}</span>
               </div>
             </div>
-            <div className="font-medium text-[11px] uppercase tracking-widest text-muted-foreground">
+            <div className="font-medium text-[10px] uppercase tracking-wider text-muted-foreground">
               {cluster.raft_state} &middot; Term {cluster.current_term}
             </div>
           </div>
@@ -323,7 +324,7 @@ function ShardedTopology({ cluster, t }: { cluster: ClusterStatusSharded; t: Ret
           <div className="p-1.5 rounded-md bg-primary/10 border border-primary/20">
             <Server className="w-3.5 h-3.5 text-primary" />
           </div>
-          <span className="uppercase tracking-widest text-muted-foreground/80 font-bold">
+          <span className="uppercase tracking-wider text-muted-foreground/80 font-bold">
             {t("topology.sharded", { node: cluster.physical_node_id, count: cluster.shard_count })}
           </span>
         </CardTitle>
@@ -349,7 +350,7 @@ function ShardedTopology({ cluster, t }: { cluster: ClusterStatusSharded; t: Ret
                 <div className={`text-[10px] uppercase tracking-wider font-bold mt-3 ${isLeader ? 'text-success' : 'text-muted-foreground/60'}`}>
                   {isLeader ? t("topology.leader") : t("topology.follower")}
                 </div>
-                <div className="font-mono mt-0.5 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+                <div className="font-mono mt-0.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                   T{shard.current_term}
                 </div>
               </div>
@@ -403,55 +404,23 @@ export default function ClusterPage() {
   const sharded = cluster && isShardedCluster(cluster);
 
   return (
-    <div className="space-y-6">
-      <DashboardHero
-        icon={LayoutDashboard}
-        kicker={t("title")}
-        title={t("title")}
-        description={
-          scopedOrgId
-            ? `${t("orgScope", { orgId: scopedOrgId })} · ${
-                sharded
-                  ? t("subtitleSharded", { count: (cluster as ClusterStatusSharded).shard_count })
-                  : t("subtitleSingle")
-              }`
-            : sharded
-              ? t("subtitleSharded", { count: (cluster as ClusterStatusSharded).shard_count })
-              : t("subtitleSingle")
-        }
-        actions={
-          stats ? (
-            <div className="dashboard-stat-pill min-w-[9.5rem]">
-              <span className="dashboard-stat-label">Uptime</span>
-              <span className="dashboard-stat-value flex items-center gap-2 text-primary">
-                <Clock className="h-4 w-4" />
-                {formatDuration(stats.uptime_seconds)}
-              </span>
-            </div>
-          ) : null
-        }
-      >
-        <DashboardStatRail
-          items={[
-            { label: t("stats.totalEvents"), value: stats?.total_events ?? 0, tone: "primary" },
-            { label: t("stats.memoryUnits"), value: stats?.total_memory_units ?? 0, tone: "success" },
-            { label: sharded ? t("stats.shards") : t("stats.nodes"), value: sharded ? (cluster as ClusterStatusSharded).shard_count : (cluster as ClusterStatusSingle)?.voters.length ?? 0, tone: "warning" },
-          ]}
-        />
-      </DashboardHero>
+    <div className="space-y-8 relative pb-10">
+      <div className="absolute top-0 right-0 w-[500px] h-[300px] blob-bg opacity-20 pointer-events-none -z-10 mix-blend-screen" />
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-        <StatCard label={t("stats.totalEvents")} value={stats?.total_events ?? 0} icon={Activity} delay={0.1} />
-        <StatCard label={t("stats.memoryUnits")} value={stats?.total_memory_units ?? 0} icon={Database} color="text-success" delay={0.15} />
-        <StatCard label={t("stats.graphEdges")} value={stats?.total_edges ?? 0} icon={GitBranch} color="text-warning" delay={0.2} />
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
+        <StatCard label={t("stats.totalEvents")} value={stats?.total_events ?? 0} icon={Activity} delay={0.1} compact />
+        <StatCard label="Uptime" value={formatDuration(stats?.uptime_seconds ?? 0)} icon={Clock} color="text-primary" delay={0.12} compact />
+        <StatCard label={t("stats.memoryUnits")} value={stats?.total_memory_units ?? 0} icon={Database} color="text-success" delay={0.15} compact />
+        <StatCard label={t("stats.graphEdges")} value={stats?.total_edges ?? 0} icon={GitBranch} color="text-warning" delay={0.2} compact />
         <StatCard
           label={sharded ? t("stats.shards") : t("stats.nodes")}
           value={sharded ? (cluster as ClusterStatusSharded).shard_count : (cluster as ClusterStatusSingle)?.voters.length ?? 0}
           icon={Server}
           delay={0.25}
+          compact
         />
-        <StatCard label={t("stats.pendingQueue")} value={pendingData?.pending ?? "—"} icon={Hourglass} color="text-warning" delay={0.3} />
+        <StatCard label={t("stats.pendingQueue")} value={pendingData?.pending ?? "—"} icon={Hourglass} color="text-warning" delay={0.3} compact />
       </div>
 
       {/* Topology */}

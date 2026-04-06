@@ -1,7 +1,11 @@
 #[cfg(test)]
 mod tests {
-    use crate::llm::gemini::GeminiClient;
-    use crate::llm::LLMClient;
+    use super::super::{
+        embed_input_to_parts, map_usage_metadata, parse_batch_embed_response,
+        parse_embed_response, parse_generate_response, trim_json_fence, GeminiClient,
+        GeminiUsageMetadata, Part,
+    };
+    use crate::llm::{EmbedInput, EmbedPart, LLMClient};
     use serde_json::json;
     use wiremock::matchers::{method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -248,7 +252,6 @@ mod tests {
 
     #[test]
     fn test_embed_input_text_conversion() {
-        use crate::llm::EmbedInput;
         let input = EmbedInput::Text("hello".to_string());
         assert!(!input.has_multimodal_parts());
         assert_eq!(input.as_text(), "hello");
@@ -256,7 +259,6 @@ mod tests {
 
     #[test]
     fn test_embed_input_multimodal_detection() {
-        use crate::llm::{EmbedInput, EmbedPart};
         let input = EmbedInput::Multimodal {
             parts: vec![
                 EmbedPart::Text("caption".to_string()),
@@ -268,5 +270,257 @@ mod tests {
         };
         assert!(input.has_multimodal_parts());
         assert_eq!(input.as_text(), "caption");
+    }
+
+    #[test]
+    fn test_map_usage_metadata_defaults_missing_fields() {
+        let usage = map_usage_metadata(Some(GeminiUsageMetadata {
+            prompt_token_count: Some(5),
+            candidates_token_count: None,
+            total_token_count: Some(7),
+        }));
+
+        assert_eq!(usage.prompt_tokens, 5);
+        assert_eq!(usage.completion_tokens, 0);
+        assert_eq!(usage.total_tokens, 7);
+        assert_eq!(map_usage_metadata(None).total_tokens, 0);
+    }
+
+    #[test]
+    fn test_parse_generate_response_extracts_text_and_usage() {
+        let response = parse_generate_response(
+            r#"{
+                "candidates": [{
+                    "content": {"parts": [{"text": "Hello from parser"}]}
+                }],
+                "usageMetadata": {
+                    "promptTokenCount": 3,
+                    "candidatesTokenCount": 4,
+                    "totalTokenCount": 7
+                }
+            }"#,
+        )
+        .expect("generate response should parse");
+
+        assert_eq!(response.data, "Hello from parser");
+        assert_eq!(response.usage.prompt_tokens, 3);
+        assert_eq!(response.usage.completion_tokens, 4);
+        assert_eq!(response.usage.total_tokens, 7);
+    }
+
+    #[test]
+    fn test_parse_generate_response_handles_inline_part_as_empty_text() {
+        let response = parse_generate_response(
+            r#"{
+                "candidates": [{
+                    "content": {
+                        "parts": [{
+                            "inline_data": {"mime_type":"image/png","data":"abc"}
+                        }]
+                    }
+                }]
+            }"#,
+        )
+        .expect("inline-only response should still parse");
+
+        assert_eq!(response.data, "");
+    }
+
+    #[test]
+    fn test_parse_generate_response_rejects_missing_content() {
+        let err = parse_generate_response(r#"{"candidates":[]}"#)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("No content in Gemini response"));
+    }
+
+    #[test]
+    fn test_parse_embed_response_normalizes_when_output_dimensionality_present() {
+        let response = parse_embed_response(
+            r#"{"embedding":{"values":[3.0,4.0]}}"#,
+            Some(2),
+        )
+        .expect("embed response should parse");
+
+        assert!((response.data[0] - 0.6).abs() < 1e-6);
+        assert!((response.data[1] - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_parse_embed_response_surfaces_api_error() {
+        let err = parse_embed_response(
+            r#"{"error":{"message":"bad request"}}"#,
+            None,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("Gemini Embedding API error: bad request"));
+    }
+
+    #[test]
+    fn test_parse_batch_embed_response_checks_count_and_normalizes() {
+        let response = parse_batch_embed_response(
+            r#"{
+                "embeddings":[
+                    {"values":[3.0,4.0]},
+                    {"values":[5.0,12.0]}
+                ]
+            }"#,
+            2,
+            Some(2),
+        )
+        .expect("batch response should parse");
+
+        assert_eq!(response.data.len(), 2);
+        let norm0: f32 = response.data[0].iter().map(|x| x * x).sum::<f32>().sqrt();
+        let norm1: f32 = response.data[1].iter().map(|x| x * x).sum::<f32>().sqrt();
+        assert!((norm0 - 1.0).abs() < 1e-6);
+        assert!((norm1 - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_parse_batch_embed_response_rejects_count_mismatch() {
+        let err = parse_batch_embed_response(
+            r#"{"embeddings":[{"values":[1.0,2.0]}]}"#,
+            2,
+            None,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("count mismatch"));
+    }
+
+    #[test]
+    fn test_trim_json_fence_removes_markdown_wrappers() {
+        assert_eq!(
+            trim_json_fence("```json\n{\"content\":\"x\"}\n```"),
+            "{\"content\":\"x\"}"
+        );
+        assert_eq!(trim_json_fence("  plain  "), "plain");
+    }
+
+    #[test]
+    fn test_embed_input_to_parts_preserves_text_and_inline_parts() {
+        let parts = embed_input_to_parts(EmbedInput::Multimodal {
+            parts: vec![
+                EmbedPart::Text("caption".to_string()),
+                EmbedPart::InlineData {
+                    mime_type: "image/png".to_string(),
+                    data: "abc".to_string(),
+                },
+            ],
+        });
+
+        assert!(matches!(&parts[0], Part::Text { text } if text == "caption"));
+        assert!(matches!(&parts[1], Part::Inline { inline_data } if inline_data.mime_type == "image/png" && inline_data.data == "abc"));
+    }
+
+    #[test]
+    fn test_new_uses_default_base_url() {
+        let client = GeminiClient::new(
+            " test-key ".to_string(),
+            TEST_MODEL.to_string(),
+            TEST_EMBEDDING_MODEL.to_string(),
+        );
+
+        assert_eq!(client.api_key, "test-key");
+        assert_eq!(client.base_url, "https://generativelanguage.googleapis.com");
+        assert_eq!(client.model, TEST_MODEL);
+        assert_eq!(client.embedding_model, TEST_EMBEDDING_MODEL);
+    }
+
+    #[tokio::test]
+    async fn test_generate_invalid_base_url_errors_without_server() {
+        let client = GeminiClient::with_base_url(
+            "test-key".to_string(),
+            TEST_MODEL.to_string(),
+            TEST_EMBEDDING_MODEL.to_string(),
+            "not-a-valid-url".to_string(),
+            None,
+            None,
+        );
+
+        assert!(client.generate("Hello").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_embed_batch_empty_returns_empty_without_network() {
+        let client = GeminiClient::new(
+            "test-key".into(),
+            TEST_MODEL.into(),
+            TEST_EMBEDDING_MODEL.into(),
+        );
+
+        let response = client.embed_batch(Vec::new()).await.expect("empty batch");
+        assert!(response.data.is_empty());
+        assert_eq!(response.usage.total_tokens, 0);
+    }
+
+    #[tokio::test]
+    async fn test_embed_content_batch_empty_returns_empty_without_network() {
+        let client = GeminiClient::new(
+            "test-key".into(),
+            TEST_MODEL.into(),
+            TEST_EMBEDDING_MODEL.into(),
+        );
+
+        let response = client
+            .embed_content_batch(Vec::new())
+            .await
+            .expect("empty input batch");
+        assert!(response.data.is_empty());
+        assert_eq!(response.usage.total_tokens, 0);
+    }
+
+    #[tokio::test]
+    async fn test_embed_content_multimodal_invalid_base_url_errors() {
+        let client = GeminiClient::with_base_url(
+            "test-key".to_string(),
+            TEST_MODEL.to_string(),
+            TEST_EMBEDDING_MODEL.to_string(),
+            "not-a-valid-url".to_string(),
+            None,
+            None,
+        );
+
+        let input = EmbedInput::Multimodal {
+            parts: vec![
+                EmbedPart::Text("caption".to_string()),
+                EmbedPart::InlineData {
+                    mime_type: "image/png".to_string(),
+                    data: "abc".to_string(),
+                },
+            ],
+        };
+
+        assert!(client.embed_content(input).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_describe_image_base64_invalid_base_url_errors() {
+        let client = GeminiClient::with_base_url(
+            "test-key".to_string(),
+            TEST_MODEL.to_string(),
+            TEST_EMBEDDING_MODEL.to_string(),
+            "not-a-valid-url".to_string(),
+            None,
+            None,
+        );
+
+        assert!(client.describe_image("ZmFrZQ==").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_describe_video_base64_invalid_base_url_errors() {
+        let client = GeminiClient::with_base_url(
+            "test-key".to_string(),
+            TEST_MODEL.to_string(),
+            TEST_EMBEDDING_MODEL.to_string(),
+            "not-a-valid-url".to_string(),
+            None,
+            None,
+        );
+
+        assert!(client.describe_video("ZmFrZQ==").await.is_err());
     }
 }

@@ -314,6 +314,8 @@ impl TextIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{TimeZone, Utc};
+    use memorose_common::{MemoryDomain, TimeRange};
     use tempfile::tempdir;
     use uuid::Uuid;
 
@@ -344,6 +346,101 @@ mod tests {
 
             assert!(!results.is_empty());
             assert_eq!(results[0], unit.id.to_string());
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_text_index_bitemporal_filters_delete_and_sanitize_query() -> Result<()> {
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(async {
+            let temp_dir = tempdir()?;
+            let index = TextIndex::new(temp_dir.path(), 1000)?;
+            let stream_id = Uuid::new_v4();
+
+            let mut matching = MemoryUnit::new(
+                Some("org_a".into()),
+                "u1".into(),
+                Some("agent_a".into()),
+                stream_id,
+                memorose_common::MemoryType::Factual,
+                "Beijing cleanup playbook".to_string(),
+                None,
+            );
+            matching.domain = MemoryDomain::Agent;
+            matching.transaction_time = Utc.with_ymd_and_hms(2026, 4, 6, 10, 0, 0).unwrap();
+            matching.valid_time = Some(Utc.with_ymd_and_hms(2026, 4, 7, 10, 0, 0).unwrap());
+
+            let mut other = MemoryUnit::new(
+                Some("org_b".into()),
+                "u2".into(),
+                Some("agent_b".into()),
+                stream_id,
+                memorose_common::MemoryType::Factual,
+                "Beijing cleanup playbook".to_string(),
+                None,
+            );
+            other.domain = MemoryDomain::User;
+            other.transaction_time = Utc.with_ymd_and_hms(2026, 4, 8, 10, 0, 0).unwrap();
+            other.valid_time = Some(Utc.with_ymd_and_hms(2026, 4, 9, 10, 0, 0).unwrap());
+
+            index.index_unit(&matching)?;
+            index.index_unit(&other)?;
+            index.commit()?;
+            index.reload()?;
+
+            let filtered = index.search_bitemporal(
+                "Beijing cleanup",
+                10,
+                Some(TimeRange {
+                    start: Some(Utc.with_ymd_and_hms(2026, 4, 7, 0, 0, 0).unwrap()),
+                    end: Some(Utc.with_ymd_and_hms(2026, 4, 7, 23, 59, 59).unwrap()),
+                }),
+                Some(TimeRange {
+                    start: Some(Utc.with_ymd_and_hms(2026, 4, 6, 0, 0, 0).unwrap()),
+                    end: Some(Utc.with_ymd_and_hms(2026, 4, 6, 23, 59, 59).unwrap()),
+                }),
+                Some("org_a"),
+                Some("u1"),
+                Some("agent_a"),
+                Some("agent"),
+            )?;
+            assert_eq!(filtered, vec![matching.id.to_string()]);
+
+            let sanitized = index.search("Beijing:[", 10, None, None, None)?;
+            assert_eq!(sanitized.len(), 2);
+
+            index.delete_unit(&matching.id.to_string())?;
+            index.commit()?;
+            index.reload()?;
+            let after_delete = index.search("Beijing cleanup", 10, None, None, None)?;
+            assert_eq!(after_delete, vec![other.id.to_string()]);
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_text_index_background_commit_makes_documents_searchable() -> Result<()> {
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(async {
+            let temp_dir = tempdir()?;
+            let index = TextIndex::new(temp_dir.path(), 10)?;
+            let unit = MemoryUnit::new(
+                None,
+                "u_bg".into(),
+                None,
+                Uuid::new_v4(),
+                memorose_common::MemoryType::Factual,
+                "background committed record".to_string(),
+                None,
+            );
+
+            index.index_unit(&unit)?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+            let results = index.search("background committed", 10, None, None, None)?;
+            assert!(results.contains(&unit.id.to_string()));
             Ok(())
         })
     }

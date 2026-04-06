@@ -87,6 +87,14 @@ pub struct RaftConfig {
     pub election_timeout_min_ms: u64,
     pub election_timeout_max_ms: u64,
     pub snapshot_logs: u64,
+    #[serde(default = "default_auto_initialize")]
+    pub auto_initialize: bool,
+    #[serde(default)]
+    pub bootstrap_seed_node_id: Option<u32>,
+}
+
+fn default_auto_initialize() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -218,6 +226,8 @@ impl Default for RaftConfig {
             election_timeout_min_ms: DEFAULT_RAFT_ELECTION_TIMEOUT_MIN_MS,
             election_timeout_max_ms: DEFAULT_RAFT_ELECTION_TIMEOUT_MAX_MS,
             snapshot_logs: DEFAULT_RAFT_SNAPSHOT_LOGS,
+            auto_initialize: true,
+            bootstrap_seed_node_id: None,
         }
     }
 }
@@ -290,6 +300,7 @@ impl AppConfig {
                 DEFAULT_RAFT_ELECTION_TIMEOUT_MAX_MS,
             )?
             .set_default("raft.snapshot_logs", DEFAULT_RAFT_SNAPSHOT_LOGS)?
+            .set_default("raft.auto_initialize", true)?
             .set_default(
                 "worker.llm_concurrency",
                 DEFAULT_WORKER_LLM_CONCURRENCY as i64,
@@ -435,5 +446,116 @@ impl AppConfig {
             .as_ref()
             .filter(|s| s.enabled)
             .map_or(self.raft.node_id as u32, |s| s.physical_node_id)
+    }
+
+    /// Returns the number of physical nodes described by topology config.
+    pub fn cluster_node_count(&self) -> u32 {
+        self.sharding
+            .as_ref()
+            .filter(|s| s.enabled)
+            .map_or(1, |s| s.nodes.len().max(1) as u32)
+    }
+
+    /// Returns true when this node is the configured bootstrap seed node.
+    ///
+    /// When no explicit seed is configured, only a single-node topology is
+    /// allowed to self-bootstrap automatically.
+    pub fn is_bootstrap_seed_node(&self) -> bool {
+        match self.raft.bootstrap_seed_node_id {
+            Some(seed_node_id) => self.physical_node_id() == seed_node_id,
+            None => self.cluster_node_count() <= 1,
+        }
+    }
+
+    /// Returns true when startup should auto-bootstrap local raft groups.
+    pub fn should_auto_initialize_raft(&self) -> bool {
+        self.raft.auto_initialize && self.is_bootstrap_seed_node()
+    }
+
+    /// Returns true when auto-bootstrap is enabled but multi-node topology
+    /// lacks an explicit seed selection.
+    pub fn needs_explicit_bootstrap_seed(&self) -> bool {
+        self.raft.auto_initialize
+            && self.cluster_node_count() > 1
+            && self.raft.bootstrap_seed_node_id.is_none()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_single_node_topology_auto_bootstraps_by_default() {
+        let config = AppConfig::default();
+        assert_eq!(config.cluster_node_count(), 1);
+        assert!(config.is_bootstrap_seed_node());
+        assert!(config.should_auto_initialize_raft());
+        assert!(!config.needs_explicit_bootstrap_seed());
+    }
+
+    #[test]
+    fn test_multi_node_topology_requires_explicit_seed() {
+        let mut config = AppConfig::default();
+        config.sharding = Some(ShardingConfig {
+            enabled: true,
+            shard_count: 4,
+            physical_node_id: 1,
+            nodes: vec![
+                ShardNodeConfig {
+                    id: 1,
+                    http_addr: "10.0.0.1:3000".into(),
+                    raft_base_port: 5001,
+                },
+                ShardNodeConfig {
+                    id: 2,
+                    http_addr: "10.0.0.2:3000".into(),
+                    raft_base_port: 5001,
+                },
+            ],
+        });
+
+        assert_eq!(config.cluster_node_count(), 2);
+        assert!(!config.is_bootstrap_seed_node());
+        assert!(!config.should_auto_initialize_raft());
+        assert!(config.needs_explicit_bootstrap_seed());
+    }
+
+    #[test]
+    fn test_explicit_seed_enables_only_matching_node() {
+        let mut config = AppConfig::default();
+        config.sharding = Some(ShardingConfig {
+            enabled: true,
+            shard_count: 4,
+            physical_node_id: 2,
+            nodes: vec![
+                ShardNodeConfig {
+                    id: 1,
+                    http_addr: "10.0.0.1:3000".into(),
+                    raft_base_port: 5001,
+                },
+                ShardNodeConfig {
+                    id: 2,
+                    http_addr: "10.0.0.2:3000".into(),
+                    raft_base_port: 5001,
+                },
+            ],
+        });
+        config.raft.bootstrap_seed_node_id = Some(1);
+
+        assert!(!config.is_bootstrap_seed_node());
+        assert!(!config.should_auto_initialize_raft());
+
+        config.sharding.as_mut().unwrap().physical_node_id = 1;
+        assert!(config.is_bootstrap_seed_node());
+        assert!(config.should_auto_initialize_raft());
+        assert!(!config.needs_explicit_bootstrap_seed());
+    }
+
+    #[test]
+    fn test_explicit_disable_overrides_single_node_default() {
+        let mut config = AppConfig::default();
+        config.raft.auto_initialize = false;
+        assert!(!config.should_auto_initialize_raft());
     }
 }

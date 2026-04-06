@@ -57,21 +57,21 @@ export function CommandPalette() {
           <Command.Group heading={t("navigation")} className="px-2 py-1.5 text-xs font-medium text-muted-foreground [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground">
             <Command.Item 
               onSelect={() => runCommand(() => router.push("/metrics"))}
-              className="relative flex cursor-default select-none items-center rounded-sm px-2 py-2 text-sm outline-none aria-selected:bg-white/[0.08] aria-selected:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 hover:bg-white/[0.08] transition-colors"
+              className="relative flex cursor-default select-none items-center rounded-sm px-2 py-2 text-sm outline-none aria-selected:bg-white/[0.08] aria-selected:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 hover:bg-white/[0.08] transition-colors"
             >
               <Monitor className="mr-2 h-4 w-4 text-muted-foreground" />
               <span>{t("goToMetrics")}</span>
             </Command.Item>
             <Command.Item 
               onSelect={() => runCommand(() => router.push("/memories"))}
-              className="relative flex cursor-default select-none items-center rounded-sm px-2 py-2 text-sm outline-none aria-selected:bg-white/[0.08] aria-selected:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 hover:bg-white/[0.08] transition-colors"
+              className="relative flex cursor-default select-none items-center rounded-sm px-2 py-2 text-sm outline-none aria-selected:bg-white/[0.08] aria-selected:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 hover:bg-white/[0.08] transition-colors"
             >
               <Database className="mr-2 h-4 w-4 text-muted-foreground" />
               <span>{t("exploreMemories")}</span>
             </Command.Item>
             <Command.Item 
               onSelect={() => runCommand(() => router.push("/settings"))}
-              className="relative flex cursor-default select-none items-center rounded-sm px-2 py-2 text-sm outline-none aria-selected:bg-white/[0.08] aria-selected:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 hover:bg-white/[0.08] transition-colors"
+              className="relative flex cursor-default select-none items-center rounded-sm px-2 py-2 text-sm outline-none aria-selected:bg-white/[0.08] aria-selected:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 hover:bg-white/[0.08] transition-colors"
             >
               <Settings className="mr-2 h-4 w-4 text-muted-foreground" />
               <span>{t("systemSettings")}</span>

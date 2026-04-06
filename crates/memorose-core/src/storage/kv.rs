@@ -120,6 +120,7 @@ impl KvStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rocksdb::WriteBatch;
     use tempfile::tempdir;
 
     #[test]
@@ -163,6 +164,39 @@ mod tests {
         let b_results = kv.scan(b"b:")?;
         assert_eq!(b_results.len(), 1);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_kv_delete_batch_flush_checkpoint_count_and_range_scan() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let checkpoint_root = tempdir()?;
+        let checkpoint_dir = checkpoint_root.path().join("checkpoint");
+        let kv = KvStore::open(temp_dir.path())?;
+
+        let mut batch = WriteBatch::default();
+        batch.put(b"ns:1", b"one");
+        batch.put(b"ns:2", b"two");
+        batch.put(b"ns:3", b"three");
+        batch.put(b"other:1", b"x");
+        kv.write_batch(batch)?;
+        kv.flush()?;
+
+        assert_eq!(kv.count_prefix(b"ns:")?, 3);
+
+        let range = kv.scan_range(b"ns:1", b"ns:3")?;
+        assert_eq!(range.len(), 2);
+        assert_eq!(range[0].0, b"ns:1".to_vec());
+        assert_eq!(range[1].0, b"ns:2".to_vec());
+
+        kv.delete(b"ns:2")?;
+        assert_eq!(kv.get(b"ns:2")?, None);
+        assert_eq!(kv.count_prefix(b"ns:")?, 2);
+
+        kv.checkpoint(&checkpoint_dir)?;
+        let checkpoint_kv = KvStore::open(&checkpoint_dir)?;
+        assert_eq!(checkpoint_kv.get(b"ns:1")?, Some(b"one".to_vec()));
+        assert_eq!(checkpoint_kv.get(b"other:1")?, Some(b"x".to_vec()));
         Ok(())
     }
 }

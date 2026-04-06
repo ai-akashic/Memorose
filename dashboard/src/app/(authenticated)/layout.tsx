@@ -13,7 +13,6 @@ import {
   MessageSquare,
   Bot,
   Building2,
-  Command,
 } from "lucide-react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
@@ -86,42 +85,28 @@ export default function AuthenticatedLayout({
           <aside
             className={cn(
               "flex flex-col shrink-0 border-r border-white/8 bg-[linear-gradient(180deg,rgba(34,20,18,0.94),rgba(18,12,12,0.94))] backdrop-blur-xl shadow-[10px_0_42px_rgba(0,0,0,0.28)] transition-all duration-300 z-30 h-full overflow-hidden",
-              collapsed ? "w-[84px]" : "w-[286px]"
+              collapsed ? "w-[64px] lg:w-[68px]" : "w-[204px] lg:w-[212px] xl:w-[220px]"
             )}
           >
-            <div className={cn("border-b border-white/8", collapsed ? "px-3 py-4" : "px-4 py-5")}>
+            <div className={cn("border-b border-white/8", collapsed ? "px-2 py-2.5" : "px-2.5 py-3")}>
               {collapsed ? (
                 <div className="flex justify-center">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-[1.25rem] border border-white/10 bg-white/[0.04] shadow-[0_10px_30px_rgba(0,0,0,0.2)]">
-                    <MemoroseLogo size={28} />
+                  <div className="flex h-9 w-9 items-center justify-center rounded-[0.95rem] border border-white/10 bg-white/[0.04] shadow-[0_10px_30px_rgba(0,0,0,0.2)]">
+                    <MemoroseLogo size={21} />
                   </div>
                 </div>
               ) : (
-                <div className="dashboard-panel rounded-[1.5rem] px-4 py-4">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-[1.2rem] border border-white/10 bg-white/[0.04]">
-                      <MemoroseLogo size={30} />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-[11px] font-medium uppercase tracking-[0.24em] text-muted-foreground">
-                        Memorose
-                      </p>
-                      <p className="truncate text-[1.05rem] font-semibold tracking-[-0.03em] text-foreground">
-                        Control Plane
-                      </p>
-                    </div>
+                <div className="flex items-center gap-2 px-1 py-0.5">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[0.95rem] border border-white/10 bg-white/[0.06] shadow-sm">
+                    <MemoroseLogo size={24} />
                   </div>
-                  <div className="mt-4 flex items-center justify-between rounded-[1rem] border border-white/8 bg-white/[0.03] px-3 py-2">
-                    <div>
-                      <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
-                        Shortcuts
-                      </p>
-                      <p className="mt-1 text-xs text-foreground/80">Command palette</p>
-                    </div>
-                    <div className="flex items-center gap-1 rounded-full border border-white/8 bg-background/80 px-2 py-1 text-[11px] text-muted-foreground">
-                      <Command className="h-3 w-3" />
-                      K
-                    </div>
+                  <div className="min-w-0">
+                    <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-muted-foreground/80">
+                      Memorose
+                    </p>
+                    <p className="truncate text-[15px] font-bold leading-5 tracking-tight text-foreground/90">
+                      Control Plane
+                    </p>
                   </div>
                 </div>
               )}
@@ -129,7 +114,7 @@ export default function AuthenticatedLayout({
 
             <OrgSwitcher collapsed={collapsed} />
 
-            <nav className="flex-1 py-5 space-y-2 px-3 overflow-y-auto">
+            <nav className="flex-1 min-h-0 space-y-1 overflow-y-auto px-2 py-2">
               {navItems.map((item) => {
                 const isActive = pathname === item.href || pathname?.startsWith(item.href);
                 const link = (
@@ -137,31 +122,28 @@ export default function AuthenticatedLayout({
                     key={item.href}
                     href={item.href}
                     className={cn(
-                      "relative flex items-center gap-3 rounded-[1.1rem] border px-3.5 py-3 text-[13.5px] transition-all duration-200 group overflow-hidden",
+                      "group relative flex items-center gap-2 overflow-hidden rounded-[0.95rem] border px-2 py-2 text-[12.5px] transition-all duration-200",
                       isActive
                         ? "border-primary/25 bg-primary/10 text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_10px_25px_rgba(255,122,87,0.12)]"
                         : "border-transparent text-muted-foreground hover:border-white/10 hover:bg-white/[0.04] hover:text-foreground"
                     )}
                   >
                     {isActive && (
-                      <span className="absolute inset-y-3 left-0 w-1 rounded-r-full bg-primary shadow-[0_0_18px_rgba(255,122,87,0.8)]" />
+                      <span className="absolute inset-y-2 left-0 w-1 rounded-r-full bg-primary shadow-[0_0_18px_rgba(255,122,87,0.8)]" />
                     )}
                     <div
                       className={cn(
-                        "flex h-9 w-9 shrink-0 items-center justify-center rounded-[0.95rem] border transition-colors",
+                        "flex h-7.5 w-7.5 shrink-0 items-center justify-center rounded-[0.8rem] border transition-colors",
                         isActive
                           ? "border-primary/20 bg-primary/12 text-primary"
                           : "border-white/8 bg-white/[0.03] text-muted-foreground group-hover:text-foreground"
                       )}
                     >
-                      <item.icon className="h-4 w-4" />
+                      <item.icon className="h-[14px] w-[14px]" />
                     </div>
                     {!collapsed && (
                       <div className="min-w-0">
-                        <span className="block truncate font-medium">{item.label}</span>
-                        <span className="block truncate text-[11px] uppercase tracking-[0.2em] text-muted-foreground/80">
-                          Memorose
-                        </span>
+                        <span className="block truncate font-medium leading-5">{item.label}</span>
                       </div>
                     )}
                   </Link>
@@ -180,7 +162,7 @@ export default function AuthenticatedLayout({
               })}
             </nav>
 
-            <div className="border-t border-white/8 p-3 space-y-2 bg-background/50 flex flex-col items-center">
+            <div className="flex flex-col items-center space-y-1 border-t border-white/8 bg-background/50 p-2">
               {!collapsed ? (
                 <div className="w-full flex justify-between items-center">
                   <LocaleSwitcher />
@@ -188,7 +170,7 @@ export default function AuthenticatedLayout({
                     variant="ghost"
                     size="sm"
                     onClick={() => setCollapsed(!collapsed)}
-                    className="h-9 w-9 p-0 text-muted-foreground hover:text-foreground hover:bg-white/[0.06]"
+                    className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-white/[0.06]"
                   >
                     <ChevronLeft className="w-4 h-4 shrink-0 transition-transform duration-300" />
                   </Button>
@@ -200,7 +182,7 @@ export default function AuthenticatedLayout({
                     variant="ghost"
                     size="sm"
                     onClick={() => setCollapsed(!collapsed)}
-                    className="w-full h-9 justify-center px-0 text-muted-foreground hover:text-foreground hover:bg-white/[0.06]"
+                    className="h-8 w-full justify-center px-0 text-muted-foreground hover:text-foreground hover:bg-white/[0.06]"
                   >
                     <ChevronLeft className="w-4 h-4 shrink-0 transition-transform duration-300 rotate-180" />
                   </Button>
@@ -215,12 +197,12 @@ export default function AuthenticatedLayout({
                   router.push("/login/");
                 }}
                 className={cn(
-                  "w-full h-10 justify-start gap-3 rounded-[1rem] text-muted-foreground hover:text-destructive hover:bg-destructive/10 group",
+                  "group h-8.5 w-full justify-start gap-2 rounded-[0.9rem] text-muted-foreground hover:bg-destructive/10 hover:text-destructive",
                   collapsed && "justify-center px-0"
                 )}
               >
                 <LogOut className="w-4 h-4 shrink-0 group-hover:-translate-x-0.5 transition-transform" />
-                {!collapsed && <span className="text-[13px] font-medium">{t("logout")}</span>}
+                {!collapsed && <span className="text-[12px] font-medium">{t("logout")}</span>}
               </Button>
             </div>
           </aside>

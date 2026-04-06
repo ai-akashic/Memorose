@@ -219,3 +219,103 @@ impl RaftNetworkFactory<MemoroseTypeConfig> for MemoroseNetworkFactory {
         MemoroseNetworkConnection::new(addr)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use openraft::error::RPCError;
+    use openraft::{BasicNode, LeaderId, LogId, SnapshotMeta, Vote};
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn test_get_client_rejects_invalid_endpoint() {
+        let mut connection = MemoroseNetworkConnection::new("not-a-url".to_string());
+
+        let err = connection.get_client().await.unwrap_err();
+        assert!(matches!(
+            err.code(),
+            tonic::Code::Internal | tonic::Code::Unavailable
+        ));
+        assert!(
+            err.message().contains("Invalid endpoint")
+                || err.message().contains("Connect failed")
+        );
+    }
+
+    #[test]
+    fn test_to_rpc_err_wraps_network_errors() {
+        let err = to_rpc_err(std::io::Error::other("boom"));
+        assert!(matches!(err, RPCError::Network(_)));
+    }
+
+    #[test]
+    fn test_to_rpc_err_snapshot_wraps_network_errors() {
+        let err = to_rpc_err_snapshot(std::io::Error::other("boom"));
+        assert!(matches!(err, RPCError::Network(_)));
+    }
+
+    #[tokio::test]
+    async fn test_factory_new_client_formats_http_addr() {
+        let mut factory = MemoroseNetworkFactory::default();
+        let node = BasicNode::new("127.0.0.1:3100");
+
+        let connection = factory.new_client(1, &node).await;
+
+        assert_eq!(connection.endpoint, "http://127.0.0.1:3100");
+        assert!(connection.client.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_vote_returns_network_error_for_invalid_endpoint() {
+        let mut connection = MemoroseNetworkConnection::new("not-a-url".to_string());
+        let request = VoteRequest::new(Vote::new(2, 3), Some(LogId::new(LeaderId::new(2, 3), 4)));
+
+        let err = connection
+            .vote(request, RPCOption::new(Duration::from_secs(1)))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, RPCError::Network(_)));
+    }
+
+    #[tokio::test]
+    async fn test_append_entries_returns_network_error_for_invalid_endpoint() {
+        let mut connection = MemoroseNetworkConnection::new("not-a-url".to_string());
+        let request = AppendEntriesRequest::<MemoroseTypeConfig> {
+            vote: Vote::new(1, 1),
+            prev_log_id: None,
+            entries: Vec::new(),
+            leader_commit: None,
+        };
+
+        let err = connection
+            .append_entries(request, RPCOption::new(Duration::from_secs(1)))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, RPCError::Network(_)));
+    }
+
+    #[tokio::test]
+    async fn test_install_snapshot_returns_network_error_for_invalid_endpoint() {
+        let mut connection = MemoroseNetworkConnection::new("not-a-url".to_string());
+        let request = InstallSnapshotRequest::<MemoroseTypeConfig> {
+            vote: Vote::new(1, 1),
+            meta: SnapshotMeta {
+                last_log_id: Some(LogId::new(LeaderId::new(1, 1), 8)),
+                last_membership: openraft::StoredMembership::default(),
+                snapshot_id: "snap-8".to_string(),
+            },
+            offset: 0,
+            data: b"bytes".to_vec(),
+            done: true,
+        };
+
+        let err = connection
+            .install_snapshot(request, RPCOption::new(Duration::from_secs(1)))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, RPCError::Network(_)));
+    }
+}

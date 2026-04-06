@@ -94,7 +94,7 @@
   --radius-lg: 1.35rem;
   --radius-xl: 1.75rem;
 
-  --font-sans: var(--font-geist-sans), "Geist", system-ui, sans-serif;
+  --font-sans: "Avenir Next", "SF Pro Rounded", "SF Pro Display", "Segoe UI", var(--font-geist-sans), "Geist", system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), "Geist Mono", ui-monospace, monospace;
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22);
@@ -184,15 +184,17 @@
     user-select: text !important;
   }
 
-  .select-none {
-    user-select: none !important;
-    -webkit-user-select: none !important;
+  tr {
+    transition: background-color 0.2s ease;
+  }
+  tr:hover td {
+    background-color: rgba(255,255,255,0.02);
   }
 }
 
 @layer components {
   .glass-card {
-    @apply rounded-[1.6rem] border border-white/8 bg-card/78 shadow-[0_20px_60px_rgba(0,0,0,0.32)] backdrop-blur-xl transition-all duration-300 ease-out;
+    @apply rounded-[1.6rem] border border-white/10 bg-card/60 shadow-[0_8px_32px_rgba(0,0,0,0.32)] backdrop-blur-2xl transition-all duration-300 ease-out;
     position: relative;
     overflow: hidden;
   }
@@ -203,9 +205,10 @@
     inset: 0;
     pointer-events: none;
     background:
-      linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 26%),
-      linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 44%);
-    opacity: 0.8;
+      linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 40%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 60%);
+    opacity: 1;
+    z-index: 0;
   }
 
   .glass-card > * {
@@ -214,45 +217,11 @@
   }
 
   .glass-card:hover {
-    @apply border-white/14;
-    transform: translateY(-1px);
+    @apply border-white/20 bg-card/70;
+    transform: translateY(-2px) scale(1.005);
     box-shadow:
-      0 26px 70px rgba(0, 0, 0, 0.38),
-      0 0 0 1px rgba(255, 255, 255, 0.02);
-  }
-
-  .dashboard-panel {
-    @apply rounded-[1.6rem] border border-white/8 bg-card/78 shadow-[0_20px_60px_rgba(0,0,0,0.32)] backdrop-blur-xl transition-all duration-300 ease-out;
-    position: relative;
-    overflow: hidden;
-  }
-
-  .dashboard-panel::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background:
-      linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 26%),
-      linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 44%);
-    opacity: 0.8;
-  }
-
-  .dashboard-panel > * {
-    position: relative;
-    z-index: 1;
-  }
-
-  .dashboard-kicker {
-    @apply inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[11px] font-medium uppercase tracking-[0.24em] text-muted-foreground;
-  }
-
-  .dashboard-title {
-    @apply text-[clamp(2rem,4vw,3.3rem)] font-semibold tracking-[-0.045em] text-foreground;
-  }
-
-  .dashboard-copy {
-    @apply max-w-3xl text-sm leading-6 text-muted-foreground sm:text-[15px];
+      0 26px 70px rgba(0, 0, 0, 0.45),
+      0 0 0 1px rgba(255, 255, 255, 0.05);
   }
 
   .dashboard-stat-pill {
@@ -260,11 +229,11 @@
   }
 
   .dashboard-stat-label {
-    @apply text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground;
+    @apply text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80;
   }
 
   .dashboard-stat-value {
-    @apply mt-2 text-xl font-semibold tracking-[-0.03em] text-foreground;
+    @apply mt-1 text-[1.35rem] font-bold tracking-tight text-foreground/90;
   }
 
   .dashboard-soft-border {

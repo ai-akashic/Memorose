@@ -61,6 +61,47 @@ struct EmbedData {
     embedding: Vec<f32>,
 }
 
+fn map_usage(usage: Option<Usage>) -> memorose_common::TokenUsage {
+    usage
+        .map(|usage| memorose_common::TokenUsage {
+            prompt_tokens: usage.prompt_tokens,
+            completion_tokens: usage.completion_tokens.unwrap_or(0),
+            total_tokens: usage.total_tokens,
+        })
+        .unwrap_or_default()
+}
+
+fn parse_chat_response(body: &str, context: &str) -> Result<super::LLMResponse<String>> {
+    let parsed: ChatResponse = serde_json::from_str(body)
+        .map_err(|e| anyhow!("Failed to parse {}: {} - body: {}", context, e, body))?;
+
+    let content = parsed
+        .choices
+        .first()
+        .and_then(|choice| choice.message.content.clone())
+        .ok_or_else(|| anyhow!("No content in OpenAI response"))?;
+
+    Ok(super::LLMResponse {
+        data: content,
+        usage: map_usage(parsed.usage),
+    })
+}
+
+fn parse_embed_response(body: &str) -> Result<super::LLMResponse<Vec<Vec<f32>>>> {
+    let parsed: EmbedResponse = serde_json::from_str(body).map_err(|e| {
+        anyhow!(
+            "Failed to parse OpenAI embedding response: {} - body: {}",
+            e,
+            body
+        )
+    })?;
+
+    Ok(super::LLMResponse {
+        data: parsed.data.into_iter().map(|item| item.embedding).collect(),
+        usage: map_usage(parsed.usage),
+    })
+}
+
 pub struct OpenAIClient {
     client: Client,
     api_key: String,
@@ -140,28 +181,7 @@ impl OpenAIClient {
             return Err(anyhow!("OpenAI API error ({}): {}", status, body));
         }
 
-        let parsed: ChatResponse = serde_json::from_str(&body)
-            .map_err(|e| anyhow!("Failed to parse OpenAI response: {} - body: {}", e, body))?;
-
-        let content = parsed
-            .choices
-            .first()
-            .and_then(|c| c.message.content.clone())
-            .ok_or_else(|| anyhow!("No content in OpenAI response"))?;
-
-        let usage = parsed
-            .usage
-            .map(|u| memorose_common::TokenUsage {
-                prompt_tokens: u.prompt_tokens,
-                completion_tokens: u.completion_tokens.unwrap_or(0),
-                total_tokens: u.total_tokens,
-            })
-            .unwrap_or_default();
-
-        Ok(super::LLMResponse {
-            data: content,
-            usage,
-        })
+        parse_chat_response(&body, "OpenAI response")
     }
 
     /// Send a single embedding batch (caller guarantees len <= 2048).
@@ -192,29 +212,7 @@ impl OpenAIClient {
             return Err(anyhow!("OpenAI Embedding API error ({}): {}", status, body));
         }
 
-        let parsed: EmbedResponse = serde_json::from_str(&body).map_err(|e| {
-            anyhow!(
-                "Failed to parse OpenAI embedding response: {} - body: {}",
-                e,
-                body
-            )
-        })?;
-
-        let embeddings = parsed.data.into_iter().map(|d| d.embedding).collect();
-
-        let usage = parsed
-            .usage
-            .map(|u| memorose_common::TokenUsage {
-                prompt_tokens: u.prompt_tokens,
-                completion_tokens: u.completion_tokens.unwrap_or(0),
-                total_tokens: u.total_tokens,
-            })
-            .unwrap_or_default();
-
-        Ok(super::LLMResponse {
-            data: embeddings,
-            usage,
-        })
+        parse_embed_response(&body)
     }
 }
 
@@ -370,33 +368,7 @@ impl LLMClient for OpenAIClient {
             return Err(anyhow!("OpenAI Vision API error ({}): {}", status, body));
         }
 
-        let parsed: ChatResponse = serde_json::from_str(&body).map_err(|e| {
-            anyhow!(
-                "Failed to parse OpenAI Vision response: {} - body: {}",
-                e,
-                body
-            )
-        })?;
-
-        let content = parsed
-            .choices
-            .first()
-            .and_then(|c| c.message.content.clone())
-            .ok_or_else(|| anyhow!("No content in OpenAI Vision response"))?;
-
-        let usage = parsed
-            .usage
-            .map(|u| memorose_common::TokenUsage {
-                prompt_tokens: u.prompt_tokens,
-                completion_tokens: u.completion_tokens.unwrap_or(0),
-                total_tokens: u.total_tokens,
-            })
-            .unwrap_or_default();
-
-        Ok(super::LLMResponse {
-            data: content,
-            usage,
-        })
+        parse_chat_response(&body, "OpenAI Vision response")
     }
 
     async fn transcribe(&self, _audio_url_or_base64: &str) -> Result<super::LLMResponse<String>> {

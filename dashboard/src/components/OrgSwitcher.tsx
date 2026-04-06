@@ -15,6 +15,7 @@ export function OrgSwitcher({ collapsed }: { collapsed?: boolean }) {
   const { orgId, setOrgId } = useOrgScope();
   const { data, mutate } = useOrganizations();
   const [open, setOpen] = useState(false);
+  const [showCreateForm, setShowCreateForm] = useState(false);
   const [createName, setCreateName] = useState("");
   const [createId, setCreateId] = useState("");
   const [creating, setCreating] = useState(false);
@@ -51,6 +52,7 @@ export function OrgSwitcher({ collapsed }: { collapsed?: boolean }) {
       setOrgId(created.org_id);
       setCreateId("");
       setCreateName("");
+      setShowCreateForm(false);
       setOpen(false);
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : t("switcher.errorCreateFailed"));
@@ -59,34 +61,39 @@ export function OrgSwitcher({ collapsed }: { collapsed?: boolean }) {
     }
   }
 
+  const handleOpenChange = (val: boolean) => {
+    setOpen(val);
+    if (!val) {
+      setShowCreateForm(false);
+      setError(null);
+    }
+  };
+
   const trigger = collapsed ? (
     <button
       type="button"
-      className="flex h-8 w-8 items-center justify-center rounded-md border border-primary/20 bg-primary/10 text-xs font-bold text-primary"
+      className="flex h-7 w-7 items-center justify-center rounded-md border border-primary/20 bg-primary/10 text-[10px] font-bold text-primary"
       aria-label={t("switcher.ariaLabel")}
     >
       {activeOrg.org_id.charAt(0).toUpperCase()}
     </button>
   ) : (
-    <Button variant="ghost" className="h-11 w-full justify-between px-2 hover:bg-muted">
-      <div className="flex min-w-0 items-center gap-3">
-        <div className="flex h-7 w-7 items-center justify-center rounded-md border border-primary/20 bg-primary/10 text-primary">
-          <Building2 className="h-3.5 w-3.5" />
+    <Button variant="ghost" className="h-9 w-full justify-between px-1.5 hover:bg-muted/70">
+      <div className="flex min-w-0 items-center gap-2">
+        <div className="flex h-6 w-6 items-center justify-center rounded-md border border-primary/20 bg-primary/10 text-primary">
+          <Building2 className="h-3 w-3" />
         </div>
         <div className="min-w-0 text-left">
-          <p className="truncate text-[13px] font-semibold leading-none">{activeOrg.name}</p>
-          <p className="mt-1 truncate font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-            {activeOrg.org_id}
-          </p>
+          <p className="truncate text-[12px] font-semibold leading-none">{activeOrg.name}</p>
         </div>
       </div>
-      <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+      <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
     </Button>
   );
 
   return (
-    <div className={collapsed ? "flex justify-center border-b border-border py-4" : "flex shrink-0 items-center border-b border-border px-4 py-4"}>
-      <Dialog open={open} onOpenChange={setOpen}>
+    <div className={collapsed ? "flex justify-center border-b border-border py-2.5" : "flex shrink-0 items-center border-b border-border px-2.5 py-2.5"}>
+      <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogTrigger asChild>{trigger}</DialogTrigger>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
@@ -131,34 +138,52 @@ export function OrgSwitcher({ collapsed }: { collapsed?: boolean }) {
               </div>
             </div>
 
-            <div className="space-y-3 rounded-2xl border border-border/70 bg-background/50 p-4">
-              <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                <Plus className="h-3.5 w-3.5" />
+            {!showCreateForm ? (
+              <Button 
+                variant="outline" 
+                className="w-full border-dashed border-border/70 text-muted-foreground hover:text-foreground h-12 rounded-xl" 
+                onClick={() => setShowCreateForm(true)}
+              >
+                <Plus className="mr-2 h-4 w-4" />
                 {t("switcher.createTitle")}
-              </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                <Input
-                  value={createId}
-                  onChange={(event) => setCreateId(event.target.value)}
-                  placeholder={t("createOrg.orgIdPlaceholder")}
-                  className="font-mono"
-                />
-                <Input
-                  value={createName}
-                  onChange={(event) => setCreateName(event.target.value)}
-                  placeholder={t("createOrg.displayName")}
-                />
-              </div>
-              {error ? (
-                <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-                  {error}
-                </div>
-              ) : null}
-              <Button type="button" onClick={handleCreate} disabled={creating} className="w-full">
-                {creating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
-                {t("switcher.createAndSwitch")}
               </Button>
-            </div>
+            ) : (
+              <div className="space-y-3 rounded-2xl border border-border/70 bg-background/50 p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    <Plus className="h-3.5 w-3.5" />
+                    {t("switcher.createTitle")}
+                  </div>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <Input
+                    value={createId}
+                    onChange={(event) => setCreateId(event.target.value)}
+                    placeholder={t("createOrg.orgIdPlaceholder")}
+                    className="font-mono"
+                  />
+                  <Input
+                    value={createName}
+                    onChange={(event) => setCreateName(event.target.value)}
+                    placeholder={t("createOrg.displayName")}
+                  />
+                </div>
+                {error ? (
+                  <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                    {error}
+                  </div>
+                ) : null}
+                <div className="flex gap-2">
+                  <Button type="button" onClick={() => setShowCreateForm(false)} variant="outline" className="w-1/3">
+                    {t("switcher.cancel", { fallback: "Cancel" })}
+                  </Button>
+                  <Button type="button" onClick={handleCreate} disabled={creating} className="flex-1">
+                    {creating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+                    {t("switcher.createAndSwitch")}
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

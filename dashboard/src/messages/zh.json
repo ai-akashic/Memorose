@@ -78,7 +78,8 @@
       "list": "列表",
       "graph": "图谱",
       "search": "搜索",
-      "tasks": "任务"
+      "tasks": "任务",
+      "corrections": "纠正"
     },
     "table": {
       "user": "用户",
@@ -87,7 +88,17 @@
       "score": "评分",
       "access": "访问",
       "refs": "引用",
-      "content": "内容"
+      "content": "内容",
+      "actions": "操作"
+    },
+    "quickActions": {
+      "userRequired": "请先在上方设置明确的 user_id，再删除记忆。",
+      "useAsSource": "设为 source",
+      "useAsTarget": "设为 target",
+      "hardDelete": "硬删除",
+      "deleteConfirm": "现在硬删除这条 memory unit 吗？该操作不可撤销。",
+      "deleteSuccess": "记忆已硬删除",
+      "deleteFailed": "硬删除失败"
     },
     "filters": {
       "allLevels": "全部",
@@ -137,6 +148,72 @@
       "empty": "尚未建立神经路径",
       "nodes": "节点",
       "edges": "边"
+    },
+    "corrections": {
+      "userRequired": "请先在上方设置明确的 user_id，再执行人工纠正或审核受保护更新。",
+      "reviewLoadFailed": "加载纠正审核列表失败",
+      "reviewActionFailed": "更新审核状态失败",
+      "reviewApproved": "已批准审核项",
+      "reviewRejected": "已拒绝审核项",
+      "semantic": {
+        "title": "语义编排层",
+        "description": "直接输入自然语言指令。planner 会先预览它应当执行遗忘，还是创建新记忆并更新旧事实。",
+        "instructionPlaceholder": "例如：\"忘掉我之前在上海的住址\" · \"我现在住北京了，不住上海了\"",
+        "missingInstruction": "必须填写指令",
+        "preview": "预览计划",
+        "execute": "执行计划",
+        "clear": "清空",
+        "previewReady": "语义计划已生成",
+        "previewFailed": "语义预览失败",
+        "executeFailed": "语义执行失败",
+        "executeForgetSuccess": "语义遗忘已执行 · 影响 {count} 个 memory unit",
+        "executeUpdateSuccess": "语义更新已执行 · 影响 {count} 个 memory unit",
+        "noPlan": "请先预览语义计划再执行",
+        "modeAuto": "自动",
+        "modeForget": "遗忘",
+        "modeUpdate": "更新",
+        "logicalForget": "逻辑遗忘",
+        "hardForget": "硬删除",
+        "forgetSummary": "匹配到 {memories} 个 memory unit · {events} 个 event",
+        "matchedMemories": "匹配记忆",
+        "matchedEvents": "匹配事件",
+        "newMemory": "新记忆",
+        "extractedFacts": "抽取事实",
+        "plannedActions": "计划动作",
+        "noActions": "当前不需要纠正旧记忆；执行后只会新增这条记忆。"
+      },
+      "status": {
+        "pending": "待审核",
+        "approved": "已批准",
+        "rejected": "已拒绝"
+      },
+      "manual": {
+        "title": "人工纠正",
+        "description": "对两个 memory unit 显式提交 obsolete / contradicts / reaffirm / ignore 动作。",
+        "sourcePlaceholder": "source_unit_id",
+        "targetPlaceholder": "target_unit_id",
+        "confidencePlaceholder": "confidence（0-1）",
+        "reviewerPlaceholder": "reviewer（可选）",
+        "reasonPlaceholder": "原因 / 审计备注（可选）",
+        "missingIds": "source_unit_id 和 target_unit_id 都是必填项",
+        "submit": "应用纠正",
+        "success": "人工纠正已应用 · 影响 {count} 个 unit",
+        "failed": "人工纠正失败"
+      },
+      "review": {
+        "title": "审核队列",
+        "description": "对 guarded relation-only 更新做批准/拒绝，再决定是否真正 tombstone。",
+        "notePlaceholder": "审核备注（可选）",
+        "refresh": "刷新",
+        "empty": "当前筛选条件下没有审核记录",
+        "source": "来源",
+        "target": "目标",
+        "reason": "原因",
+        "guard": "保护规则",
+        "confidence": "置信度",
+        "approve": "批准",
+        "reject": "拒绝"
+      }
     },
     "taskScope": "请在上方设置具体的用户范围以查看任务树。",
     "tasks": {
@@ -220,6 +297,7 @@
       "errorCreateFailed": "创建组织失败"
     },
     "knowledge": {
+      "metricsTitle": "知识库指标",
       "title": "规范化组织知识",
       "description": "展示已经发布到 {orgId} 的 canonical 组织知识。",
       "empty": "该组织还没有已发布的组织知识。",
@@ -393,6 +471,41 @@
       "localL2": "本地 L2",
       "sharedL1": "共享 L1",
       "sharedL2": "共享 L2"
+    },
+    "rac": {
+      "actionsTitle": "RAC 动作分布",
+      "qualityTitle": "RAC 质量",
+      "extractionAttempts": "抽取尝试",
+      "extractionSuccesses": "抽取成功",
+      "successRate": "成功率",
+      "tombstones": "墓碑数",
+      "obsolete": "过期替换",
+      "contradicts": "冲突保留",
+      "reaffirm": "再次确认",
+      "ignore": "忽略",
+      "historyTitle": "RAC 历史",
+      "window24h": "24小时",
+      "window7d": "7天",
+      "legendExtraction": "蓝色 · 抽取成功",
+      "legendObsolete": "琥珀 · 过期动作",
+      "legendContradicts": "冲突动作",
+      "legendTombstones": "墓碑数",
+      "recentTitle": "最近 RAC 决策",
+      "recentEmpty": "暂无最近的 RAC 决策。",
+      "guardReason": "Guard 原因",
+      "source": "源",
+      "target": "目标",
+      "relation": "关系",
+      "successRateCard": "RAC 成功率",
+      "obsoleteCard": "过期动作",
+      "contradictsCard": "冲突动作",
+      "tombstonesCard": "墓碑数"
+    },
+    "corrections": {
+      "title": "语义控制面",
+      "pendingReviews": "待审核项",
+      "description": "Dashboard 主要用于观测与 review；语义遗忘 / 更新的主入口应由 SDK 或 agent runtime 发起。",
+      "empty": "当前没有待审核项。"
     }
   },
   "Settings": {

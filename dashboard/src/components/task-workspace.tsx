@@ -92,7 +92,7 @@ function ReadyTaskRow({
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-semibold leading-tight text-foreground">{task.title}</p>
             {task.progress > 0 && task.progress < 1 && (
-              <span className="rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.18em] text-primary">
+              <span className="rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-primary">
                 {(task.progress * 100).toFixed(0)}% progress
               </span>
             )}
@@ -106,19 +106,19 @@ function ReadyTaskRow({
 
         <div className="flex items-start justify-between gap-3 lg:min-w-[180px] lg:flex-col lg:items-end">
           <StatusBadge status={task.status} />
-          <div className="text-right text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+          <div className="text-right text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
             {t("ready.label")}
           </div>
         </div>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+      <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
         <span className="inline-flex items-center gap-1.5">
           <Clock className="h-3.5 w-3.5" />
           {new Date(task.created_at).toLocaleString()}
         </span>
         {task.agent_id && (
-          <span className="rounded-full border border-border/80 bg-background/70 px-2.5 py-1 font-mono text-[10px] tracking-[0.16em] text-foreground/75">
+          <span className="rounded-full border border-border/80 bg-background/70 px-2.5 py-1 font-mono text-[10px] tracking-wider font-bold uppercase text-foreground/75">
             {task.agent_id}
           </span>
         )}
@@ -136,7 +136,7 @@ function ReadyTaskRow({
             size="sm"
             variant="outline"
             disabled={busy}
-            className="h-10 min-w-[112px] gap-2 border-success/20 bg-success/5 px-3 text-xs font-medium uppercase tracking-[0.16em] text-success hover:border-success/40 hover:bg-success/10 hover:text-success"
+            className="h-10 min-w-[112px] gap-2 border-success/20 bg-success/5 px-3 text-[10px] font-bold uppercase tracking-wider text-success hover:border-success/40 hover:bg-success/10 hover:text-success"
             onClick={() => markStatus("Completed")}
           >
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
@@ -146,7 +146,7 @@ function ReadyTaskRow({
             size="sm"
             variant="outline"
             disabled={busy}
-            className="h-10 min-w-[112px] gap-2 border-border bg-background/70 px-3 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground hover:border-destructive/20 hover:bg-destructive/10 hover:text-destructive"
+            className="h-10 min-w-[112px] gap-2 border-border bg-background/70 px-3 text-[10px] font-bold uppercase tracking-wider text-muted-foreground hover:border-destructive/20 hover:bg-destructive/10 hover:text-destructive"
             onClick={() => markStatus("Cancelled")}
           >
             <XCircle className="h-3.5 w-3.5" />
@@ -186,11 +186,11 @@ export function TaskWorkspace({
   return (
     <Tabs defaultValue={defaultTab} className="space-y-4">
       <TabsList className="h-auto rounded-2xl border border-border/70 bg-background/70 p-1">
-        <TabsTrigger value="tree" className="gap-1.5 rounded-xl px-4 py-2 text-xs font-medium uppercase tracking-[0.16em]">
+        <TabsTrigger value="tree" className="gap-1.5 rounded-xl px-4 py-2 text-[10px] font-bold uppercase tracking-wider">
           <GitBranch className="w-3.5 h-3.5" />
           {tTasks("tabs.tree")}
         </TabsTrigger>
-        <TabsTrigger value="ready" className="gap-1.5 rounded-xl px-4 py-2 text-xs font-medium uppercase tracking-[0.16em]">
+        <TabsTrigger value="ready" className="gap-1.5 rounded-xl px-4 py-2 text-[10px] font-bold uppercase tracking-wider">
           <Zap className="w-3.5 h-3.5" />
           {tTasks("tabs.ready")}
           {ready && ready.length > 0 && (
@@ -220,7 +220,7 @@ export function TaskWorkspace({
               <div className="rounded-lg border border-primary/10 bg-primary/10 p-1.5">
                 <CheckCircle2 className="h-3 w-3 text-primary" />
               </div>
-              <span className="font-bold uppercase tracking-[0.18em] text-muted-foreground/70">
+              <span className="font-bold uppercase tracking-wider text-muted-foreground/70">
                 {tTasks("ready.sectionTitle")}
               </span>
             </CardTitle>
@@ -238,7 +238,7 @@ export function TaskWorkspace({
                   <CheckCircle2 className="h-6 w-6 opacity-20" />
                 </div>
                 <p className="text-sm font-medium text-muted-foreground/60">{tTasks("ready.empty")}</p>
-                <p className="mt-1 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                   {tTasks("ready.emptyDescription")}
                 </p>
               </div>

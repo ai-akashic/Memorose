@@ -47,3 +47,44 @@ impl SystemKvStore {
         self.inner.checkpoint(path)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_system_kv_delegates_basic_operations() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let checkpoint_root = tempdir()?;
+        let checkpoint_dir = checkpoint_root.path().join("checkpoint");
+        let inner = KvStore::open(temp_dir.path())?;
+        let store = SystemKvStore::new(inner);
+
+        store.put(b"sys:a", b"1")?;
+        store.put(b"sys:b", b"2")?;
+        store.put(b"other:c", b"3")?;
+
+        assert_eq!(store.get(b"sys:a")?, Some(b"1".to_vec()));
+        assert_eq!(store.count_prefix(b"sys:")?, 2);
+
+        let multi = store.multi_get(&[b"sys:a", b"missing", b"sys:b"])?;
+        assert_eq!(multi[0], Some(b"1".to_vec()));
+        assert_eq!(multi[1], None);
+        assert_eq!(multi[2], Some(b"2".to_vec()));
+
+        let scan = store.scan(b"sys:")?;
+        assert_eq!(scan.len(), 2);
+
+        let range = store.scan_range(b"sys:a", b"sys:c")?;
+        assert_eq!(range.len(), 2);
+
+        store.delete(b"sys:b")?;
+        assert_eq!(store.get(b"sys:b")?, None);
+
+        store.checkpoint(&checkpoint_dir)?;
+        let restored = KvStore::open(&checkpoint_dir)?;
+        assert_eq!(restored.get(b"sys:a")?, Some(b"1".to_vec()));
+        Ok(())
+    }
+}

@@ -377,6 +377,32 @@ impl Default for MemoryType {
     }
 }
 
+fn default_stored_fact_confidence() -> f32 {
+    0.5
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StoredMemoryFact {
+    pub subject: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_name: Option<String>,
+    pub attribute: String,
+    pub value: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_value: Option<String>,
+    pub change_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temporal_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub polarity: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_span: Option<String>,
+    #[serde(default = "default_stored_fact_confidence")]
+    pub confidence: f32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryUnit {
     pub id: Uuid,
@@ -417,6 +443,10 @@ pub struct MemoryUnit {
     /// Multimodal assets associated with this memory
     #[serde(default)]
     pub assets: Vec<Asset>,
+
+    /// Cached structured facts extracted from this memory
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extracted_facts: Vec<StoredMemoryFact>,
 
     /// Task-specific metadata (status, progress)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -484,6 +514,7 @@ impl MemoryUnit {
             access_count: 0,
             references: Vec::new(),
             assets: Vec::new(),
+            extracted_facts: Vec::new(),
             task_metadata: None,
         }
     }

@@ -110,10 +110,11 @@ export const api = {
     }),
 
   clusterStatus: () => fetchAPI<import("./types").ClusterStatus>("/cluster/status"),
-  stats: (user_id?: string, org_id?: string) => {
+  stats: (user_id?: string, org_id?: string, history_hours?: number) => {
     const qs = new URLSearchParams();
     if (user_id) qs.set("user_id", user_id);
     if (org_id) qs.set("org_id", org_id);
+    if (history_hours) qs.set("history_hours", String(history_hours));
     const qstr = qs.toString();
     return fetchAPI<import("./types").Stats>(`/stats${qstr ? `?${qstr}` : ""}`);
   },
@@ -187,6 +188,96 @@ export const api = {
       method: "POST",
       body: JSON.stringify(params),
     }),
+
+  deleteMemory: (user_id: string, id: string) =>
+    fetchRaw<{ status: string }>(`/v1/users/${encodeURIComponent(user_id)}/memories/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+
+  semanticMemoryPreview: (params: {
+    user_id: string;
+    instruction: string;
+    org_id?: string;
+    mode?: import("./types").SemanticPlanMode;
+    forget_mode?: "logical" | "hard";
+    limit?: number;
+  }) =>
+    fetchAPI<import("./types").SemanticMemoryPreviewResponse>("/corrections/semantic/preview", {
+      method: "POST",
+      body: JSON.stringify(params),
+    }),
+
+  semanticMemoryExecute: (params: {
+    user_id: string;
+    plan_id: string;
+    org_id?: string;
+    confirm: boolean;
+    reviewer?: string;
+    note?: string;
+  }) =>
+    fetchAPI<import("./types").SemanticMemoryExecuteResponse>("/corrections/semantic/execute", {
+      method: "POST",
+      body: JSON.stringify(params),
+    }),
+
+  applyManualCorrection: (params: {
+    user_id: string;
+    org_id?: string;
+    source_unit_id: string;
+    target_unit_id: string;
+    action: import("./types").MemoryCorrectionAction;
+    confidence?: number;
+    reason?: string;
+    reviewer?: string;
+  }) =>
+    fetchAPI<import("./types").ManualCorrectionResponse>("/corrections/manual", {
+      method: "POST",
+      body: JSON.stringify(params),
+    }),
+
+  listRacReviews: (params: {
+    user_id?: string;
+    org_id?: string;
+    status?: import("./types").RacReviewStatus;
+    limit?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params.user_id) qs.set("user_id", params.user_id);
+    if (params.org_id) qs.set("org_id", params.org_id);
+    if (params.status) qs.set("status", params.status);
+    if (params.limit) qs.set("limit", String(params.limit));
+    return fetchAPI<import("./types").RacReviewListResponse>(
+      `/corrections/reviews${qs.toString() ? `?${qs.toString()}` : ""}`
+    );
+  },
+
+  approveRacReview: (reviewId: string, params: {
+    user_id: string;
+    org_id?: string;
+    reviewer?: string;
+    note?: string;
+  }) =>
+    fetchAPI<{ status: string; review: import("./types").RacReviewView }>(
+      `/corrections/reviews/${encodeURIComponent(reviewId)}/approve`,
+      {
+        method: "POST",
+        body: JSON.stringify(params),
+      }
+    ),
+
+  rejectRacReview: (reviewId: string, params: {
+    user_id: string;
+    org_id?: string;
+    reviewer?: string;
+    note?: string;
+  }) =>
+    fetchAPI<{ status: string; review: import("./types").RacReviewView }>(
+      `/corrections/reviews/${encodeURIComponent(reviewId)}/reject`,
+      {
+        method: "POST",
+        body: JSON.stringify(params),
+      }
+    ),
 
   ingestEvent: (params: {
     user_id: string;

@@ -27,7 +27,16 @@ import {
 import { useOrgScope } from "@/lib/org-scope";
 import { formatNumber, truncate } from "@/lib/utils";
 import { useTranslations } from "next-intl";
-import { DashboardHero, DashboardStatRail } from "@/components/dashboard-chrome";
+import { DashboardHero } from "@/components/dashboard-chrome";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 function formatKnowledgeTimestamp(value: string) {
   const date = new Date(value);
@@ -64,6 +73,7 @@ export default function OrganizationsPage() {
   const [newOrgId, setNewOrgId] = useState("");
   const [newOrgName, setNewOrgName] = useState("");
   const [creatingOrg, setCreatingOrg] = useState(false);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
 
@@ -123,6 +133,16 @@ export default function OrganizationsPage() {
     }
   }, [knowledgeItems, selectedKnowledgeId, updateQueryParams]);
 
+  function handleCreateDialogOpenChange(open: boolean) {
+    setCreateDialogOpen(open);
+    if (open) {
+      setMessage(null);
+      setMessageTone("success");
+    } else if (messageTone === "error") {
+      setMessage(null);
+    }
+  }
+
   async function handleCreateOrg() {
     const normalizedOrgId = newOrgId.trim();
     if (!normalizedOrgId) {
@@ -144,6 +164,7 @@ export default function OrganizationsPage() {
       setNewOrgName("");
       setMessageTone("success");
       setMessage(`Organization ${organization.org_id} created.`);
+      setCreateDialogOpen(false);
       await mutateOrganizations();
     } catch (error) {
       setMessageTone("error");
@@ -172,29 +193,81 @@ export default function OrganizationsPage() {
         kicker={t("sectionLabel")}
         title={t("title")}
         description={t("description")}
-        actions={
-          <div className="dashboard-stat-pill min-w-[11rem]">
-            <span className="dashboard-stat-label">{t("activeOrg")}</span>
-            <span className="dashboard-stat-value font-mono text-primary">{scopedOrgId || "—"}</span>
-          </div>
-        }
       >
-        <DashboardStatRail
-          items={[
-            { label: t("panel.title"), value: organizations.length, tone: "primary" },
-            { label: t("knowledge.title"), value: knowledgeData?.total_count ?? 0, tone: "success" },
-            { label: t("knowledge.metricPublished"), value: automationMetrics?.auto_publish_total ?? 0, tone: "warning" },
-          ]}
-        />
+        <div className="mr-auto">
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">{t("title")}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{t("description")}</p>
+        </div>
       </DashboardHero>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[20rem_minmax(0,1fr)]">
+      {message && !createDialogOpen ? (
+        <div
+          className={`rounded-2xl border px-4 py-3 text-sm ${
+            messageTone === "success"
+              ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
+              : "border-destructive/30 bg-destructive/10 text-destructive"
+          }`}
+        >
+          {message}
+        </div>
+      ) : null}
+
+      <div className="space-y-4">
         <Card className="glass-card border-border/70">
-          <CardHeader>
+          <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <CardTitle className="text-sm">{t("panel.title")}</CardTitle>
+            <Dialog open={createDialogOpen} onOpenChange={handleCreateDialogOpenChange}>
+              <DialogTrigger asChild>
+                <Button className="h-10 rounded-2xl px-4 self-start sm:self-auto">
+                  <Plus className="mr-2 h-4 w-4" />
+                  {t("createOrg.button")}
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="glass-card sm:max-w-[460px]">
+                <DialogHeader className="border-b border-border pb-4">
+                  <DialogTitle className="flex items-center gap-2 text-xl">
+                    <Building2 className="h-5 w-5 text-primary" />
+                    {t("createOrg.title")}
+                  </DialogTitle>
+                  <DialogDescription>
+                    {t("description")}
+                  </DialogDescription>
+                </DialogHeader>
+
+                <div className="space-y-4 pt-2">
+                  <Input
+                    value={newOrgId}
+                    onChange={(event) => setNewOrgId(event.target.value)}
+                    placeholder={t("createOrg.orgIdPlaceholder")}
+                    className="font-mono"
+                  />
+                  <Input
+                    value={newOrgName}
+                    onChange={(event) => setNewOrgName(event.target.value)}
+                    placeholder={t("createOrg.displayName")}
+                  />
+                  {message && createDialogOpen && messageTone === "error" ? (
+                    <div className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                      {message}
+                    </div>
+                  ) : null}
+                </div>
+
+                <DialogFooter className="border-t border-border pt-4">
+                  <Button
+                    onClick={handleCreateOrg}
+                    disabled={creatingOrg}
+                    className="w-full sm:w-auto"
+                  >
+                    {creatingOrg ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Building2 className="mr-2 h-4 w-4" />}
+                    {t("createOrg.button")}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="space-y-2">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               {organizations.map((organization) => {
                 const selected = organization.org_id === scopedOrgId;
                 return (
@@ -212,180 +285,75 @@ export default function OrganizationsPage() {
                     }`}
                   >
                     <div className="truncate text-sm font-semibold">{organization.name}</div>
-                    <div className="mt-1 font-mono text-[11px] text-muted-foreground">
+                    <div className="mt-1 font-mono text-[10px] text-muted-foreground">
                       {organization.org_id}
                     </div>
                   </button>
                 );
               })}
             </div>
-
-            <div className="rounded-2xl border border-border/70 bg-background/50 p-4">
-              <div className="mb-3 flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                <Plus className="h-3.5 w-3.5" />
-                {t("createOrg.title")}
-              </div>
-              <div className="space-y-3">
-                <Input
-                  value={newOrgId}
-                  onChange={(event) => setNewOrgId(event.target.value)}
-                  placeholder={t("createOrg.orgIdPlaceholder")}
-                  className="font-mono"
-                />
-                <Input
-                  value={newOrgName}
-                  onChange={(event) => setNewOrgName(event.target.value)}
-                  placeholder={t("createOrg.displayName")}
-                />
-                <Button onClick={handleCreateOrg} disabled={creatingOrg} className="w-full">
-                  {creatingOrg ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Building2 className="mr-2 h-4 w-4" />}
-                  {t("createOrg.button")}
-                </Button>
-              </div>
-            </div>
           </CardContent>
         </Card>
 
-        <div className="space-y-4">
-          <Card className="glass-card border-border/70">
-            <CardHeader>
-              <CardTitle className="text-sm">{t("activeOrg")}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {message ? (
-                <div
-                  className={`rounded-xl border px-3 py-2 text-sm ${
-                    messageTone === "success"
-                      ? "border-success/20 bg-success/5 text-success"
-                      : "border-destructive/20 bg-destructive/5 text-destructive"
-                  }`}
-                >
-                  {message}
+        <Card className="glass-card border-border/70">
+          <CardHeader>
+            <CardTitle className="text-sm">{t("knowledge.metricsTitle", { fallback: "Metrics" })}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-5">
+              {[
+                { label: t("knowledge.metricAutoApproved"), value: automationMetrics?.auto_approved_total },
+                { label: t("knowledge.metricPublished"), value: automationMetrics?.auto_publish_total },
+                { label: t("knowledge.metricRebuilds"), value: automationMetrics?.rebuild_total },
+                { label: t("knowledge.metricRevokes"), value: automationMetrics?.revoke_total },
+                { label: t("knowledge.metricMerged"), value: automationMetrics?.merged_publication_total }
+              ].map((metric) => (
+                <div key={metric.label} className="flex flex-col justify-center rounded-xl border border-border/70 bg-card/40 p-4">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">{metric.label}</span>
+                  <span className="mt-1.5 text-2xl font-semibold tracking-tight font-mono">{formatNumber(metric.value ?? 0)}</span>
                 </div>
-              ) : null}
+              ))}
+            </div>
 
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="rounded-2xl border border-border/70 bg-background/50 p-4">
-                  <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                    {t("panel.title")}
-                  </div>
-                  <div className="mt-2 font-mono text-xl font-bold">{scopedOrgId}</div>
+            {automationMetrics?.source_type_distribution.length ? (
+              <div className="rounded-2xl border border-border/70 bg-card/40 p-4">
+                <div className="mb-3 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
+                  {t("knowledge.sourceDistribution")}
                 </div>
-                <div className="rounded-2xl border border-border/70 bg-background/50 p-4">
-                  <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                    {t("sectionLabel")}
-                  </div>
-                  <div className="mt-2 font-mono text-xl font-bold">
-                    {formatNumber(orgData?.total_count ?? 0)}
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-border/70 bg-background/50 p-4">
-                <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                  {t("knowledge.policyTitle")}
-                </div>
-                <div className="mt-3 grid gap-3 md:grid-cols-3">
-                  <div>
-                    <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                      {t("knowledge.policyProjection")}
-                    </div>
-                    <div className="mt-1 text-sm">{t("knowledge.policyProjectionValue")}</div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                      {t("knowledge.policyApproval")}
-                    </div>
-                    <div className="mt-1 text-sm">{t("knowledge.policyApprovalValue")}</div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                      {t("knowledge.policyStorage")}
-                    </div>
-                    <div className="mt-1 text-sm">{t("knowledge.policyStorageValue")}</div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-5">
-                <div className="rounded-xl border border-border/70 bg-background/50 p-3">
-                  <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                    {t("knowledge.metricAutoApproved")}
-                  </div>
-                  <div className="mt-2 font-mono text-lg">
-                    {formatNumber(automationMetrics?.auto_approved_total ?? 0)}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-border/70 bg-background/50 p-3">
-                  <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                    {t("knowledge.metricPublished")}
-                  </div>
-                  <div className="mt-2 font-mono text-lg">
-                    {formatNumber(automationMetrics?.auto_publish_total ?? 0)}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-border/70 bg-background/50 p-3">
-                  <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                    {t("knowledge.metricRebuilds")}
-                  </div>
-                  <div className="mt-2 font-mono text-lg">
-                    {formatNumber(automationMetrics?.rebuild_total ?? 0)}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-border/70 bg-background/50 p-3">
-                  <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                    {t("knowledge.metricRevokes")}
-                  </div>
-                  <div className="mt-2 font-mono text-lg">
-                    {formatNumber(automationMetrics?.revoke_total ?? 0)}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-border/70 bg-background/50 p-3">
-                  <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                    {t("knowledge.metricMerged")}
-                  </div>
-                  <div className="mt-2 font-mono text-lg">
-                    {formatNumber(automationMetrics?.merged_publication_total ?? 0)}
-                  </div>
-                </div>
-              </div>
-
-              {automationMetrics?.source_type_distribution.length ? (
-                <div className="rounded-2xl border border-border/70 bg-background/50 p-4">
-                  <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                    {t("knowledge.sourceDistribution")}
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {automationMetrics.source_type_distribution.map((item) => (
-                      <span
-                        key={item.key}
-                        className="rounded-full border border-border bg-card px-2.5 py-1 font-mono text-[11px] uppercase tracking-widest text-muted-foreground"
-                      >
-                        {item.key} · {formatNumber(item.value)}
+                <div className="flex flex-wrap gap-2">
+                  {automationMetrics.source_type_distribution.map((item) => (
+                    <span
+                      key={item.key}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-white/5 bg-white/[0.03] px-2.5 py-1 text-xs font-medium text-muted-foreground"
+                    >
+                      {item.key}
+                      <span className="font-mono text-foreground/80 opacity-70">
+                        {formatNumber(item.value)}
                       </span>
-                    ))}
-                  </div>
+                    </span>
+                  ))}
                 </div>
-              ) : null}
-            </CardContent>
-          </Card>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
 
-          <Card className="glass-card border-border/70">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle className="text-sm">{t("knowledge.title")}</CardTitle>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {t("knowledge.description", { orgId: scopedOrgId || "—" })}
-                </p>
+        <Card className="glass-card border-border/70">
+          <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0 flex-1">
+              <CardTitle className="text-sm leading-5 break-words">{t("knowledge.title")}</CardTitle>
+              <p className="mt-1 text-sm leading-6 text-muted-foreground break-words">
+                {t("knowledge.description", { orgId: scopedOrgId || "—" })}
+              </p>
+            </div>
+            <div className="shrink-0 self-start rounded-xl border border-border/70 bg-background/60 px-3 py-2 text-right">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                {t("knowledge.title")}
               </div>
-              <div className="rounded-xl border border-border/70 bg-background/60 px-3 py-2 text-right">
-                <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                  {t("knowledge.title")}
-                </div>
-                <div className="font-mono text-lg font-bold">{formatNumber(knowledgeData?.total_count ?? 0)}</div>
-              </div>
-            </CardHeader>
-            <CardContent>
+              <div className="font-mono text-lg font-bold">{formatNumber(knowledgeData?.total_count ?? 0)}</div>
+            </div>
+          </CardHeader>
+          <CardContent>
               <div className="mb-4 grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_12rem_12rem_12rem_auto]">
                 <div className="flex gap-2">
                   <Input
@@ -479,38 +447,18 @@ export default function OrganizationsPage() {
                 </Button>
               </div>
 
-              <div className="mb-4 grid gap-3 md:grid-cols-4">
-                <div className="rounded-xl border border-border/70 bg-background/50 p-3">
-                  <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                    {t("knowledge.metricKnowledge")}
-                  </div>
-                  <div className="mt-2 font-mono text-lg">
-                    {formatNumber(knowledgeData?.summary.knowledge_count ?? 0)}
-                  </div>
+              <div className="mb-4 flex flex-wrap gap-4 text-[13px] text-muted-foreground/80">
+                <div className="flex items-center gap-1.5">
+                  <span className="font-mono text-foreground font-medium">{formatNumber(knowledgeData?.summary.knowledge_count ?? 0)}</span> {t("knowledge.metricKnowledge")}
                 </div>
-                <div className="rounded-xl border border-border/70 bg-background/50 p-3">
-                  <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                    {t("knowledge.metricContributions")}
-                  </div>
-                  <div className="mt-2 font-mono text-lg">
-                    {formatNumber(knowledgeData?.summary.contribution_count ?? 0)}
-                  </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="font-mono text-foreground font-medium">{formatNumber(knowledgeData?.summary.contribution_count ?? 0)}</span> {t("knowledge.metricContributions")}
                 </div>
-                <div className="rounded-xl border border-border/70 bg-background/50 p-3">
-                  <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                    {t("knowledge.metricActive")}
-                  </div>
-                  <div className="mt-2 font-mono text-lg">
-                    {formatNumber(knowledgeData?.summary.membership_count ?? 0)}
-                  </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="font-mono text-foreground font-medium">{formatNumber(knowledgeData?.summary.membership_count ?? 0)}</span> {t("knowledge.metricActive")}
                 </div>
-                <div className="rounded-xl border border-border/70 bg-background/50 p-3">
-                  <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                    {t("knowledge.metricContributors")}
-                  </div>
-                  <div className="mt-2 font-mono text-lg">
-                    {formatNumber(knowledgeData?.summary.contributor_count ?? 0)}
-                  </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="font-mono text-foreground font-medium">{formatNumber(knowledgeData?.summary.contributor_count ?? 0)}</span> {t("knowledge.metricContributors")}
                 </div>
               </div>
 
@@ -566,7 +514,7 @@ export default function OrganizationsPage() {
                               {truncate(item.unit.content, 140)}
                             </div>
                           </div>
-                          <Badge variant="outline" className="shrink-0 font-mono text-[11px]">
+                          <Badge variant="outline" className="shrink-0 font-mono text-[10px]">
                             {item.membership_count}/{item.contribution_count}
                           </Badge>
                         </div>
@@ -575,7 +523,7 @@ export default function OrganizationsPage() {
                           {item.unit.keywords.slice(0, 4).map((keyword) => (
                             <span
                               key={keyword}
-                              className="rounded-full border border-border bg-card px-2 py-0.5 text-[11px] uppercase tracking-widest text-muted-foreground"
+                              className="rounded-full border border-border bg-card px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground"
                             >
                               {keyword}
                             </span>
@@ -584,7 +532,7 @@ export default function OrganizationsPage() {
 
                         <div className="mt-4 grid gap-3 md:grid-cols-3">
                           <div>
-                            <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                               {t("knowledge.activeMemberships")}
                             </div>
                             <div className="mt-1 font-mono text-sm">
@@ -592,7 +540,7 @@ export default function OrganizationsPage() {
                             </div>
                           </div>
                           <div>
-                            <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                               {t("knowledge.totalContributions")}
                             </div>
                             <div className="mt-1 font-mono text-sm">
@@ -600,7 +548,7 @@ export default function OrganizationsPage() {
                             </div>
                           </div>
                           <div>
-                            <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                               {t("knowledge.updatedAt")}
                             </div>
                             <div className="mt-1 text-sm">
@@ -610,14 +558,14 @@ export default function OrganizationsPage() {
                         </div>
                         {item.contributor_user_ids.length > 0 ? (
                           <div className="mt-4">
-                            <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                               {t("knowledge.contributors")}
                             </div>
                             <div className="mt-2 flex flex-wrap gap-2">
                               {item.contributor_user_ids.slice(0, 4).map((userId) => (
                                 <span
                                   key={userId}
-                                  className="rounded-full border border-border bg-card px-2 py-0.5 font-mono text-[11px] text-muted-foreground"
+                                  className="rounded-full border border-border bg-card px-2 py-0.5 font-mono text-[10px] text-muted-foreground"
                                 >
                                   {userId}
                                 </span>
@@ -627,7 +575,7 @@ export default function OrganizationsPage() {
                         ) : null}
                         <div className="mt-4 grid gap-3 md:grid-cols-2">
                           <div>
-                            <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                               {t("knowledge.topContributor")}
                             </div>
                             <div className="mt-1 font-mono text-sm">
@@ -635,7 +583,7 @@ export default function OrganizationsPage() {
                             </div>
                           </div>
                           <div>
-                            <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                               {t("knowledge.primarySourceType")}
                             </div>
                             <div className="mt-1 font-mono text-sm uppercase">
@@ -647,7 +595,7 @@ export default function OrganizationsPage() {
                           <Link
                             href={`/dashboard/organizations/${encodeURIComponent(scopedOrgId)}/knowledge/${encodeURIComponent(item.unit.id)}`}
                             onClick={(event) => event.stopPropagation()}
-                            className="text-xs font-medium uppercase tracking-[0.18em] text-primary hover:underline"
+                            className="text-xs font-medium uppercase tracking-wider text-primary hover:underline"
                           >
                             {t("knowledge.openDetail")}
                           </Link>
@@ -667,9 +615,8 @@ export default function OrganizationsPage() {
                   </div>
                 </div>
               )}
-            </CardContent>
-          </Card>
-        </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

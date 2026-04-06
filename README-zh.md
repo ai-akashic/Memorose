@@ -569,7 +569,21 @@ docker compose up --build memorose-node-0 dashboard
 - **Organization Metrics**：查看组织共享记忆分布
 - **Playground**：直接调试查询与检索结果
 - **Cluster Health**：查看多节点 Raft 状态
+- **纠错观测**：查看 RAC 决策、review 队列，以及语义遗忘 / 更新预览
 - **Settings**：运行时配置管理
+
+### 通过 SDK / 控制面调用语义编排
+
+自然语言“遗忘 / 更新”建议由 SDK 或 agent runtime 发起，Dashboard 主要承担观测、审计和 review 面板角色。
+
+```bash
+curl -X POST http://localhost:3000/v1/users/dylan/memories/semantic/preview \
+  -H "Content-Type: application/json" \
+  -d '{
+    "instruction": "我现在住在北京，不再住在上海",
+    "mode": "auto"
+  }'
+```
 
 ---
 
@@ -610,6 +624,9 @@ raft_addr = "127.0.0.1:5001"
 |--------|----------|-------------|
 | `POST` | `/v1/users/:uid/streams/:sid/events` | 写入事件（text/image/audio/video/json） |
 | `POST` | `/v1/users/:uid/streams/:sid/retrieve` | 混合检索，可带跨模态查询输入 |
+| `POST` | `/v1/users/:uid/memories/semantic/preview` | 预览语义遗忘 / 更新计划 |
+| `POST` | `/v1/users/:uid/memories/semantic/execute` | 执行语义遗忘 / 更新计划 |
+| `GET` | `/v1/dashboard/corrections/reviews` | 观测待审核 / 已批准 / 已拒绝的纠错队列（需 dashboard 鉴权） |
 | `GET` | `/v1/users/:uid/tasks/tree` | 获取全部目标 / 任务树 |
 | `GET` | `/v1/users/:uid/tasks/ready` | 获取可自动执行任务 |
 | `PUT` | `/v1/users/:uid/tasks/:tid/status` | 更新任务状态 |

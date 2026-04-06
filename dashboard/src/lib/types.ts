@@ -57,6 +57,39 @@ export interface Stats {
   pending_events: number;
   total_memory_units: number;
   total_edges: number;
+  rac_metrics?: {
+    fact_extraction_attempt_total: number;
+    fact_extraction_success_total: number;
+    correction_action_obsolete_total: number;
+    correction_action_contradicts_total: number;
+    correction_action_reaffirm_total: number;
+    correction_action_ignore_total: number;
+    tombstone_total: number;
+  };
+  rac_metrics_history?: Array<{
+    bucket_start: string;
+    fact_extraction_attempt_total: number;
+    fact_extraction_success_total: number;
+    correction_action_obsolete_total: number;
+    correction_action_contradicts_total: number;
+    correction_action_reaffirm_total: number;
+    correction_action_ignore_total: number;
+    tombstone_total: number;
+  }>;
+  rac_recent_decisions?: Array<{
+    created_at: string;
+    stage: string;
+    user_id: string;
+    org_id?: string | null;
+    source_unit_id: string;
+    target_unit_id?: string | null;
+    action: string;
+    confidence: number;
+    effect: "tombstone" | "relation_only" | "noop" | "rejected";
+    relation?: string | null;
+    reason: string;
+    guard_reason?: string | null;
+  }>;
   memory_by_scope: {
     local: number;
     shared: number;
@@ -288,6 +321,58 @@ export interface ForgetExecuteResponse {
   forgotten_event_count: number;
 }
 
+export interface StoredMemoryFact {
+  subject: string;
+  subject_ref?: string | null;
+  subject_name?: string | null;
+  attribute: string;
+  value: string;
+  canonical_value?: string | null;
+  change_type: string;
+  temporal_status?: string | null;
+  polarity?: string | null;
+  evidence_span?: string | null;
+  confidence: number;
+}
+
+export type SemanticPlanKind = "forget" | "update";
+export type SemanticPlanMode = "auto" | "forget" | "update";
+
+export interface SemanticCorrectionActionView {
+  target_unit_id: string;
+  action: MemoryCorrectionAction;
+  confidence: number;
+  reason: string;
+  effect: "tombstone" | "relation_only" | "noop" | "rejected";
+  relation?: string | null;
+  guard_reason?: string | null;
+  target_unit?: SearchMemoryUnit | null;
+}
+
+export interface SemanticUpdatePreview {
+  source_content: string;
+  extracted_facts: StoredMemoryFact[];
+  actions: SemanticCorrectionActionView[];
+}
+
+export interface SemanticMemoryPreviewResponse {
+  plan_id: string;
+  instruction: string;
+  kind: SemanticPlanKind;
+  created_at: string;
+  expires_at: string;
+  forget_preview?: ForgetPreviewResponse | null;
+  update_preview?: SemanticUpdatePreview | null;
+}
+
+export interface SemanticMemoryExecuteResponse {
+  status: string;
+  plan_id: string;
+  kind: SemanticPlanKind;
+  created_memory_unit_id?: string | null;
+  affected_unit_ids: string[];
+}
+
 export interface RuntimeConfig {
   raft: Record<string, unknown>;
   worker: Record<string, unknown>;
@@ -444,3 +529,45 @@ export interface PendingCountResponse {
 }
 
 export type ReadyTask = L3Task;
+
+export type MemoryCorrectionAction =
+  | "obsolete"
+  | "contradicts"
+  | "reaffirm"
+  | "ignore";
+
+export type RacReviewStatus = "pending" | "approved" | "rejected";
+
+export interface ManualCorrectionResponse {
+  status: string;
+  affected_unit_ids: string[];
+}
+
+export interface RacReviewRecord {
+  review_id: string;
+  created_at: string;
+  updated_at: string;
+  stage: string;
+  user_id: string;
+  org_id?: string | null;
+  source_unit_id: string;
+  target_unit_id: string;
+  action: MemoryCorrectionAction;
+  confidence: number;
+  relation?: string | null;
+  reason: string;
+  guard_reason?: string | null;
+  status: RacReviewStatus;
+  reviewer?: string | null;
+  reviewer_note?: string | null;
+}
+
+export interface RacReviewView {
+  review: RacReviewRecord;
+  source_unit?: SearchMemoryUnit | null;
+  target_unit?: SearchMemoryUnit | null;
+}
+
+export interface RacReviewListResponse {
+  reviews: RacReviewView[];
+}

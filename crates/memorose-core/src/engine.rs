@@ -1,12 +1,15 @@
-use crate::arbitrator::{Arbitrator, MemoryCorrectionAction};
+use crate::arbitrator::{
+    Arbitrator, ExtractedMemoryFact, MemoryCorrectionAction, MemoryCorrectionKind,
+};
+use crate::fact_extraction::{self, MemoryFactChangeType, MemoryFactDescriptor};
 use crate::reranker::Reranker;
 use crate::storage::graph::GraphStore;
 use crate::storage::index::TextIndex;
 use crate::storage::kv::KvStore;
 use crate::storage::system_kv::SystemKvStore;
 use crate::storage::vector::VectorStore;
-use anyhow::Result;
-use chrono::{DateTime, Utc};
+use anyhow::{anyhow, Result};
+use chrono::{DateTime, Timelike, Utc};
 use dashmap::DashMap;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
@@ -23,6 +26,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
+
+const OBSOLETE_ACTION_MIN_CONFIDENCE: f32 = 0.85;
+const OBSOLETE_ACTION_RELATION_ONLY_MIN_CONFIDENCE: f32 = 0.70;
 
 #[derive(Clone)]
 pub struct MemoroseEngine {
@@ -224,6 +230,131 @@ pub struct OrganizationAutomationCounterSnapshot {
     pub rebuild_total: usize,
     pub revoke_total: usize,
     pub merged_publication_total: usize,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub struct RacMetricSnapshot {
+    pub fact_extraction_attempt_total: usize,
+    pub fact_extraction_success_total: usize,
+    pub correction_action_obsolete_total: usize,
+    pub correction_action_contradicts_total: usize,
+    pub correction_action_reaffirm_total: usize,
+    pub correction_action_ignore_total: usize,
+    pub tombstone_total: usize,
+}
+
+impl RacMetricSnapshot {
+    pub fn merge(&mut self, other: &Self) {
+        self.fact_extraction_attempt_total += other.fact_extraction_attempt_total;
+        self.fact_extraction_success_total += other.fact_extraction_success_total;
+        self.correction_action_obsolete_total += other.correction_action_obsolete_total;
+        self.correction_action_contradicts_total += other.correction_action_contradicts_total;
+        self.correction_action_reaffirm_total += other.correction_action_reaffirm_total;
+        self.correction_action_ignore_total += other.correction_action_ignore_total;
+        self.tombstone_total += other.tombstone_total;
+    }
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub struct RacMetricHistoryPoint {
+    pub bucket_start: String,
+    pub fact_extraction_attempt_total: usize,
+    pub fact_extraction_success_total: usize,
+    pub correction_action_obsolete_total: usize,
+    pub correction_action_contradicts_total: usize,
+    pub correction_action_reaffirm_total: usize,
+    pub correction_action_ignore_total: usize,
+    pub tombstone_total: usize,
+}
+
+impl RacMetricHistoryPoint {
+    pub fn merge(&mut self, other: &Self) {
+        self.fact_extraction_attempt_total += other.fact_extraction_attempt_total;
+        self.fact_extraction_success_total += other.fact_extraction_success_total;
+        self.correction_action_obsolete_total += other.correction_action_obsolete_total;
+        self.correction_action_contradicts_total += other.correction_action_contradicts_total;
+        self.correction_action_reaffirm_total += other.correction_action_reaffirm_total;
+        self.correction_action_ignore_total += other.correction_action_ignore_total;
+        self.tombstone_total += other.tombstone_total;
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RacDecisionEffect {
+    Tombstone,
+    RelationOnly,
+    Noop,
+    Rejected,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct RacDecisionRecord {
+    pub created_at: DateTime<Utc>,
+    pub stage: String,
+    pub user_id: String,
+    pub org_id: Option<String>,
+    pub source_unit_id: Uuid,
+    pub target_unit_id: Option<Uuid>,
+    pub action: String,
+    pub confidence: f32,
+    pub effect: RacDecisionEffect,
+    pub relation: Option<String>,
+    pub reason: String,
+    pub guard_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RacReviewStatus {
+    Pending,
+    Approved,
+    Rejected,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RacReviewRecord {
+    pub review_id: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub stage: String,
+    pub user_id: String,
+    pub org_id: Option<String>,
+    pub source_unit_id: Uuid,
+    pub target_unit_id: Uuid,
+    pub action: String,
+    pub confidence: f32,
+    pub relation: Option<String>,
+    pub reason: String,
+    pub guard_reason: Option<String>,
+    pub status: RacReviewStatus,
+    pub reviewer: Option<String>,
+    pub reviewer_note: Option<String>,
+}
+
+pub(crate) enum ValidatedCorrectionDecision {
+    Tombstone {
+        relation: RelationType,
+    },
+    RelationOnly {
+        relation: RelationType,
+        guard_reason: Option<String>,
+    },
+    Skip {
+        effect: RacDecisionEffect,
+        guard_reason: String,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub struct PlannedMemoryCorrectionAction {
+    pub target_id: Uuid,
+    pub kind: MemoryCorrectionKind,
+    pub confidence: f32,
+    pub reason: String,
+    pub effect: RacDecisionEffect,
+    pub relation: Option<RelationType>,
+    pub guard_reason: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -520,6 +651,10 @@ impl MemoroseEngine {
         text.split_whitespace().collect::<Vec<_>>().join(" ")
     }
 
+    fn normalize_memory_keywords(keywords: &[String], limit: usize) -> Vec<String> {
+        fact_extraction::normalize_memory_keywords(keywords, limit)
+    }
+
     fn neutralize_first_person_language(text: &str) -> String {
         text.split_whitespace()
             .map(|token| {
@@ -552,21 +687,7 @@ impl MemoroseEngine {
     }
 
     fn normalize_organization_keywords(source: &MemoryUnit) -> Vec<String> {
-        let mut normalized = Vec::new();
-        for keyword in &source.keywords {
-            let keyword = Self::normalize_whitespace(keyword).trim().to_string();
-            if keyword.is_empty() {
-                continue;
-            }
-            if normalized.iter().any(|existing| existing == &keyword) {
-                continue;
-            }
-            normalized.push(keyword);
-            if normalized.len() >= 8 {
-                break;
-            }
-        }
-        normalized
+        Self::normalize_memory_keywords(&source.keywords, 8)
     }
 
     fn build_organization_topic_key(label: &str) -> String {
@@ -979,29 +1100,412 @@ impl MemoroseEngine {
     }
 
     fn tokenize_search_text(text: &str) -> Vec<String> {
-        text.split(|c: char| !c.is_alphanumeric())
-            .filter(|token| !token.is_empty())
-            .map(|token| token.to_ascii_lowercase())
-            .collect()
+        fact_extraction::tokenize_search_text(text)
+    }
+
+    fn detect_memory_fact(unit: &MemoryUnit) -> Option<MemoryFactDescriptor> {
+        fact_extraction::detect_memory_fact(unit)
+    }
+
+    fn fact_change_supports_obsolete(change_type: MemoryFactChangeType) -> bool {
+        fact_extraction::fact_change_supports_obsolete(change_type)
+    }
+
+    fn fact_change_supports_contradiction(change_type: MemoryFactChangeType) -> bool {
+        fact_extraction::fact_change_supports_contradiction(change_type)
+    }
+
+    fn build_memory_correction_focus_terms_with_fact(
+        unit: &MemoryUnit,
+        fact: Option<&MemoryFactDescriptor>,
+    ) -> Vec<String> {
+        fact_extraction::build_memory_correction_focus_terms_with_fact(unit, fact)
     }
 
     fn keyword_overlap_score(query_text: &str, content: &str, keywords: &[String]) -> f32 {
-        let query_terms = Self::tokenize_search_text(query_text);
-        if query_terms.is_empty() {
-            return 0.0;
+        fact_extraction::keyword_overlap_score(query_text, content, keywords)
+    }
+
+    fn memory_correction_candidate_score(
+        unit: &MemoryUnit,
+        candidate: &MemoryUnit,
+        focus_terms: &[String],
+        query_fact: Option<&MemoryFactDescriptor>,
+    ) -> f32 {
+        fact_extraction::memory_correction_candidate_score(unit, candidate, focus_terms, query_fact)
+    }
+
+    fn subject_keys_compatible(left: &str, right: &str) -> bool {
+        fact_extraction::subject_keys_compatible(left, right)
+    }
+
+    fn descriptor_from_extracted_fact(fact: ExtractedMemoryFact) -> Option<MemoryFactDescriptor> {
+        fact_extraction::descriptor_from_extracted_fact(fact)
+    }
+
+    fn push_unique_memory_terms(
+        terms: &mut Vec<String>,
+        seen: &mut HashSet<String>,
+        values: impl IntoIterator<Item = String>,
+    ) {
+        for value in values {
+            let normalized = value.trim();
+            if normalized.is_empty() {
+                continue;
+            }
+            let key = normalized.to_ascii_lowercase();
+            if seen.insert(key) {
+                terms.push(normalized.to_string());
+            }
+        }
+    }
+
+    fn memory_fact_descriptor_key(descriptor: &MemoryFactDescriptor) -> String {
+        format!(
+            "{:?}|{}|{:?}|{}|{:?}",
+            descriptor.subject,
+            descriptor.subject_key,
+            descriptor.attribute,
+            descriptor.value_payload.comparison_key(),
+            descriptor.change_type
+        )
+    }
+
+    fn compatible_fact_pair_score(
+        left: &MemoryFactDescriptor,
+        right: &MemoryFactDescriptor,
+    ) -> Option<i32> {
+        if left.subject != right.subject
+            || !Self::subject_keys_compatible(&left.subject_key, &right.subject_key)
+            || left.attribute != right.attribute
+        {
+            return None;
         }
 
-        let mut haystack = content.to_ascii_lowercase();
-        for keyword in keywords {
-            haystack.push(' ');
-            haystack.push_str(&keyword.to_ascii_lowercase());
+        let exact_subject_key_bonus = if left.subject_key == right.subject_key {
+            20
+        } else {
+            0
+        };
+        let value_kind_bonus = if left.value_kind == right.value_kind {
+            5
+        } else {
+            0
+        };
+        let same_value_bonus =
+            if left.value_payload.comparison_key() == right.value_payload.comparison_key() {
+                2
+            } else {
+                0
+            };
+
+        Some(
+            exact_subject_key_bonus
+                + value_kind_bonus
+                + same_value_bonus
+                + left.confidence as i32
+                + right.confidence as i32,
+        )
+    }
+
+    fn build_memory_correction_focus_terms(
+        unit: &MemoryUnit,
+        facts: &[MemoryFactDescriptor],
+    ) -> Vec<String> {
+        let mut terms = Vec::new();
+        let mut seen = HashSet::new();
+
+        Self::push_unique_memory_terms(
+            &mut terms,
+            &mut seen,
+            Self::build_memory_correction_focus_terms_with_fact(unit, None),
+        );
+
+        for fact in facts {
+            Self::push_unique_memory_terms(
+                &mut terms,
+                &mut seen,
+                Self::build_memory_correction_focus_terms_with_fact(unit, Some(fact)),
+            );
         }
 
-        let matched = query_terms
+        terms.truncate(12);
+        terms
+    }
+
+    fn build_memory_correction_search_queries(
+        unit: &MemoryUnit,
+        facts: &[MemoryFactDescriptor],
+        focus_terms: &[String],
+    ) -> Vec<String> {
+        let mut queries = Vec::new();
+        let mut seen = HashSet::new();
+
+        Self::push_unique_memory_terms(
+            &mut queries,
+            &mut seen,
+            std::iter::once(unit.content.clone()),
+        );
+
+        for fact in facts {
+            Self::push_unique_memory_terms(
+                &mut queries,
+                &mut seen,
+                fact.attribute
+                    .search_phrases()
+                    .iter()
+                    .map(|phrase| (*phrase).to_string()),
+            );
+            Self::push_unique_memory_terms(
+                &mut queries,
+                &mut seen,
+                Self::tokenize_search_text(&fact.value)
+                    .into_iter()
+                    .filter(|token| fact_extraction::is_memory_correction_focus_token(token)),
+            );
+            Self::push_unique_memory_terms(
+                &mut queries,
+                &mut seen,
+                Self::tokenize_search_text(&fact.canonical_value)
+                    .into_iter()
+                    .filter(|token| fact_extraction::is_memory_correction_focus_token(token)),
+            );
+            Self::push_unique_memory_terms(
+                &mut queries,
+                &mut seen,
+                Self::tokenize_search_text(fact.value_payload.comparison_key())
+                    .into_iter()
+                    .filter(|token| fact_extraction::is_memory_correction_focus_token(token)),
+            );
+        }
+
+        Self::push_unique_memory_terms(
+            &mut queries,
+            &mut seen,
+            focus_terms.iter().take(6).cloned(),
+        );
+
+        queries
+    }
+
+    fn memory_correction_candidate_score_for_facts(
+        unit: &MemoryUnit,
+        candidate: &MemoryUnit,
+        focus_terms: &[String],
+        query_facts: &[MemoryFactDescriptor],
+    ) -> f32 {
+        if query_facts.is_empty() {
+            return Self::memory_correction_candidate_score(unit, candidate, focus_terms, None);
+        }
+
+        query_facts
             .iter()
-            .filter(|term| haystack.contains(term.as_str()))
-            .count();
-        matched as f32 / query_terms.len() as f32
+            .map(|fact| {
+                Self::memory_correction_candidate_score(unit, candidate, focus_terms, Some(fact))
+            })
+            .fold(0.0, f32::max)
+    }
+
+    async fn resolve_memory_fact_descriptors(
+        &self,
+        unit: &MemoryUnit,
+    ) -> Vec<MemoryFactDescriptor> {
+        let rule_facts = fact_extraction::detect_memory_facts(unit);
+        let mut descriptors = Vec::new();
+        let mut seen = HashSet::new();
+
+        for descriptor in unit
+            .extracted_facts
+            .iter()
+            .filter_map(fact_extraction::descriptor_from_stored_fact)
+        {
+            let key = Self::memory_fact_descriptor_key(&descriptor);
+            if seen.insert(key) {
+                descriptors.push(descriptor);
+            }
+        }
+
+        if descriptors.is_empty() {
+            let _ = self.increment_rac_metric_counter("fact_extraction_attempt_total", 1);
+            let extracted = match self.arbitrator.extract_memory_facts(unit).await {
+                Ok(facts) => facts,
+                Err(error) => {
+                    tracing::warn!(
+                        "Memory fact extraction fallback failed for {}: {:?}",
+                        unit.id,
+                        error
+                    );
+                    Vec::new()
+                }
+            };
+
+            for descriptor in extracted
+                .into_iter()
+                .filter_map(Self::descriptor_from_extracted_fact)
+            {
+                let key = Self::memory_fact_descriptor_key(&descriptor);
+                if seen.insert(key) {
+                    descriptors.push(descriptor);
+                }
+            }
+        }
+
+        for rule_fact in rule_facts {
+            let key = Self::memory_fact_descriptor_key(&rule_fact);
+            if descriptors.is_empty() || seen.insert(key) {
+                descriptors.push(rule_fact);
+            }
+        }
+
+        if !descriptors.is_empty() {
+            let _ = self.increment_rac_metric_counter("fact_extraction_success_total", 1);
+        }
+
+        descriptors
+    }
+
+    pub async fn hydrate_memory_unit_extracted_facts(&self, unit: &mut MemoryUnit) {
+        if unit.level != 1 || unit.memory_type != memorose_common::MemoryType::Factual {
+            return;
+        }
+
+        let mut stored_facts = Vec::new();
+
+        match self.arbitrator.extract_memory_facts(unit).await {
+            Ok(facts) => {
+                stored_facts.extend(
+                    facts
+                        .into_iter()
+                        .filter_map(crate::fact_extraction::stored_fact_from_extracted_fact),
+                );
+            }
+            Err(error) => {
+                tracing::warn!(
+                    "Memory fact extraction during engine hydration failed for {}: {:?}",
+                    unit.id,
+                    error
+                );
+            }
+        }
+
+        if stored_facts.is_empty() {
+            stored_facts.extend(
+                crate::fact_extraction::detect_memory_facts(unit)
+                    .iter()
+                    .map(crate::fact_extraction::stored_fact_from_descriptor),
+            );
+        }
+
+        let mut deduped = Vec::new();
+        let mut seen = HashSet::new();
+        for fact in stored_facts {
+            let key = format!(
+                "{}|{}|{}|{}|{}",
+                fact.subject,
+                fact.subject_ref.as_deref().unwrap_or(""),
+                fact.attribute,
+                fact.canonical_value
+                    .as_deref()
+                    .unwrap_or(fact.value.as_str()),
+                fact.change_type
+            );
+            if seen.insert(key) {
+                deduped.push(fact);
+            }
+        }
+
+        unit.extracted_facts = deduped;
+    }
+
+    pub async fn plan_memory_correction_actions(
+        &self,
+        unit: &MemoryUnit,
+        limit: usize,
+    ) -> Result<Vec<PlannedMemoryCorrectionAction>> {
+        let context = self
+            .fetch_memory_correction_candidates(unit, limit.max(1))
+            .await?;
+        if context.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let actions = self.detect_memory_correction_actions(unit, &context).await?;
+        let mut planned = Vec::new();
+
+        for action in actions {
+            let Some(target_unit) =
+                self.get_memory_unit_including_forgotten(&unit.user_id, action.target_id)?
+            else {
+                planned.push(PlannedMemoryCorrectionAction {
+                    target_id: action.target_id,
+                    kind: action.kind,
+                    confidence: action.confidence,
+                    reason: action.reason,
+                    effect: RacDecisionEffect::Rejected,
+                    relation: None,
+                    guard_reason: Some("target_missing".into()),
+                });
+                continue;
+            };
+
+            let (effect, relation, guard_reason) = match self
+                .validate_memory_correction_relation(
+                    unit,
+                    &target_unit,
+                    action.kind,
+                    action.confidence,
+                )
+                .await
+            {
+                ValidatedCorrectionDecision::Tombstone { relation } => {
+                    (RacDecisionEffect::Tombstone, Some(relation), None)
+                }
+                ValidatedCorrectionDecision::RelationOnly {
+                    relation,
+                    guard_reason,
+                } => (
+                    RacDecisionEffect::RelationOnly,
+                    Some(relation),
+                    guard_reason,
+                ),
+                ValidatedCorrectionDecision::Skip {
+                    effect,
+                    guard_reason,
+                } => (effect, None, Some(guard_reason)),
+            };
+
+            planned.push(PlannedMemoryCorrectionAction {
+                target_id: action.target_id,
+                kind: action.kind,
+                confidence: action.confidence,
+                reason: action.reason,
+                effect,
+                relation,
+                guard_reason,
+            });
+        }
+
+        Ok(planned)
+    }
+
+    async fn resolve_fact_descriptors_compatible(
+        &self,
+        unit: &MemoryUnit,
+        candidate: &MemoryUnit,
+    ) -> Option<(MemoryFactDescriptor, MemoryFactDescriptor)> {
+        let left_descriptors = self.resolve_memory_fact_descriptors(unit).await;
+        let right_descriptors = self.resolve_memory_fact_descriptors(candidate).await;
+
+        left_descriptors
+            .iter()
+            .flat_map(|left| {
+                right_descriptors.iter().filter_map(|right| {
+                    Self::compatible_fact_pair_score(left, right)
+                        .map(|score| (score, left.clone(), right.clone()))
+                })
+            })
+            .max_by_key(|(score, _, _)| *score)
+            .map(|(_, left, right)| (left, right))
     }
 
     fn organization_similarity_score(
@@ -1037,6 +1541,27 @@ impl MemoroseEngine {
         format!("organization_metric:{}:{}", org_id, metric)
     }
 
+    fn rac_metric_counter_key(metric: &str) -> String {
+        format!("rac_metric:{}", metric)
+    }
+
+    fn rac_metric_bucket_counter_key(metric: &str, bucket_start: &str) -> String {
+        format!("rac_metric_bucket:{}:{}", bucket_start, metric)
+    }
+
+    fn rac_decision_key(created_at: DateTime<Utc>, source_unit_id: Uuid, nonce: Uuid) -> String {
+        format!(
+            "rac_decision:{:020}:{}:{}",
+            created_at.timestamp_micros(),
+            source_unit_id,
+            nonce
+        )
+    }
+
+    fn rac_review_key(review_id: &str) -> String {
+        format!("rac_review:{}", review_id)
+    }
+
     fn normalize_share_policy(mut policy: SharePolicy, target: ShareTarget) -> SharePolicy {
         policy.targets = vec![target];
         policy
@@ -1054,6 +1579,13 @@ fn cosine_similarity(v1: &[f32], v2: &[f32]) -> f32 {
 }
 
 impl MemoroseEngine {
+    fn rac_metric_bucket_start(now: DateTime<Utc>) -> DateTime<Utc> {
+        now.with_minute(0)
+            .and_then(|dt| dt.with_second(0))
+            .and_then(|dt| dt.with_nanosecond(0))
+            .unwrap_or(now)
+    }
+
     async fn materialize_organization_read_view_for_record(
         &self,
         record: &OrganizationKnowledgeRecord,
@@ -1089,6 +1621,98 @@ impl MemoroseEngine {
             .get(key.as_bytes())?
             .map(|bytes| u64::from_le_bytes(bytes.try_into().unwrap_or([0; 8])) as usize)
             .unwrap_or(0))
+    }
+
+    fn increment_rac_metric_counter(&self, metric: &str, delta: usize) -> Result<()> {
+        if delta == 0 {
+            return Ok(());
+        }
+
+        let key = Self::rac_metric_counter_key(metric);
+        let current = self
+            .system_kv()
+            .get(key.as_bytes())?
+            .map(|bytes| u64::from_le_bytes(bytes.try_into().unwrap_or([0; 8])) as usize)
+            .unwrap_or(0);
+        self.system_kv()
+            .put(key.as_bytes(), &((current + delta) as u64).to_le_bytes())?;
+
+        let bucket_start = Self::rac_metric_bucket_start(Utc::now())
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let bucket_key = Self::rac_metric_bucket_counter_key(metric, &bucket_start);
+        let bucket_current = self
+            .system_kv()
+            .get(bucket_key.as_bytes())?
+            .map(|bytes| u64::from_le_bytes(bytes.try_into().unwrap_or([0; 8])) as usize)
+            .unwrap_or(0);
+        self.system_kv().put(
+            bucket_key.as_bytes(),
+            &((bucket_current + delta) as u64).to_le_bytes(),
+        )?;
+        Ok(())
+    }
+
+    fn get_rac_metric_counter(&self, metric: &str) -> Result<usize> {
+        let key = Self::rac_metric_counter_key(metric);
+        Ok(self
+            .system_kv()
+            .get(key.as_bytes())?
+            .map(|bytes| u64::from_le_bytes(bytes.try_into().unwrap_or([0; 8])) as usize)
+            .unwrap_or(0))
+    }
+
+    pub(crate) fn record_rac_decision(&self, record: &RacDecisionRecord) -> Result<()> {
+        let key = Self::rac_decision_key(record.created_at, record.source_unit_id, Uuid::new_v4());
+        self.system_kv()
+            .put(key.as_bytes(), &serde_json::to_vec(record)?)
+    }
+
+    fn should_enqueue_rac_review(record: &RacDecisionRecord) -> bool {
+        record.effect == RacDecisionEffect::RelationOnly
+            && record.action == "obsolete"
+            && record.guard_reason.as_deref() == Some("obsolete_relation_only_due_to_confidence")
+            && record.target_unit_id.is_some()
+    }
+
+    pub(crate) fn enqueue_rac_review_for_decision(
+        &self,
+        record: &RacDecisionRecord,
+    ) -> Result<Option<RacReviewRecord>> {
+        if !Self::should_enqueue_rac_review(record) {
+            return Ok(None);
+        }
+
+        let review = RacReviewRecord {
+            review_id: Uuid::new_v4().to_string(),
+            created_at: record.created_at,
+            updated_at: record.created_at,
+            stage: record.stage.clone(),
+            user_id: record.user_id.clone(),
+            org_id: record.org_id.clone(),
+            source_unit_id: record.source_unit_id,
+            target_unit_id: record.target_unit_id.expect("target checked above"),
+            action: record.action.clone(),
+            confidence: record.confidence,
+            relation: record.relation.clone(),
+            reason: record.reason.clone(),
+            guard_reason: record.guard_reason.clone(),
+            status: RacReviewStatus::Pending,
+            reviewer: None,
+            reviewer_note: None,
+        };
+        self.system_kv().put(
+            Self::rac_review_key(&review.review_id).as_bytes(),
+            &serde_json::to_vec(&review)?,
+        )?;
+        Ok(Some(review))
+    }
+
+    pub(crate) fn record_rac_decision_with_review(
+        &self,
+        record: &RacDecisionRecord,
+    ) -> Result<Option<RacReviewRecord>> {
+        self.record_rac_decision(record)?;
+        self.enqueue_rac_review_for_decision(record)
     }
 
     fn organization_contribution_sort_key(
@@ -1232,6 +1856,11 @@ impl MemoroseEngine {
         self
     }
 
+    pub fn with_arbitrator(mut self, arbitrator: Arbitrator) -> Self {
+        self.arbitrator = arbitrator;
+        self
+    }
+
     pub async fn ingest_event(&self, event: Event) -> Result<()> {
         self.ingest_event_directly(event).await
     }
@@ -1345,6 +1974,10 @@ impl MemoroseEngine {
                 continue;
             }
 
+            for source_id in &source_ids_to_remove {
+                self.revoke_organization_contribution(record.id, *source_id)?;
+            }
+
             let record_source_ids = self.resolve_organization_record_source_ids(&record).await?;
             let remaining_source_ids: Vec<Uuid> = record_source_ids
                 .iter()
@@ -1428,7 +2061,6 @@ impl MemoroseEngine {
             }
 
             for source_id in source_ids_to_remove {
-                self.revoke_organization_contribution(record.id, source_id)?;
                 self.delete_organization_membership(source_id).ok();
                 removed_contributions += 1;
             }
@@ -2885,6 +3517,17 @@ impl MemoroseEngine {
         let knowledge_id = record.id;
         let activated_at = record.updated_at;
         let org_id = record.org_id.clone();
+        let existing_revoked_contributions = self
+            .list_organization_contributions(knowledge_id)
+            .await?
+            .into_iter()
+            .filter(|contribution| {
+                matches!(
+                    contribution.status,
+                    OrganizationKnowledgeContributionStatus::Revoked
+                )
+            })
+            .collect::<Vec<_>>();
 
         self.delete_organization_contributions(knowledge_id).await?;
         self.submit_organization_contribution_candidates(&candidate_contribution_records)?;
@@ -2892,6 +3535,17 @@ impl MemoroseEngine {
             &candidate_contribution_records,
             activated_at,
         )?;
+        let active_source_ids = approved_contribution_records
+            .iter()
+            .map(|contribution| contribution.source_id)
+            .collect::<HashSet<_>>();
+        let retained_revoked_contributions = existing_revoked_contributions
+            .into_iter()
+            .filter(|contribution| !active_source_ids.contains(&contribution.source_id))
+            .collect::<Vec<_>>();
+        if !retained_revoked_contributions.is_empty() {
+            self.store_organization_contributions(&retained_revoked_contributions)?;
+        }
         let memberships =
             Self::organization_memberships_from_contributions(&approved_contribution_records);
 
@@ -3207,6 +3861,21 @@ impl MemoroseEngine {
     }
 
     pub async fn store_memory_units(&self, units: Vec<MemoryUnit>) -> Result<()> {
+        self.store_memory_units_internal(units, true).await
+    }
+
+    pub(crate) async fn store_memory_units_without_reconciliation(
+        &self,
+        units: Vec<MemoryUnit>,
+    ) -> Result<()> {
+        self.store_memory_units_internal(units, false).await
+    }
+
+    async fn store_memory_units_internal(
+        &self,
+        units: Vec<MemoryUnit>,
+        run_reconciliation: bool,
+    ) -> Result<()> {
         if units.is_empty() {
             return Ok(());
         }
@@ -3306,8 +3975,14 @@ impl MemoroseEngine {
                 if !Self::is_local_domain(&unit.domain) {
                     return;
                 }
-                if let Err(e) = engine.reconcile_conflicting_memory_unit(&unit).await {
-                    tracing::error!("Memory reconciliation failed for unit {}: {:?}", unit.id, e);
+                if run_reconciliation {
+                    if let Err(e) = engine.reconcile_conflicting_memory_unit(&unit).await {
+                        tracing::error!(
+                            "Memory reconciliation failed for unit {}: {:?}",
+                            unit.id,
+                            e
+                        );
+                    }
                 }
                 match engine.is_visible_memory_unit(&unit) {
                     Ok(true) => {}
@@ -3391,7 +4066,211 @@ impl MemoroseEngine {
         Ok(())
     }
 
-    async fn reconcile_conflicting_memory_unit(&self, unit: &MemoryUnit) -> Result<Vec<Uuid>> {
+    async fn fetch_memory_correction_candidates(
+        &self,
+        unit: &MemoryUnit,
+        limit: usize,
+    ) -> Result<Vec<MemoryUnit>> {
+        let mut candidates = HashMap::new();
+        let facts = self.resolve_memory_fact_descriptors(unit).await;
+        let focus_terms = Self::build_memory_correction_focus_terms(unit, &facts);
+        let search_queries =
+            Self::build_memory_correction_search_queries(unit, &facts, &focus_terms);
+
+        for query in search_queries {
+            for candidate in self
+                .search_text(&unit.user_id, &query, limit * 2, false, None)
+                .await?
+            {
+                candidates.entry(candidate.id).or_insert(candidate);
+            }
+        }
+
+        for candidate in self
+            .fetch_recent_l1_units(&unit.user_id, (limit * 6).max(24))
+            .await?
+        {
+            candidates.entry(candidate.id).or_insert(candidate);
+        }
+
+        let mut ranked = candidates
+            .into_values()
+            .filter(|candidate| {
+                candidate.id != unit.id
+                    && candidate.level == 1
+                    && candidate.memory_type == MemoryType::Factual
+                    && Self::is_local_domain(&candidate.domain)
+                    && candidate.transaction_time < unit.transaction_time
+            })
+            .map(|candidate| {
+                let score = Self::memory_correction_candidate_score_for_facts(
+                    unit,
+                    &candidate,
+                    &focus_terms,
+                    &facts,
+                );
+                (candidate, score)
+            })
+            .filter(|(_, score)| *score > 0.0)
+            .collect::<Vec<_>>();
+
+        ranked.sort_by(|left, right| {
+            right
+                .1
+                .partial_cmp(&left.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| right.0.transaction_time.cmp(&left.0.transaction_time))
+        });
+        ranked.truncate(limit);
+
+        Ok(ranked.into_iter().map(|(candidate, _)| candidate).collect())
+    }
+
+    pub(crate) async fn detect_memory_correction_actions(
+        &self,
+        unit: &MemoryUnit,
+        context: &[MemoryUnit],
+    ) -> Result<Vec<MemoryCorrectionAction>> {
+        if unit.level != 1
+            || unit.memory_type != MemoryType::Factual
+            || !Self::is_local_domain(&unit.domain)
+            || context.is_empty()
+        {
+            return Ok(Vec::new());
+        }
+
+        let actions = self
+            .arbitrator
+            .detect_memory_corrections(unit, context)
+            .await?;
+        for action in &actions {
+            let metric = match action.kind {
+                MemoryCorrectionKind::Obsolete => "correction_action_obsolete_total",
+                MemoryCorrectionKind::Contradicts => "correction_action_contradicts_total",
+                MemoryCorrectionKind::Reaffirm => "correction_action_reaffirm_total",
+                MemoryCorrectionKind::Ignore => "correction_action_ignore_total",
+            };
+            let _ = self.increment_rac_metric_counter(metric, 1);
+        }
+        Ok(actions)
+    }
+
+    pub(crate) async fn validate_memory_correction_relation(
+        &self,
+        unit: &MemoryUnit,
+        target_unit: &MemoryUnit,
+        kind: MemoryCorrectionKind,
+        action_confidence: f32,
+    ) -> ValidatedCorrectionDecision {
+        match kind {
+            MemoryCorrectionKind::Obsolete => {
+                if action_confidence < OBSOLETE_ACTION_RELATION_ONLY_MIN_CONFIDENCE {
+                    tracing::warn!(
+                        "Skipping OBSOLETE correction from {} to {} because confidence {:.2} is below relation threshold {:.2}",
+                        unit.id,
+                        target_unit.id,
+                        action_confidence,
+                        OBSOLETE_ACTION_RELATION_ONLY_MIN_CONFIDENCE
+                    );
+                    return ValidatedCorrectionDecision::Skip {
+                        effect: RacDecisionEffect::Rejected,
+                        guard_reason: "obsolete_low_confidence".into(),
+                    };
+                }
+                if target_unit.transaction_time > unit.transaction_time {
+                    tracing::warn!(
+                        "Skipping OBSOLETE correction from {} to {} because target is newer",
+                        unit.id,
+                        target_unit.id
+                    );
+                    return ValidatedCorrectionDecision::Skip {
+                        effect: RacDecisionEffect::Rejected,
+                        guard_reason: "target_newer_than_source".into(),
+                    };
+                }
+                let Some((source_fact, _target_fact)) = self
+                    .resolve_fact_descriptors_compatible(unit, target_unit)
+                    .await
+                else {
+                    tracing::warn!(
+                        "Skipping OBSOLETE correction from {} to {} because fact slots differ",
+                        unit.id,
+                        target_unit.id
+                    );
+                    return ValidatedCorrectionDecision::Skip {
+                        effect: RacDecisionEffect::Rejected,
+                        guard_reason: "fact_slots_mismatch".into(),
+                    };
+                };
+                if !Self::fact_change_supports_obsolete(source_fact.change_type) {
+                    tracing::warn!(
+                        "Skipping OBSOLETE correction from {} to {} because change type {:?} is not replacement-safe",
+                        unit.id,
+                        target_unit.id,
+                        source_fact.change_type
+                    );
+                    return ValidatedCorrectionDecision::Skip {
+                        effect: RacDecisionEffect::Rejected,
+                        guard_reason: "change_type_not_replacement_safe".into(),
+                    };
+                }
+                if action_confidence < OBSOLETE_ACTION_MIN_CONFIDENCE {
+                    return ValidatedCorrectionDecision::RelationOnly {
+                        relation: RelationType::EvolvedTo,
+                        guard_reason: Some("obsolete_relation_only_due_to_confidence".into()),
+                    };
+                }
+                ValidatedCorrectionDecision::Tombstone {
+                    relation: RelationType::EvolvedTo,
+                }
+            }
+            MemoryCorrectionKind::Contradicts => {
+                let Some((source_fact, _target_fact)) = self
+                    .resolve_fact_descriptors_compatible(unit, target_unit)
+                    .await
+                else {
+                    tracing::warn!(
+                        "Skipping CONTRADICTS correction from {} to {} because fact slots differ",
+                        unit.id,
+                        target_unit.id
+                    );
+                    return ValidatedCorrectionDecision::Skip {
+                        effect: RacDecisionEffect::Rejected,
+                        guard_reason: "fact_slots_mismatch".into(),
+                    };
+                };
+                if !Self::fact_change_supports_contradiction(source_fact.change_type) {
+                    tracing::warn!(
+                        "Skipping CONTRADICTS correction from {} to {} because change type {:?} does not indicate contradiction",
+                        unit.id,
+                        target_unit.id,
+                        source_fact.change_type
+                    );
+                    return ValidatedCorrectionDecision::Skip {
+                        effect: RacDecisionEffect::Rejected,
+                        guard_reason: "change_type_not_contradiction_safe".into(),
+                    };
+                }
+                ValidatedCorrectionDecision::RelationOnly {
+                    relation: RelationType::Contradicts,
+                    guard_reason: None,
+                }
+            }
+            MemoryCorrectionKind::Reaffirm => ValidatedCorrectionDecision::Skip {
+                effect: RacDecisionEffect::Noop,
+                guard_reason: "reaffirm_no_mutation".into(),
+            },
+            MemoryCorrectionKind::Ignore => ValidatedCorrectionDecision::Skip {
+                effect: RacDecisionEffect::Noop,
+                guard_reason: "ignored_by_arbitrator".into(),
+            },
+        }
+    }
+
+    pub(crate) async fn reconcile_conflicting_memory_unit(
+        &self,
+        unit: &MemoryUnit,
+    ) -> Result<Vec<Uuid>> {
         if unit.level != 1
             || unit.memory_type != MemoryType::Factual
             || !Self::is_local_domain(&unit.domain)
@@ -3399,68 +4278,152 @@ impl MemoroseEngine {
             return Ok(Vec::new());
         }
 
-        let mut context = self
-            .search_text(&unit.user_id, &unit.content, 8, false, None)
-            .await?;
-        context.retain(|existing| {
-            existing.id != unit.id
-                && existing.level == 1
-                && existing.memory_type == MemoryType::Factual
-                && existing.transaction_time < unit.transaction_time
-        });
+        let context = self.fetch_memory_correction_candidates(unit, 8).await?;
         if context.is_empty() {
             return Ok(Vec::new());
         }
 
         let actions = self
-            .arbitrator
-            .detect_memory_corrections(unit, &context)
+            .detect_memory_correction_actions(unit, &context)
             .await?;
         self.apply_memory_correction_actions(unit, actions).await
     }
 
-    async fn apply_memory_correction_actions(
+    async fn apply_memory_correction_actions_with_stage(
         &self,
         unit: &MemoryUnit,
         actions: Vec<MemoryCorrectionAction>,
+        stage: &str,
     ) -> Result<Vec<Uuid>> {
         let mut affected_ids = Vec::new();
 
         for action in actions {
-            if action.target_id == unit.id
-                || self
-                    .get_memory_unit_including_forgotten(&unit.user_id, action.target_id)?
-                    .is_none()
-            {
+            if action.target_id == unit.id {
                 continue;
             }
 
-            let reason = if action.reason.trim().is_empty() {
-                format!("Superseded by memory {}", unit.id)
-            } else {
-                action.reason.clone()
+            let Some(target_unit) =
+                self.get_memory_unit_including_forgotten(&unit.user_id, action.target_id)?
+            else {
+                let _ = self.record_rac_decision(&RacDecisionRecord {
+                    created_at: Utc::now(),
+                    stage: stage.into(),
+                    user_id: unit.user_id.clone(),
+                    org_id: unit.org_id.clone(),
+                    source_unit_id: unit.id,
+                    target_unit_id: Some(action.target_id),
+                    action: format!("{:?}", action.kind).to_ascii_lowercase(),
+                    confidence: action.confidence,
+                    effect: RacDecisionEffect::Rejected,
+                    relation: None,
+                    reason: action.reason.clone(),
+                    guard_reason: Some("target_missing".into()),
+                });
+                continue;
             };
-            let tombstone = ForgettingTombstone {
-                user_id: unit.user_id.clone(),
-                org_id: unit.org_id.clone(),
-                target_kind: memorose_common::ForgetTargetKind::MemoryUnit,
-                target_id: action.target_id.to_string(),
-                reason_query: reason,
-                created_at: chrono::Utc::now(),
-                preview_id: Some(unit.id.to_string()),
-                mode: memorose_common::ForgetMode::Logical,
-            };
-            self.mark_memory_unit_forgotten(&unit.user_id, action.target_id, &tombstone)?;
 
-            let edge = GraphEdge::new(
-                unit.user_id.clone(),
-                unit.id,
-                action.target_id,
-                action.relation,
-                action.confidence,
-            );
-            self.graph.add_edge(&edge).await?;
-            affected_ids.push(action.target_id);
+            let decision = self
+                .validate_memory_correction_relation(
+                    unit,
+                    &target_unit,
+                    action.kind,
+                    action.confidence,
+                )
+                .await;
+
+            match decision {
+                ValidatedCorrectionDecision::Tombstone { relation } => {
+                    let reason = if action.reason.trim().is_empty() {
+                        format!("Superseded by memory {}", unit.id)
+                    } else {
+                        action.reason.clone()
+                    };
+                    let tombstone = ForgettingTombstone {
+                        user_id: unit.user_id.clone(),
+                        org_id: unit.org_id.clone(),
+                        target_kind: memorose_common::ForgetTargetKind::MemoryUnit,
+                        target_id: action.target_id.to_string(),
+                        reason_query: reason,
+                        created_at: chrono::Utc::now(),
+                        preview_id: Some(unit.id.to_string()),
+                        mode: memorose_common::ForgetMode::Logical,
+                    };
+                    self.mark_memory_unit_forgotten(&unit.user_id, action.target_id, &tombstone)?;
+                    let _ = self.increment_rac_metric_counter("tombstone_total", 1);
+                    let relation_name = format!("{:?}", relation).to_ascii_lowercase();
+                    let edge = GraphEdge::new(
+                        unit.user_id.clone(),
+                        unit.id,
+                        action.target_id,
+                        relation.clone(),
+                        action.confidence,
+                    );
+                    self.graph.add_edge(&edge).await?;
+                    let _ = self.record_rac_decision_with_review(&RacDecisionRecord {
+                        created_at: Utc::now(),
+                        stage: stage.into(),
+                        user_id: unit.user_id.clone(),
+                        org_id: unit.org_id.clone(),
+                        source_unit_id: unit.id,
+                        target_unit_id: Some(action.target_id),
+                        action: format!("{:?}", action.kind).to_ascii_lowercase(),
+                        confidence: action.confidence,
+                        effect: RacDecisionEffect::Tombstone,
+                        relation: Some(relation_name),
+                        reason: tombstone.reason_query.clone(),
+                        guard_reason: None,
+                    });
+                    affected_ids.push(action.target_id);
+                }
+                ValidatedCorrectionDecision::RelationOnly {
+                    relation,
+                    guard_reason,
+                } => {
+                    let relation_name = format!("{:?}", relation).to_ascii_lowercase();
+                    let edge = GraphEdge::new(
+                        unit.user_id.clone(),
+                        unit.id,
+                        action.target_id,
+                        relation.clone(),
+                        action.confidence,
+                    );
+                    self.graph.add_edge(&edge).await?;
+                    let _ = self.record_rac_decision_with_review(&RacDecisionRecord {
+                        created_at: Utc::now(),
+                        stage: stage.into(),
+                        user_id: unit.user_id.clone(),
+                        org_id: unit.org_id.clone(),
+                        source_unit_id: unit.id,
+                        target_unit_id: Some(action.target_id),
+                        action: format!("{:?}", action.kind).to_ascii_lowercase(),
+                        confidence: action.confidence,
+                        effect: RacDecisionEffect::RelationOnly,
+                        relation: Some(relation_name),
+                        reason: action.reason.clone(),
+                        guard_reason,
+                    });
+                    affected_ids.push(action.target_id);
+                }
+                ValidatedCorrectionDecision::Skip {
+                    effect,
+                    guard_reason,
+                } => {
+                    let _ = self.record_rac_decision_with_review(&RacDecisionRecord {
+                        created_at: Utc::now(),
+                        stage: stage.into(),
+                        user_id: unit.user_id.clone(),
+                        org_id: unit.org_id.clone(),
+                        source_unit_id: unit.id,
+                        target_unit_id: Some(action.target_id),
+                        action: format!("{:?}", action.kind).to_ascii_lowercase(),
+                        confidence: action.confidence,
+                        effect,
+                        relation: None,
+                        reason: action.reason.clone(),
+                        guard_reason: Some(guard_reason),
+                    });
+                }
+            }
         }
 
         if !affected_ids.is_empty() {
@@ -3469,6 +4432,15 @@ impl MemoroseEngine {
         }
 
         Ok(affected_ids)
+    }
+
+    async fn apply_memory_correction_actions(
+        &self,
+        unit: &MemoryUnit,
+        actions: Vec<MemoryCorrectionAction>,
+    ) -> Result<Vec<Uuid>> {
+        self.apply_memory_correction_actions_with_stage(unit, actions, "post_store")
+            .await
     }
 
     // ── Search ──────────────────────────────────────────────────────
@@ -5070,6 +6042,229 @@ impl MemoroseEngine {
         })
     }
 
+    pub fn get_rac_metric_snapshot(&self) -> Result<RacMetricSnapshot> {
+        Ok(RacMetricSnapshot {
+            fact_extraction_attempt_total: self
+                .get_rac_metric_counter("fact_extraction_attempt_total")?,
+            fact_extraction_success_total: self
+                .get_rac_metric_counter("fact_extraction_success_total")?,
+            correction_action_obsolete_total: self
+                .get_rac_metric_counter("correction_action_obsolete_total")?,
+            correction_action_contradicts_total: self
+                .get_rac_metric_counter("correction_action_contradicts_total")?,
+            correction_action_reaffirm_total: self
+                .get_rac_metric_counter("correction_action_reaffirm_total")?,
+            correction_action_ignore_total: self
+                .get_rac_metric_counter("correction_action_ignore_total")?,
+            tombstone_total: self.get_rac_metric_counter("tombstone_total")?,
+        })
+    }
+
+    pub fn get_rac_metric_history(&self, hours: usize) -> Result<Vec<RacMetricHistoryPoint>> {
+        if hours == 0 {
+            return Ok(Vec::new());
+        }
+
+        let aligned_now = Self::rac_metric_bucket_start(Utc::now());
+        let mut points = std::collections::BTreeMap::new();
+        for offset in (0..hours).rev() {
+            let bucket_start = aligned_now - chrono::Duration::hours(offset as i64);
+            let bucket_key = bucket_start.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+            points.insert(
+                bucket_key.clone(),
+                RacMetricHistoryPoint {
+                    bucket_start: bucket_key,
+                    ..Default::default()
+                },
+            );
+        }
+
+        for (key, value) in self.system_kv().scan(b"rac_metric_bucket:")? {
+            let Ok(key_str) = String::from_utf8(key) else {
+                continue;
+            };
+            let Some(rest) = key_str.strip_prefix("rac_metric_bucket:") else {
+                continue;
+            };
+            let Some((bucket_start, metric)) = rest.rsplit_once(':') else {
+                continue;
+            };
+            let Some(point) = points.get_mut(bucket_start) else {
+                continue;
+            };
+            let count = u64::from_le_bytes(value.try_into().unwrap_or([0; 8])) as usize;
+            match metric {
+                "fact_extraction_attempt_total" => point.fact_extraction_attempt_total += count,
+                "fact_extraction_success_total" => point.fact_extraction_success_total += count,
+                "correction_action_obsolete_total" => {
+                    point.correction_action_obsolete_total += count
+                }
+                "correction_action_contradicts_total" => {
+                    point.correction_action_contradicts_total += count
+                }
+                "correction_action_reaffirm_total" => {
+                    point.correction_action_reaffirm_total += count
+                }
+                "correction_action_ignore_total" => point.correction_action_ignore_total += count,
+                "tombstone_total" => point.tombstone_total += count,
+                _ => {}
+            }
+        }
+
+        Ok(points.into_values().collect())
+    }
+
+    pub fn list_recent_rac_decisions(&self, limit: usize) -> Result<Vec<RacDecisionRecord>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut records = self
+            .system_kv()
+            .scan(b"rac_decision:")?
+            .into_iter()
+            .filter_map(|(_, value)| serde_json::from_slice::<RacDecisionRecord>(&value).ok())
+            .collect::<Vec<_>>();
+
+        records.sort_by(|left, right| {
+            right
+                .created_at
+                .cmp(&left.created_at)
+                .then_with(|| right.source_unit_id.cmp(&left.source_unit_id))
+                .then_with(|| right.target_unit_id.cmp(&left.target_unit_id))
+        });
+        records.truncate(limit);
+        Ok(records)
+    }
+
+    pub fn get_rac_review(&self, review_id: &str) -> Result<Option<RacReviewRecord>> {
+        let key = Self::rac_review_key(review_id);
+        Ok(self
+            .system_kv()
+            .get(key.as_bytes())?
+            .and_then(|bytes| serde_json::from_slice::<RacReviewRecord>(&bytes).ok()))
+    }
+
+    pub fn list_rac_reviews(
+        &self,
+        status_filter: Option<RacReviewStatus>,
+        user_id_filter: Option<&str>,
+        org_id_filter: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<RacReviewRecord>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut records = self
+            .system_kv()
+            .scan(b"rac_review:")?
+            .into_iter()
+            .filter_map(|(_, value)| serde_json::from_slice::<RacReviewRecord>(&value).ok())
+            .filter(|record| status_filter.as_ref().map_or(true, |status| &record.status == status))
+            .filter(|record| user_id_filter.map_or(true, |user_id| record.user_id == user_id))
+            .filter(|record| {
+                org_id_filter.map_or(true, |org_id| record.org_id.as_deref() == Some(org_id))
+            })
+            .collect::<Vec<_>>();
+
+        records.sort_by(|left, right| {
+            right
+                .created_at
+                .cmp(&left.created_at)
+                .then_with(|| right.source_unit_id.cmp(&left.source_unit_id))
+                .then_with(|| right.target_unit_id.cmp(&left.target_unit_id))
+        });
+        records.truncate(limit);
+        Ok(records)
+    }
+
+    fn store_rac_review(&self, review: &RacReviewRecord) -> Result<()> {
+        self.system_kv().put(
+            Self::rac_review_key(&review.review_id).as_bytes(),
+            &serde_json::to_vec(review)?,
+        )
+    }
+
+    pub async fn apply_manual_memory_correction(
+        &self,
+        user_id: &str,
+        source_unit_id: Uuid,
+        target_unit_id: Uuid,
+        kind: MemoryCorrectionKind,
+        reason: String,
+        confidence: f32,
+        stage: &str,
+    ) -> Result<Vec<Uuid>> {
+        let source_unit = self
+            .get_memory_unit_including_forgotten(user_id, source_unit_id)?
+            .ok_or_else(|| anyhow!("source memory unit {} not found", source_unit_id))?;
+        if source_unit.user_id != user_id {
+            return Err(anyhow!("source memory unit scope mismatch"));
+        }
+
+        self.apply_memory_correction_actions_with_stage(
+            &source_unit,
+            vec![MemoryCorrectionAction {
+                target_id: target_unit_id,
+                kind,
+                reason,
+                confidence,
+            }],
+            stage,
+        )
+        .await
+    }
+
+    pub async fn resolve_rac_review(
+        &self,
+        review_id: &str,
+        approve: bool,
+        reviewer: Option<String>,
+        reviewer_note: Option<String>,
+    ) -> Result<Option<RacReviewRecord>> {
+        let Some(mut review) = self.get_rac_review(review_id)? else {
+            return Ok(None);
+        };
+        if review.status != RacReviewStatus::Pending {
+            return Ok(Some(review));
+        }
+
+        if approve {
+            let kind = match review.action.as_str() {
+                "obsolete" => MemoryCorrectionKind::Obsolete,
+                "contradicts" => MemoryCorrectionKind::Contradicts,
+                "reaffirm" => MemoryCorrectionKind::Reaffirm,
+                "ignore" => MemoryCorrectionKind::Ignore,
+                _ => return Err(anyhow!("unsupported review action {}", review.action)),
+            };
+            let confidence = if kind == MemoryCorrectionKind::Obsolete {
+                review.confidence.max(OBSOLETE_ACTION_MIN_CONFIDENCE)
+            } else {
+                review.confidence
+            };
+            self.apply_manual_memory_correction(
+                &review.user_id,
+                review.source_unit_id,
+                review.target_unit_id,
+                kind,
+                reviewer_note.clone().unwrap_or_else(|| review.reason.clone()),
+                confidence,
+                "review_approve",
+            )
+            .await?;
+            review.status = RacReviewStatus::Approved;
+        } else {
+            review.status = RacReviewStatus::Rejected;
+        }
+
+        review.updated_at = Utc::now();
+        review.reviewer = reviewer;
+        review.reviewer_note = reviewer_note;
+        self.store_rac_review(&review)?;
+        Ok(Some(review))
+    }
+
     async fn list_organization_knowledge_records(
         &self,
         org_id_filter: Option<&str>,
@@ -5254,8 +6449,14 @@ impl MemoroseEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
-    use memorose_common::EventContent;
+    use crate::fact_extraction::{
+        MemoryFactAttribute, MemoryFactSubject, MemoryFactValueKind, MemoryFactValuePayload,
+    };
+    use chrono::{TimeZone, Utc};
+    use memorose_common::{
+        EventContent, ForgetMode, ForgetTargetKind, ForgettingTombstone, StoredMemoryFact,
+    };
+    use std::sync::Arc;
     use tempfile::tempdir;
     use uuid::Uuid;
 
@@ -5786,6 +6987,223 @@ mod tests {
         }
     }
 
+    struct MockCorrectionLLM {
+        response: String,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::llm::LLMClient for MockCorrectionLLM {
+        async fn embed(&self, _text: &str) -> Result<crate::llm::LLMResponse<Vec<f32>>> {
+            Ok(crate::llm::LLMResponse {
+                data: vec![0.0; 3],
+                usage: memorose_common::TokenUsage::default(),
+            })
+        }
+
+        async fn generate(&self, _prompt: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: self.response.clone(),
+                usage: memorose_common::TokenUsage::default(),
+            })
+        }
+
+        async fn compress(
+            &self,
+            text: &str,
+            _is_agent: bool,
+        ) -> Result<crate::llm::LLMResponse<crate::llm::CompressionOutput>> {
+            Ok(crate::llm::LLMResponse {
+                data: crate::llm::CompressionOutput {
+                    content: text.to_string(),
+                    valid_at: None,
+                },
+                usage: memorose_common::TokenUsage::default(),
+            })
+        }
+
+        async fn summarize_group(
+            &self,
+            texts: Vec<String>,
+        ) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: texts.join("\n"),
+                usage: memorose_common::TokenUsage::default(),
+            })
+        }
+
+        async fn describe_image(
+            &self,
+            image_url_or_base64: &str,
+        ) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: image_url_or_base64.to_string(),
+                usage: memorose_common::TokenUsage::default(),
+            })
+        }
+
+        async fn transcribe(
+            &self,
+            audio_url_or_base64: &str,
+        ) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: audio_url_or_base64.to_string(),
+                usage: memorose_common::TokenUsage::default(),
+            })
+        }
+
+        async fn describe_video(&self, video_url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: video_url.to_string(),
+                usage: memorose_common::TokenUsage::default(),
+            })
+        }
+    }
+
+    struct PromptMatchingCorrectionLLM {
+        responses: Vec<(String, String)>,
+    }
+
+    struct PanicOnGenerateLLM;
+
+    #[async_trait::async_trait]
+    impl crate::llm::LLMClient for PromptMatchingCorrectionLLM {
+        async fn embed(&self, _text: &str) -> Result<crate::llm::LLMResponse<Vec<f32>>> {
+            Ok(crate::llm::LLMResponse {
+                data: vec![0.0; 3],
+                usage: memorose_common::TokenUsage::default(),
+            })
+        }
+
+        async fn generate(&self, prompt: &str) -> Result<crate::llm::LLMResponse<String>> {
+            let data = self
+                .responses
+                .iter()
+                .find_map(|(needle, response)| prompt.contains(needle).then(|| response.clone()))
+                .unwrap_or_else(|| "null".to_string());
+
+            Ok(crate::llm::LLMResponse {
+                data,
+                usage: memorose_common::TokenUsage::default(),
+            })
+        }
+
+        async fn compress(
+            &self,
+            text: &str,
+            _is_agent: bool,
+        ) -> Result<crate::llm::LLMResponse<crate::llm::CompressionOutput>> {
+            Ok(crate::llm::LLMResponse {
+                data: crate::llm::CompressionOutput {
+                    content: text.to_string(),
+                    valid_at: None,
+                },
+                usage: memorose_common::TokenUsage::default(),
+            })
+        }
+
+        async fn summarize_group(
+            &self,
+            texts: Vec<String>,
+        ) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: texts.join("\n"),
+                usage: memorose_common::TokenUsage::default(),
+            })
+        }
+
+        async fn describe_image(
+            &self,
+            image_url_or_base64: &str,
+        ) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: image_url_or_base64.to_string(),
+                usage: memorose_common::TokenUsage::default(),
+            })
+        }
+
+        async fn transcribe(
+            &self,
+            audio_url_or_base64: &str,
+        ) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: audio_url_or_base64.to_string(),
+                usage: memorose_common::TokenUsage::default(),
+            })
+        }
+
+        async fn describe_video(&self, video_url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: video_url.to_string(),
+                usage: memorose_common::TokenUsage::default(),
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::llm::LLMClient for PanicOnGenerateLLM {
+        async fn embed(&self, _text: &str) -> Result<crate::llm::LLMResponse<Vec<f32>>> {
+            Ok(crate::llm::LLMResponse {
+                data: vec![0.0; 3],
+                usage: memorose_common::TokenUsage::default(),
+            })
+        }
+
+        async fn generate(&self, _prompt: &str) -> Result<crate::llm::LLMResponse<String>> {
+            panic!("generate should not be called when persisted extracted facts exist")
+        }
+
+        async fn compress(
+            &self,
+            text: &str,
+            _is_agent: bool,
+        ) -> Result<crate::llm::LLMResponse<crate::llm::CompressionOutput>> {
+            Ok(crate::llm::LLMResponse {
+                data: crate::llm::CompressionOutput {
+                    content: text.to_string(),
+                    valid_at: None,
+                },
+                usage: memorose_common::TokenUsage::default(),
+            })
+        }
+
+        async fn summarize_group(
+            &self,
+            texts: Vec<String>,
+        ) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: texts.join("\n"),
+                usage: memorose_common::TokenUsage::default(),
+            })
+        }
+
+        async fn describe_image(
+            &self,
+            image_url_or_base64: &str,
+        ) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: image_url_or_base64.to_string(),
+                usage: memorose_common::TokenUsage::default(),
+            })
+        }
+
+        async fn transcribe(
+            &self,
+            audio_url_or_base64: &str,
+        ) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: audio_url_or_base64.to_string(),
+                usage: memorose_common::TokenUsage::default(),
+            })
+        }
+
+        async fn describe_video(&self, video_url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: video_url.to_string(),
+                usage: memorose_common::TokenUsage::default(),
+            })
+        }
+    }
+
     #[tokio::test]
     async fn test_custom_reranker() -> Result<()> {
         let temp_dir = tempdir()?;
@@ -5866,6 +7284,1074 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_detect_memory_fact_descriptor_extracts_residence_update() -> Result<()> {
+        let mut unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I now live in Beijing.".into(),
+            None,
+        );
+        unit.keywords = vec!["Profile".into()];
+
+        let fact = MemoroseEngine::detect_memory_fact(&unit);
+
+        assert_eq!(
+            fact,
+            Some(MemoryFactDescriptor {
+                subject: MemoryFactSubject::User,
+                subject_key: "user:self".into(),
+                attribute: MemoryFactAttribute::Residence,
+                value: "Beijing".into(),
+                canonical_value: "beijing".into(),
+                value_kind: MemoryFactValueKind::City,
+                value_payload: MemoryFactValuePayload::City {
+                    name: "beijing".into(),
+                },
+                change_type: MemoryFactChangeType::Update,
+                confidence: 90,
+            })
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_detect_memory_fact_descriptor_defaults_local_fact_subject_to_user() -> Result<()>
+    {
+        let unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "Home base: Shanghai".into(),
+            None,
+        );
+
+        let fact = MemoroseEngine::detect_memory_fact(&unit);
+
+        assert_eq!(
+            fact,
+            Some(MemoryFactDescriptor {
+                subject: MemoryFactSubject::User,
+                subject_key: "user:self".into(),
+                attribute: MemoryFactAttribute::Residence,
+                value: "Shanghai".into(),
+                canonical_value: "shanghai".into(),
+                value_kind: MemoryFactValueKind::City,
+                value_payload: MemoryFactValuePayload::City {
+                    name: "shanghai".into(),
+                },
+                change_type: MemoryFactChangeType::Reaffirm,
+                confidence: 90,
+            })
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_detect_memory_fact_descriptor_extracts_preference_contradiction() -> Result<()> {
+        let unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I do not like sushi".into(),
+            None,
+        );
+
+        let fact = MemoroseEngine::detect_memory_fact(&unit);
+
+        assert_eq!(
+            fact,
+            Some(MemoryFactDescriptor {
+                subject: MemoryFactSubject::User,
+                subject_key: "user:self".into(),
+                attribute: MemoryFactAttribute::Preference,
+                value: "sushi".into(),
+                canonical_value: "sushi".into(),
+                value_kind: MemoryFactValueKind::Freeform,
+                value_payload: MemoryFactValuePayload::Freeform {
+                    text: "sushi".into(),
+                },
+                change_type: MemoryFactChangeType::Contradiction,
+                confidence: 85,
+            })
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_detect_memory_fact_descriptor_extracts_contact_with_canonical_value() -> Result<()>
+    {
+        let unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "My email is Dylan@Example.COM.".into(),
+            None,
+        );
+
+        let fact = MemoroseEngine::detect_memory_fact(&unit);
+
+        assert_eq!(
+            fact,
+            Some(MemoryFactDescriptor {
+                subject: MemoryFactSubject::User,
+                subject_key: "user:self".into(),
+                attribute: MemoryFactAttribute::Contact,
+                value: "Dylan@Example.COM".into(),
+                canonical_value: "dylan@example.com".into(),
+                value_kind: MemoryFactValueKind::Email,
+                value_payload: MemoryFactValuePayload::Email {
+                    address: "dylan@example.com".into(),
+                },
+                change_type: MemoryFactChangeType::Reaffirm,
+                confidence: 80,
+            })
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_detect_memory_fact_descriptor_extracts_skill_addition() -> Result<()> {
+        let unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I also speak Japanese.".into(),
+            None,
+        );
+
+        let fact = MemoroseEngine::detect_memory_fact(&unit);
+
+        assert_eq!(
+            fact,
+            Some(MemoryFactDescriptor {
+                subject: MemoryFactSubject::User,
+                subject_key: "user:self".into(),
+                attribute: MemoryFactAttribute::Skill,
+                value: "Japanese".into(),
+                canonical_value: "japanese".into(),
+                value_kind: MemoryFactValueKind::SkillName,
+                value_payload: MemoryFactValuePayload::SkillName {
+                    name: "japanese".into(),
+                },
+                change_type: MemoryFactChangeType::Addition,
+                confidence: 75,
+            })
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_detect_memory_fact_descriptor_extracts_external_named_subject() -> Result<()> {
+        let unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "Alice lives in Beijing".into(),
+            None,
+        );
+
+        let fact = MemoroseEngine::detect_memory_fact(&unit);
+
+        assert_eq!(
+            fact,
+            Some(MemoryFactDescriptor {
+                subject: MemoryFactSubject::External,
+                subject_key: "external:alice".into(),
+                attribute: MemoryFactAttribute::Residence,
+                value: "Beijing".into(),
+                canonical_value: "beijing".into(),
+                value_kind: MemoryFactValueKind::City,
+                value_payload: MemoryFactValuePayload::City {
+                    name: "beijing".into(),
+                },
+                change_type: MemoryFactChangeType::Reaffirm,
+                confidence: 90,
+            })
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_detect_memory_fact_descriptor_extracts_named_organization_subject() -> Result<()>
+    {
+        let unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "Acme Corp is based in Shanghai".into(),
+            None,
+        );
+
+        let fact = MemoroseEngine::detect_memory_fact(&unit);
+
+        assert_eq!(
+            fact,
+            Some(MemoryFactDescriptor {
+                subject: MemoryFactSubject::Organization,
+                subject_key: "organization:acme_corp".into(),
+                attribute: MemoryFactAttribute::Residence,
+                value: "Shanghai".into(),
+                canonical_value: "shanghai".into(),
+                value_kind: MemoryFactValueKind::City,
+                value_payload: MemoryFactValuePayload::City {
+                    name: "shanghai".into(),
+                },
+                change_type: MemoryFactChangeType::Reaffirm,
+                confidence: 90,
+            })
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_detect_memory_fact_descriptor_extracts_phone_payload() -> Result<()> {
+        let unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "My phone is +1 (415) 555-2671.".into(),
+            None,
+        );
+
+        let fact = MemoroseEngine::detect_memory_fact(&unit);
+
+        assert_eq!(
+            fact,
+            Some(MemoryFactDescriptor {
+                subject: MemoryFactSubject::User,
+                subject_key: "user:self".into(),
+                attribute: MemoryFactAttribute::Contact,
+                value: "+1 (415) 555-2671".into(),
+                canonical_value: "14155552671".into(),
+                value_kind: MemoryFactValueKind::Phone,
+                value_payload: MemoryFactValuePayload::Phone {
+                    digits: "14155552671".into(),
+                },
+                change_type: MemoryFactChangeType::Reaffirm,
+                confidence: 80,
+            })
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_detect_memory_fact_descriptor_extracts_schedule_payload() -> Result<()> {
+        let unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "The meeting moved to 2026-05-01 15:00".into(),
+            None,
+        );
+
+        let fact = MemoroseEngine::detect_memory_fact(&unit);
+
+        assert_eq!(
+            fact,
+            Some(MemoryFactDescriptor {
+                subject: MemoryFactSubject::External,
+                subject_key: "external:unknown".into(),
+                attribute: MemoryFactAttribute::Schedule,
+                value: "2026-05-01 15:00".into(),
+                canonical_value: "2026-05-01 15:00".into(),
+                value_kind: MemoryFactValueKind::DateTimeLike,
+                value_payload: MemoryFactValuePayload::DateTimeLike {
+                    text: "2026-05-01 15:00".into(),
+                },
+                change_type: MemoryFactChangeType::Update,
+                confidence: 70,
+            })
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_fetch_memory_correction_candidates_prefers_slot_keyword_matches() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut old_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Home base: Shanghai".into(),
+            None,
+        );
+        old_unit.transaction_time = Utc::now() - chrono::Duration::days(2);
+        let old_id = old_unit.id;
+
+        let mut unrelated_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Favorite food is Beijing duck".into(),
+            None,
+        );
+        unrelated_unit.transaction_time = Utc::now() - chrono::Duration::days(1);
+
+        engine
+            .store_memory_units(vec![old_unit, unrelated_unit])
+            .await?;
+        engine.index.commit()?;
+        engine.index.reload()?;
+
+        let mut new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "I now live in Beijing".into(),
+            None,
+        );
+        new_unit.transaction_time = Utc::now();
+
+        let candidates = engine
+            .fetch_memory_correction_candidates(&new_unit, 4)
+            .await?;
+
+        assert_eq!(candidates.first().map(|unit| unit.id), Some(old_id));
+        assert!(candidates.iter().any(|unit| unit.id == old_id));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_fetch_memory_correction_candidates_uses_llm_fact_fallback() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let mut engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut old_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Home base: Shanghai".into(),
+            None,
+        );
+        old_unit.transaction_time = Utc::now() - chrono::Duration::days(2);
+        let old_id = old_unit.id;
+
+        let mut unrelated_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Favorite food is Beijing duck".into(),
+            None,
+        );
+        unrelated_unit.transaction_time = Utc::now() - chrono::Duration::days(1);
+
+        engine
+            .store_memory_units(vec![old_unit, unrelated_unit])
+            .await?;
+        engine.index.commit()?;
+        engine.index.reload()?;
+
+        engine.arbitrator = crate::arbitrator::Arbitrator::with_client(std::sync::Arc::new(
+            MockCorrectionLLM {
+                response: r#"{"subject":"user","attribute":"residence","value":"Beijing","change_type":"update","confidence":0.92}"#
+                    .into(),
+            },
+        ));
+
+        let mut new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Current city: Beijing".into(),
+            None,
+        );
+        new_unit.transaction_time = Utc::now();
+
+        let candidates = engine
+            .fetch_memory_correction_candidates(&new_unit, 4)
+            .await?;
+
+        assert_eq!(candidates.first().map(|unit| unit.id), Some(old_id));
+        assert!(candidates.iter().any(|unit| unit.id == old_id));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_fetch_memory_correction_candidates_supports_multiple_llm_facts() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let mut engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut old_residence = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Home base: Shanghai".into(),
+            None,
+        );
+        old_residence.transaction_time = Utc::now() - chrono::Duration::days(3);
+        let old_residence_id = old_residence.id;
+
+        let mut old_contact = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "My email is old@example.com".into(),
+            None,
+        );
+        old_contact.transaction_time = Utc::now() - chrono::Duration::days(2);
+        let old_contact_id = old_contact.id;
+
+        let mut unrelated_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Favorite food is Beijing duck".into(),
+            None,
+        );
+        unrelated_unit.transaction_time = Utc::now() - chrono::Duration::days(1);
+
+        engine
+            .store_memory_units(vec![old_residence, old_contact, unrelated_unit])
+            .await?;
+        engine.index.commit()?;
+        engine.index.reload()?;
+
+        engine.arbitrator = crate::arbitrator::Arbitrator::with_client(std::sync::Arc::new(
+            MockCorrectionLLM {
+                response: r#"{"facts":[{"subject":"user","attribute":"residence","value":"Beijing","change_type":"update","confidence":0.93},{"subject":"user","attribute":"contact","value":"dylan@example.com","change_type":"update","confidence":0.91}]}"#
+                    .into(),
+            },
+        ));
+
+        let mut new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "I now live in Beijing and my email is dylan@example.com".into(),
+            None,
+        );
+        new_unit.transaction_time = Utc::now();
+
+        let candidates = engine
+            .fetch_memory_correction_candidates(&new_unit, 4)
+            .await?;
+
+        assert!(candidates.iter().any(|unit| unit.id == old_residence_id));
+        assert!(candidates.iter().any(|unit| unit.id == old_contact_id));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_fetch_memory_correction_candidates_supports_multiple_rule_facts_bilingual(
+    ) -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut old_residence = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "我住在上海".into(),
+            None,
+        );
+        old_residence.transaction_time = Utc::now() - chrono::Duration::days(3);
+        let old_residence_id = old_residence.id;
+
+        let mut old_contact = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "我的邮箱是 old@example.com".into(),
+            None,
+        );
+        old_contact.transaction_time = Utc::now() - chrono::Duration::days(2);
+        let old_contact_id = old_contact.id;
+
+        let mut unrelated_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "我喜欢北京烤鸭".into(),
+            None,
+        );
+        unrelated_unit.transaction_time = Utc::now() - chrono::Duration::days(1);
+
+        engine
+            .store_memory_units(vec![old_residence, old_contact, unrelated_unit])
+            .await?;
+        engine.index.commit()?;
+        engine.index.reload()?;
+
+        let mut new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "我现在住在北京，我的邮箱是 new@example.com".into(),
+            None,
+        );
+        new_unit.transaction_time = Utc::now();
+
+        let candidates = engine
+            .fetch_memory_correction_candidates(&new_unit, 4)
+            .await?;
+
+        assert!(candidates.iter().any(|unit| unit.id == old_residence_id));
+        assert!(candidates.iter().any(|unit| unit.id == old_contact_id));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_fetch_memory_correction_candidates_supports_multi_clause_history_update(
+    ) -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut old_employment = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "I work at OpenAI".into(),
+            None,
+        );
+        old_employment.transaction_time = Utc::now() - chrono::Duration::days(3);
+        let old_employment_id = old_employment.id;
+
+        let mut unrelated_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Favorite food is ramen".into(),
+            None,
+        );
+        unrelated_unit.transaction_time = Utc::now() - chrono::Duration::days(1);
+
+        engine
+            .store_memory_units(vec![old_employment, unrelated_unit])
+            .await?;
+        engine.index.commit()?;
+        engine.index.reload()?;
+
+        let mut new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "I used to work at OpenAI, now work at Anthropic".into(),
+            None,
+        );
+        new_unit.transaction_time = Utc::now();
+
+        let candidates = engine
+            .fetch_memory_correction_candidates(&new_unit, 4)
+            .await?;
+
+        assert_eq!(
+            candidates.first().map(|unit| unit.id),
+            Some(old_employment_id)
+        );
+        assert!(candidates.iter().any(|unit| unit.id == old_employment_id));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_fetch_memory_correction_candidates_supports_explicit_contact_transition(
+    ) -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut old_contact = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "My email is old@example.com".into(),
+            None,
+        );
+        old_contact.transaction_time = Utc::now() - chrono::Duration::days(3);
+        let old_contact_id = old_contact.id;
+
+        let mut unrelated_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "I live in Beijing".into(),
+            None,
+        );
+        unrelated_unit.transaction_time = Utc::now() - chrono::Duration::days(1);
+
+        engine
+            .store_memory_units(vec![old_contact, unrelated_unit])
+            .await?;
+        engine.index.commit()?;
+        engine.index.reload()?;
+
+        let mut new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "My email changed from old@example.com to new@example.com".into(),
+            None,
+        );
+        new_unit.transaction_time = Utc::now();
+
+        let candidates = engine
+            .fetch_memory_correction_candidates(&new_unit, 4)
+            .await?;
+
+        assert_eq!(candidates.first().map(|unit| unit.id), Some(old_contact_id));
+        assert!(candidates.iter().any(|unit| unit.id == old_contact_id));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_fetch_memory_correction_candidates_supports_same_sentence_mixed_slot_transitions(
+    ) -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut old_residence = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "I live in Shanghai".into(),
+            None,
+        );
+        old_residence.transaction_time = Utc::now() - chrono::Duration::days(4);
+        let old_residence_id = old_residence.id;
+
+        let mut old_contact = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "My email is old@example.com".into(),
+            None,
+        );
+        old_contact.transaction_time = Utc::now() - chrono::Duration::days(3);
+        let old_contact_id = old_contact.id;
+
+        let mut unrelated_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Favorite food is sushi".into(),
+            None,
+        );
+        unrelated_unit.transaction_time = Utc::now() - chrono::Duration::days(1);
+
+        engine
+            .store_memory_units(vec![old_residence, old_contact, unrelated_unit])
+            .await?;
+        engine.index.commit()?;
+        engine.index.reload()?;
+
+        let mut new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "I moved from Shanghai to Beijing and changed my email from old@example.com to new@example.com".into(),
+            None,
+        );
+        new_unit.transaction_time = Utc::now();
+
+        let candidates = engine
+            .fetch_memory_correction_candidates(&new_unit, 4)
+            .await?;
+
+        assert!(candidates.iter().any(|unit| unit.id == old_residence_id));
+        assert!(candidates.iter().any(|unit| unit.id == old_contact_id));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_rac_metric_snapshot_tracks_extraction_actions_and_tombstones() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let mut engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut old_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Home base: Shanghai".into(),
+            None,
+        );
+        old_unit.transaction_time = Utc::now() - chrono::Duration::days(2);
+        let old_id = old_unit.id;
+        engine.store_memory_unit(old_unit).await?;
+
+        engine.arbitrator = crate::arbitrator::Arbitrator::with_client(std::sync::Arc::new(
+            PromptMatchingCorrectionLLM {
+                responses: vec![
+                    (
+                        "memory fact extraction engine".into(),
+                        r#"{"subject":"user","attribute":"residence","value":"Beijing","change_type":"update","confidence":0.92}"#
+                            .into(),
+                    ),
+                    (
+                        "memory correction engine".into(),
+                        format!(
+                            r#"[{{"target_id":"{}","action":"OBSOLETE","reason":"Residence updated","confidence":0.96}}]"#,
+                            old_id
+                        ),
+                    ),
+                ],
+            },
+        ));
+
+        let before = engine.get_rac_metric_snapshot()?;
+
+        let mut new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Current city: Beijing".into(),
+            None,
+        );
+        new_unit.transaction_time = Utc::now();
+
+        let affected = engine.reconcile_conflicting_memory_unit(&new_unit).await?;
+        let after = engine.get_rac_metric_snapshot()?;
+        let history = engine.get_rac_metric_history(4)?;
+
+        assert_eq!(affected, vec![old_id]);
+        assert!(
+            after.fact_extraction_attempt_total > before.fact_extraction_attempt_total,
+            "expected extraction attempts to increase"
+        );
+        assert!(
+            after.fact_extraction_success_total > before.fact_extraction_success_total,
+            "expected extraction successes to increase"
+        );
+        assert_eq!(
+            after.correction_action_obsolete_total,
+            before.correction_action_obsolete_total + 1
+        );
+        assert_eq!(after.tombstone_total, before.tombstone_total + 1);
+        assert!(history.iter().any(|point| {
+            point.fact_extraction_attempt_total > 0
+                && point.correction_action_obsolete_total > 0
+                && point.tombstone_total > 0
+        }));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_resolve_fact_descriptors_compatible_matches_best_multi_fact_pair() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let mut engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        engine.arbitrator = crate::arbitrator::Arbitrator::with_client(std::sync::Arc::new(
+            PromptMatchingCorrectionLLM {
+                responses: vec![
+                    (
+                        "I now live in Beijing and my email is dylan@example.com".into(),
+                        r#"{"facts":[{"subject":"user","attribute":"residence","value":"Beijing","change_type":"update","confidence":0.93},{"subject":"user","attribute":"contact","value":"dylan@example.com","change_type":"update","confidence":0.96}]}"#
+                            .into(),
+                    ),
+                    (
+                        "Favorite food is sushi and my email is old@example.com".into(),
+                        r#"{"facts":[{"subject":"user","attribute":"preference","value":"sushi","change_type":"reaffirm","confidence":0.87},{"subject":"user","attribute":"contact","value":"old@example.com","change_type":"historical","confidence":0.92}]}"#
+                            .into(),
+                    ),
+                ],
+            },
+        ));
+
+        let new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I now live in Beijing and my email is dylan@example.com".into(),
+            None,
+        );
+        let target_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "Favorite food is sushi and my email is old@example.com".into(),
+            None,
+        );
+
+        let (source_fact, target_fact) = engine
+            .resolve_fact_descriptors_compatible(&new_unit, &target_unit)
+            .await
+            .expect("expected a compatible fact pair");
+
+        assert_eq!(source_fact.attribute, MemoryFactAttribute::Contact);
+        assert_eq!(target_fact.attribute, MemoryFactAttribute::Contact);
+        assert_eq!(source_fact.subject, MemoryFactSubject::User);
+        assert_eq!(target_fact.subject, MemoryFactSubject::User);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_resolve_memory_fact_descriptors_prefers_persisted_extracted_facts() -> Result<()>
+    {
+        let temp_dir = tempdir()?;
+        let mut engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        engine.arbitrator =
+            crate::arbitrator::Arbitrator::with_client(std::sync::Arc::new(PanicOnGenerateLLM));
+
+        let mut unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "Acme Corp previously worked with John Doe".into(),
+            None,
+        );
+        unit.extracted_facts = vec![StoredMemoryFact {
+            subject: "organization".into(),
+            subject_ref: Some("organization:acme_corp".into()),
+            subject_name: Some("Acme Corp".into()),
+            attribute: "relationship".into(),
+            value: "John Doe".into(),
+            canonical_value: Some("john doe".into()),
+            change_type: "reaffirm".into(),
+            temporal_status: Some("current".into()),
+            polarity: Some("positive".into()),
+            evidence_span: Some("Acme Corp worked with John Doe".into()),
+            confidence: 0.89,
+        }];
+
+        let descriptors = engine.resolve_memory_fact_descriptors(&unit).await;
+
+        assert_eq!(descriptors.len(), 1);
+        assert_eq!(descriptors[0].subject, MemoryFactSubject::Organization);
+        assert_eq!(descriptors[0].subject_key, "organization:acme_corp");
+        assert_eq!(descriptors[0].attribute, MemoryFactAttribute::Relationship);
+        assert_eq!(
+            descriptors[0].value_payload,
+            MemoryFactValuePayload::PersonName {
+                name: "john doe".into()
+            }
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_resolve_memory_fact_descriptors_extracts_multiple_rule_facts() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I now live in Beijing and my email is dylan@example.com".into(),
+            None,
+        );
+
+        let descriptors = engine.resolve_memory_fact_descriptors(&unit).await;
+
+        assert_eq!(descriptors.len(), 2);
+        assert!(descriptors
+            .iter()
+            .any(|fact| fact.attribute == MemoryFactAttribute::Residence));
+        assert!(descriptors
+            .iter()
+            .any(|fact| fact.attribute == MemoryFactAttribute::Contact));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_hydrate_memory_unit_extracted_facts_populates_rule_facts() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let mut unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I now live in Beijing and my email is dylan@example.com".into(),
+            None,
+        );
+
+        engine.hydrate_memory_unit_extracted_facts(&mut unit).await;
+
+        assert!(unit.extracted_facts.len() >= 2);
+        assert!(unit
+            .extracted_facts
+            .iter()
+            .any(|fact| fact.attribute == "residence"));
+        assert!(unit
+            .extracted_facts
+            .iter()
+            .any(|fact| fact.attribute == "contact"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_reconcile_conflicting_memory_unit_uses_slot_aware_candidates() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let mut engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut old_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Home base: Shanghai".into(),
+            None,
+        );
+        old_unit.transaction_time = Utc::now() - chrono::Duration::days(2);
+        let old_id = old_unit.id;
+        engine.store_memory_unit(old_unit).await?;
+
+        let mut unrelated_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Favorite food is Beijing duck".into(),
+            None,
+        );
+        unrelated_unit.transaction_time = Utc::now() - chrono::Duration::days(1);
+        engine.store_memory_unit(unrelated_unit).await?;
+
+        engine.arbitrator = crate::arbitrator::Arbitrator::with_client(std::sync::Arc::new(
+            MockCorrectionLLM {
+                response: format!(
+                    r#"[{{"target_id":"{}","action":"OBSOLETE","reason":"Residence updated","confidence":0.94}}]"#,
+                    old_id
+                ),
+            },
+        ));
+
+        let mut new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "I now live in Beijing".into(),
+            None,
+        );
+        new_unit.transaction_time = Utc::now();
+
+        let affected = engine.reconcile_conflicting_memory_unit(&new_unit).await?;
+
+        assert_eq!(affected, vec![old_id]);
+        assert!(engine.is_memory_unit_forgotten(TEST_USER, old_id)?);
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_apply_memory_correction_actions_tombstones_target_and_links_relation(
     ) -> Result<()> {
         let temp_dir = tempdir()?;
@@ -5901,7 +8387,7 @@ mod tests {
                 &new_unit,
                 vec![MemoryCorrectionAction {
                     target_id: old_id,
-                    relation: RelationType::EvolvedTo,
+                    kind: MemoryCorrectionKind::Obsolete,
                     reason: "Address updated".into(),
                     confidence: 0.95,
                 }],
@@ -5916,6 +8402,835 @@ mod tests {
         assert!(outgoing
             .iter()
             .any(|edge| edge.target_id == old_id && edge.relation == RelationType::EvolvedTo));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_plan_memory_correction_actions_returns_validated_preview() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let mut engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let mut old_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I live in Shanghai".into(),
+            Some(vec![1.0; 768]),
+        );
+        old_unit.transaction_time = Utc::now() - chrono::Duration::days(1);
+        let old_id = old_unit.id;
+
+        engine.store_memory_unit(old_unit).await?;
+        engine.arbitrator = crate::arbitrator::Arbitrator::with_client(std::sync::Arc::new(
+            PromptMatchingCorrectionLLM {
+                responses: vec![(
+                    "memory correction engine".into(),
+                    format!(
+                        r#"[{{"target_id":"{}","action":"OBSOLETE","reason":"Residence updated","confidence":0.96}}]"#,
+                        old_id
+                    ),
+                )],
+            },
+        ));
+
+        let mut preview_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I now live in Beijing".into(),
+            Some(vec![1.0; 768]),
+        );
+        preview_unit.transaction_time = Utc::now();
+
+        let actions = engine.plan_memory_correction_actions(&preview_unit, 8).await?;
+
+        let action = actions
+            .into_iter()
+            .find(|action| action.target_id == old_id)
+            .expect("expected planned correction action");
+        assert_eq!(action.kind, MemoryCorrectionKind::Obsolete);
+        assert_eq!(action.effect, RacDecisionEffect::Tombstone);
+        assert_eq!(action.relation, Some(RelationType::EvolvedTo));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_apply_memory_correction_actions_keeps_contradicting_target_visible() -> Result<()>
+    {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let old_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I live in Shanghai".into(),
+            Some(vec![1.0; 768]),
+        );
+        let old_id = old_unit.id;
+        let new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I have never lived in Shanghai".into(),
+            Some(vec![1.0; 768]),
+        );
+        let new_id = new_unit.id;
+        engine
+            .store_memory_units(vec![old_unit, new_unit.clone()])
+            .await?;
+
+        let affected = engine
+            .apply_memory_correction_actions(
+                &new_unit,
+                vec![MemoryCorrectionAction {
+                    target_id: old_id,
+                    kind: MemoryCorrectionKind::Contradicts,
+                    reason: "Conflicting claim".into(),
+                    confidence: 0.82,
+                }],
+            )
+            .await?;
+
+        assert_eq!(affected, vec![old_id]);
+        assert!(!engine.is_memory_unit_forgotten(TEST_USER, old_id)?);
+        assert!(engine.get_memory_unit(TEST_USER, old_id).await?.is_some());
+
+        let outgoing = engine.graph.get_outgoing_edges(TEST_USER, new_id).await?;
+        assert!(outgoing
+            .iter()
+            .any(|edge| edge.target_id == old_id && edge.relation == RelationType::Contradicts));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_apply_memory_correction_actions_skips_obsolete_for_mismatched_slots() -> Result<()>
+    {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let old_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "Favorite food is Beijing duck".into(),
+            Some(vec![1.0; 768]),
+        );
+        let old_id = old_unit.id;
+        let new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I now live in Beijing".into(),
+            Some(vec![1.0; 768]),
+        );
+        let new_id = new_unit.id;
+        engine
+            .store_memory_units(vec![old_unit, new_unit.clone()])
+            .await?;
+
+        let affected = engine
+            .apply_memory_correction_actions(
+                &new_unit,
+                vec![MemoryCorrectionAction {
+                    target_id: old_id,
+                    kind: MemoryCorrectionKind::Obsolete,
+                    reason: "Incorrect cross-slot overwrite".into(),
+                    confidence: 0.9,
+                }],
+            )
+            .await?;
+
+        assert!(affected.is_empty());
+        assert!(!engine.is_memory_unit_forgotten(TEST_USER, old_id)?);
+        assert!(engine.get_memory_unit(TEST_USER, old_id).await?.is_some());
+
+        let outgoing = engine.graph.get_outgoing_edges(TEST_USER, new_id).await?;
+        assert!(!outgoing
+            .iter()
+            .any(|edge| edge.target_id == old_id && edge.relation == RelationType::EvolvedTo));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_apply_memory_correction_actions_skips_obsolete_for_different_external_subjects(
+    ) -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let old_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "Alice lives in Shanghai".into(),
+            Some(vec![1.0; 768]),
+        );
+        let old_id = old_unit.id;
+        let new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "Bob now lives in Beijing".into(),
+            Some(vec![1.0; 768]),
+        );
+        let new_id = new_unit.id;
+        engine
+            .store_memory_units(vec![old_unit, new_unit.clone()])
+            .await?;
+
+        let affected = engine
+            .apply_memory_correction_actions(
+                &new_unit,
+                vec![MemoryCorrectionAction {
+                    target_id: old_id,
+                    kind: MemoryCorrectionKind::Obsolete,
+                    reason: "Different person should not overwrite".into(),
+                    confidence: 0.9,
+                }],
+            )
+            .await?;
+
+        assert!(affected.is_empty());
+        assert!(!engine.is_memory_unit_forgotten(TEST_USER, old_id)?);
+        assert!(engine.get_memory_unit(TEST_USER, old_id).await?.is_some());
+
+        let outgoing = engine.graph.get_outgoing_edges(TEST_USER, new_id).await?;
+        assert!(!outgoing
+            .iter()
+            .any(|edge| edge.target_id == old_id && edge.relation == RelationType::EvolvedTo));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_apply_memory_correction_actions_skips_low_confidence_obsolete() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let mut old_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I live in Shanghai".into(),
+            Some(vec![1.0; 768]),
+        );
+        old_unit.transaction_time = Utc::now() - chrono::Duration::days(1);
+        let old_id = old_unit.id;
+
+        let mut new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I now live in Beijing".into(),
+            Some(vec![1.0; 768]),
+        );
+        new_unit.transaction_time = Utc::now();
+        let new_id = new_unit.id;
+
+        engine
+            .store_memory_units(vec![old_unit, new_unit.clone()])
+            .await?;
+
+        let affected = engine
+            .apply_memory_correction_actions(
+                &new_unit,
+                vec![MemoryCorrectionAction {
+                    target_id: old_id,
+                    kind: MemoryCorrectionKind::Obsolete,
+                    reason: "Low confidence replacement".into(),
+                    confidence: 0.62,
+                }],
+            )
+            .await?;
+
+        assert!(affected.is_empty());
+        assert!(!engine.is_memory_unit_forgotten(TEST_USER, old_id)?);
+
+        let outgoing = engine.graph.get_outgoing_edges(TEST_USER, new_id).await?;
+        assert!(!outgoing
+            .iter()
+            .any(|edge| edge.target_id == old_id && edge.relation == RelationType::EvolvedTo));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_apply_memory_correction_actions_downgrades_medium_confidence_obsolete_to_relation_only(
+    ) -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let mut old_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I live in Shanghai".into(),
+            Some(vec![1.0; 768]),
+        );
+        old_unit.transaction_time = Utc::now() - chrono::Duration::days(1);
+        let old_id = old_unit.id;
+
+        let mut new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I now live in Beijing".into(),
+            Some(vec![1.0; 768]),
+        );
+        new_unit.transaction_time = Utc::now();
+        let new_id = new_unit.id;
+
+        engine
+            .store_memory_units(vec![old_unit, new_unit.clone()])
+            .await?;
+
+        let affected = engine
+            .apply_memory_correction_actions(
+                &new_unit,
+                vec![MemoryCorrectionAction {
+                    target_id: old_id,
+                    kind: MemoryCorrectionKind::Obsolete,
+                    reason: "Needs review before tombstone".into(),
+                    confidence: 0.78,
+                }],
+            )
+            .await?;
+
+        assert_eq!(affected, vec![old_id]);
+        assert!(!engine.is_memory_unit_forgotten(TEST_USER, old_id)?);
+
+        let outgoing = engine.graph.get_outgoing_edges(TEST_USER, new_id).await?;
+        assert!(outgoing
+            .iter()
+            .any(|edge| edge.target_id == old_id && edge.relation == RelationType::EvolvedTo));
+
+        let decisions = engine.list_recent_rac_decisions(8)?;
+        let recent = decisions
+            .into_iter()
+            .find(|decision| {
+                decision.source_unit_id == new_id
+                    && decision.target_unit_id == Some(old_id)
+                    && decision.action == "obsolete"
+            })
+            .expect("expected rac decision record");
+        assert_eq!(recent.effect, RacDecisionEffect::RelationOnly);
+        assert_eq!(
+            recent.guard_reason.as_deref(),
+            Some("obsolete_relation_only_due_to_confidence")
+        );
+
+        let reviews = engine.list_rac_reviews(Some(RacReviewStatus::Pending), Some(TEST_USER), None, 8)?;
+        let review = reviews
+            .into_iter()
+            .find(|review| {
+                review.source_unit_id == new_id
+                    && review.target_unit_id == old_id
+                    && review.action == "obsolete"
+            })
+            .expect("expected pending rac review record");
+        assert_eq!(review.stage, "post_store");
+        assert_eq!(review.status, RacReviewStatus::Pending);
+        assert_eq!(
+            review.guard_reason.as_deref(),
+            Some("obsolete_relation_only_due_to_confidence")
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_resolve_rac_review_approval_tombstones_target() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let mut old_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I live in Shanghai".into(),
+            Some(vec![1.0; 768]),
+        );
+        old_unit.transaction_time = Utc::now() - chrono::Duration::days(1);
+        let old_id = old_unit.id;
+
+        let mut new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I now live in Beijing".into(),
+            Some(vec![1.0; 768]),
+        );
+        new_unit.transaction_time = Utc::now();
+        let new_id = new_unit.id;
+
+        engine
+            .store_memory_units(vec![old_unit, new_unit.clone()])
+            .await?;
+
+        engine
+            .apply_memory_correction_actions(
+                &new_unit,
+                vec![MemoryCorrectionAction {
+                    target_id: old_id,
+                    kind: MemoryCorrectionKind::Obsolete,
+                    reason: "Needs review before tombstone".into(),
+                    confidence: 0.78,
+                }],
+            )
+            .await?;
+
+        let review = engine
+            .list_rac_reviews(Some(RacReviewStatus::Pending), Some(TEST_USER), None, 8)?
+            .into_iter()
+            .find(|review| review.source_unit_id == new_id && review.target_unit_id == old_id)
+            .expect("expected pending review");
+
+        let resolved = engine
+            .resolve_rac_review(
+                &review.review_id,
+                true,
+                Some("qa-reviewer".into()),
+                Some("approved after inspection".into()),
+            )
+            .await?
+            .expect("review should resolve");
+
+        assert_eq!(resolved.status, RacReviewStatus::Approved);
+        assert_eq!(resolved.reviewer.as_deref(), Some("qa-reviewer"));
+        assert_eq!(
+            resolved.reviewer_note.as_deref(),
+            Some("approved after inspection")
+        );
+        assert!(engine.is_memory_unit_forgotten(TEST_USER, old_id)?);
+        assert!(engine
+            .list_rac_reviews(Some(RacReviewStatus::Pending), Some(TEST_USER), None, 8)?
+            .is_empty());
+
+        let decisions = engine.list_recent_rac_decisions(16)?;
+        let approval_decision = decisions
+            .into_iter()
+            .find(|decision| {
+                decision.stage == "review_approve"
+                    && decision.source_unit_id == new_id
+                    && decision.target_unit_id == Some(old_id)
+                    && decision.action == "obsolete"
+            })
+            .expect("expected review approval decision");
+        assert_eq!(approval_decision.effect, RacDecisionEffect::Tombstone);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_resolve_rac_review_rejection_keeps_target_visible() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let mut old_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I live in Shanghai".into(),
+            Some(vec![1.0; 768]),
+        );
+        old_unit.transaction_time = Utc::now() - chrono::Duration::days(1);
+        let old_id = old_unit.id;
+
+        let mut new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I now live in Beijing".into(),
+            Some(vec![1.0; 768]),
+        );
+        new_unit.transaction_time = Utc::now();
+        let new_id = new_unit.id;
+
+        engine
+            .store_memory_units(vec![old_unit, new_unit.clone()])
+            .await?;
+
+        engine
+            .apply_memory_correction_actions(
+                &new_unit,
+                vec![MemoryCorrectionAction {
+                    target_id: old_id,
+                    kind: MemoryCorrectionKind::Obsolete,
+                    reason: "Needs review before tombstone".into(),
+                    confidence: 0.78,
+                }],
+            )
+            .await?;
+
+        let review = engine
+            .list_rac_reviews(Some(RacReviewStatus::Pending), Some(TEST_USER), None, 8)?
+            .into_iter()
+            .find(|review| review.source_unit_id == new_id && review.target_unit_id == old_id)
+            .expect("expected pending review");
+
+        let resolved = engine
+            .resolve_rac_review(
+                &review.review_id,
+                false,
+                Some("qa-reviewer".into()),
+                Some("rejected".into()),
+            )
+            .await?
+            .expect("review should resolve");
+
+        assert_eq!(resolved.status, RacReviewStatus::Rejected);
+        assert!(!engine.is_memory_unit_forgotten(TEST_USER, old_id)?);
+        assert!(engine
+            .list_rac_reviews(Some(RacReviewStatus::Pending), Some(TEST_USER), None, 8)?
+            .is_empty());
+        assert!(engine
+            .list_rac_reviews(Some(RacReviewStatus::Rejected), Some(TEST_USER), None, 8)?
+            .into_iter()
+            .any(|review| review.review_id == resolved.review_id));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_apply_manual_memory_correction_supports_manual_contradicts() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let old_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I live in Shanghai".into(),
+            Some(vec![1.0; 768]),
+        );
+        let old_id = old_unit.id;
+        let new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I have never lived in Shanghai".into(),
+            Some(vec![1.0; 768]),
+        );
+        let new_id = new_unit.id;
+
+        engine
+            .store_memory_units(vec![old_unit, new_unit.clone()])
+            .await?;
+
+        let affected = engine
+            .apply_manual_memory_correction(
+                TEST_USER,
+                new_id,
+                old_id,
+                MemoryCorrectionKind::Contradicts,
+                "manual contradiction".into(),
+                0.86,
+                "manual_api",
+            )
+            .await?;
+
+        assert_eq!(affected, vec![old_id]);
+        assert!(!engine.is_memory_unit_forgotten(TEST_USER, old_id)?);
+
+        let outgoing = engine.graph.get_outgoing_edges(TEST_USER, new_id).await?;
+        assert!(outgoing
+            .iter()
+            .any(|edge| edge.target_id == old_id && edge.relation == RelationType::Contradicts));
+
+        let decisions = engine.list_recent_rac_decisions(8)?;
+        let recent = decisions
+            .into_iter()
+            .find(|decision| {
+                decision.stage == "manual_api"
+                    && decision.source_unit_id == new_id
+                    && decision.target_unit_id == Some(old_id)
+                    && decision.action == "contradicts"
+            })
+            .expect("expected manual correction decision");
+        assert_eq!(recent.effect, RacDecisionEffect::RelationOnly);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_apply_memory_correction_actions_skips_obsolete_when_target_is_newer() -> Result<()>
+    {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let mut old_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I live in Shanghai".into(),
+            Some(vec![1.0; 768]),
+        );
+        old_unit.transaction_time = Utc::now() + chrono::Duration::minutes(5);
+        let old_id = old_unit.id;
+
+        let mut new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I now live in Beijing".into(),
+            Some(vec![1.0; 768]),
+        );
+        new_unit.transaction_time = Utc::now();
+        let new_id = new_unit.id;
+
+        engine
+            .store_memory_units(vec![old_unit, new_unit.clone()])
+            .await?;
+
+        let affected = engine
+            .apply_memory_correction_actions(
+                &new_unit,
+                vec![MemoryCorrectionAction {
+                    target_id: old_id,
+                    kind: MemoryCorrectionKind::Obsolete,
+                    reason: "Should not obsolete newer memory".into(),
+                    confidence: 0.97,
+                }],
+            )
+            .await?;
+
+        assert!(affected.is_empty());
+        assert!(!engine.is_memory_unit_forgotten(TEST_USER, old_id)?);
+
+        let outgoing = engine.graph.get_outgoing_edges(TEST_USER, new_id).await?;
+        assert!(!outgoing
+            .iter()
+            .any(|edge| edge.target_id == old_id && edge.relation == RelationType::EvolvedTo));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_apply_memory_correction_actions_uses_llm_fact_fallback_for_obsolete() -> Result<()>
+    {
+        let temp_dir = tempdir()?;
+        let mut engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let old_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I live in Shanghai".into(),
+            Some(vec![1.0; 768]),
+        );
+        let old_id = old_unit.id;
+        let new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "Current city: Beijing".into(),
+            Some(vec![1.0; 768]),
+        );
+        let new_id = new_unit.id;
+        engine
+            .store_memory_units(vec![old_unit, new_unit.clone()])
+            .await?;
+        engine.arbitrator = crate::arbitrator::Arbitrator::with_client(std::sync::Arc::new(
+            MockCorrectionLLM {
+                response: r#"{"subject":"user","attribute":"residence","value":"Beijing","change_type":"update","confidence":0.92}"#
+                    .into(),
+            },
+        ));
+
+        let affected = engine
+            .apply_memory_correction_actions(
+                &new_unit,
+                vec![MemoryCorrectionAction {
+                    target_id: old_id,
+                    kind: MemoryCorrectionKind::Obsolete,
+                    reason: "Residence updated".into(),
+                    confidence: 0.95,
+                }],
+            )
+            .await?;
+
+        assert_eq!(affected, vec![old_id]);
+        assert!(engine.is_memory_unit_forgotten(TEST_USER, old_id)?);
+
+        let outgoing = engine.graph.get_outgoing_edges(TEST_USER, new_id).await?;
+        assert!(outgoing
+            .iter()
+            .any(|edge| edge.target_id == old_id && edge.relation == RelationType::EvolvedTo));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_apply_memory_correction_actions_ignores_reaffirm_action() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let old_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I live in Beijing".into(),
+            Some(vec![1.0; 768]),
+        );
+        let old_id = old_unit.id;
+        let new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I still live in Beijing".into(),
+            Some(vec![1.0; 768]),
+        );
+        let new_id = new_unit.id;
+        engine
+            .store_memory_units(vec![old_unit, new_unit.clone()])
+            .await?;
+
+        let affected = engine
+            .apply_memory_correction_actions(
+                &new_unit,
+                vec![MemoryCorrectionAction {
+                    target_id: old_id,
+                    kind: MemoryCorrectionKind::Reaffirm,
+                    reason: "Same fact".into(),
+                    confidence: 0.7,
+                }],
+            )
+            .await?;
+
+        assert!(affected.is_empty());
+        assert!(!engine.is_memory_unit_forgotten(TEST_USER, old_id)?);
+        assert!(engine.get_memory_unit(TEST_USER, old_id).await?.is_some());
+
+        let outgoing = engine.graph.get_outgoing_edges(TEST_USER, new_id).await?;
+        assert!(!outgoing.iter().any(|edge| {
+            edge.target_id == old_id
+                && matches!(
+                    edge.relation,
+                    RelationType::EvolvedTo | RelationType::Contradicts
+                )
+        }));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_apply_memory_correction_actions_ignores_ignore_action() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let old_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "Favorite food is Beijing duck".into(),
+            Some(vec![1.0; 768]),
+        );
+        let old_id = old_unit.id;
+        let new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I now live in Beijing".into(),
+            Some(vec![1.0; 768]),
+        );
+        let new_id = new_unit.id;
+        engine
+            .store_memory_units(vec![old_unit, new_unit.clone()])
+            .await?;
+
+        let affected = engine
+            .apply_memory_correction_actions(
+                &new_unit,
+                vec![MemoryCorrectionAction {
+                    target_id: old_id,
+                    kind: MemoryCorrectionKind::Ignore,
+                    reason: "Unrelated candidate".into(),
+                    confidence: 0.4,
+                }],
+            )
+            .await?;
+
+        assert!(affected.is_empty());
+        assert!(!engine.is_memory_unit_forgotten(TEST_USER, old_id)?);
+        assert!(engine.get_memory_unit(TEST_USER, old_id).await?.is_some());
+
+        let outgoing = engine.graph.get_outgoing_edges(TEST_USER, new_id).await?;
+        assert!(!outgoing.iter().any(|edge| {
+            edge.target_id == old_id
+                && matches!(
+                    edge.relation,
+                    RelationType::EvolvedTo | RelationType::Contradicts
+                )
+        }));
 
         Ok(())
     }
@@ -6138,6 +9453,440 @@ mod tests {
         assert!(engine.system_kv().get(failed_key.as_bytes())?.is_some());
         assert!(engine.system_kv().get(pending_key.as_bytes())?.is_none());
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_fetch_pending_events_limit_zero_short_circuits() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let event = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            EventContent::Text("queued".into()),
+        );
+        engine.ingest_event_directly(event).await?;
+
+        let pending = engine.fetch_pending_events_limited(0).await?;
+        assert!(pending.is_empty());
+        assert_eq!(engine.count_pending_events().await?, 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_fetch_pending_events_limited_respects_limit() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let mut first = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            EventContent::Text("first".into()),
+        );
+        first.id = Uuid::from_u128(1);
+
+        let mut second = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            EventContent::Text("second".into()),
+        );
+        second.id = Uuid::from_u128(2);
+
+        engine.ingest_event_directly(first.clone()).await?;
+        engine.ingest_event_directly(second.clone()).await?;
+
+        let pending = engine.fetch_pending_events_limited(1).await?;
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, first.id);
+        assert_eq!(engine.count_pending_events().await?, 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_fetch_pending_events_ignores_nonstandard_pending_keys() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        engine.system_kv().put(b"pending:bad:marker", b"{}")?;
+
+        let pending = engine.fetch_pending_events_limited(10).await?;
+        assert!(pending.is_empty());
+        assert!(engine.system_kv().get(b"pending:bad:marker")?.is_some());
+        assert!(engine.system_kv().get(b"failed:bad")?.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_fetch_pending_events_marks_malformed_and_missing_user_metadata_failed(
+    ) -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let malformed_id = Uuid::new_v4().to_string();
+        engine
+            .system_kv()
+            .put(format!("pending:{malformed_id}").as_bytes(), b"{bad-json")?;
+
+        let missing_user_id = Uuid::new_v4().to_string();
+        engine.system_kv().put(
+            format!("pending:{missing_user_id}").as_bytes(),
+            &serde_json::to_vec(&serde_json::json!({"other":"value"}))?,
+        )?;
+
+        let empty_metadata = Uuid::new_v4().to_string();
+        engine
+            .system_kv()
+            .put(format!("pending:{empty_metadata}").as_bytes(), b"")?;
+
+        let pending = engine.fetch_pending_events_limited(10).await?;
+        assert!(pending.is_empty());
+
+        for event_id in [&malformed_id, &missing_user_id, &empty_metadata] {
+            let failed_key = format!("failed:{event_id}");
+            let failed = engine
+                .system_kv()
+                .get(failed_key.as_bytes())?
+                .expect("failed marker should exist");
+            let failed_json: serde_json::Value = serde_json::from_slice(&failed)?;
+            let error = failed_json["error"].as_str().unwrap_or("");
+            assert!(error.contains("Pending metadata") || error.contains("Malformed pending metadata"));
+            assert!(engine
+                .system_kv()
+                .get(format!("pending:{event_id}").as_bytes())?
+                .is_none());
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_delete_event_clears_pending_retry_failed_and_forget_markers() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let event = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            EventContent::Text("to delete".into()),
+        );
+        let event_id = event.id.to_string();
+        engine.ingest_event_directly(event.clone()).await?;
+        assert_eq!(engine.count_pending_events().await?, 1);
+        assert_eq!(
+            engine.increment_retry_count_if_pending(&event_id).await?,
+            Some(1)
+        );
+
+        engine.system_kv().put(
+            format!("failed:{event_id}").as_bytes(),
+            &serde_json::to_vec(&serde_json::json!({"error":"boom"}))?,
+        )?;
+        engine.mark_event_forgotten(
+            TEST_USER,
+            &event_id,
+            &ForgettingTombstone {
+                user_id: TEST_USER.into(),
+                org_id: None,
+                target_kind: ForgetTargetKind::Event,
+                target_id: event_id.clone(),
+                reason_query: "cleanup".into(),
+                created_at: Utc::now(),
+                preview_id: None,
+                mode: ForgetMode::Logical,
+            },
+        )?;
+
+        assert!(engine.is_event_forgotten(TEST_USER, &event_id)?);
+        engine.delete_event(TEST_USER, &event_id).await?;
+
+        assert_eq!(engine.count_pending_events().await?, 0);
+        assert_eq!(engine.get_retry_count(&event_id).await?, 0);
+        assert!(engine.get_event(TEST_USER, &event_id).await?.is_none());
+        assert!(!engine.is_event_forgotten(TEST_USER, &event_id)?);
+        assert!(engine
+            .system_kv()
+            .get(format!("failed:{event_id}").as_bytes())?
+            .is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_retry_count_invalid_payload_defaults_to_zero() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        engine.system_kv().put(b"retry_count:broken", &[1, 2])?;
+        assert_eq!(engine.get_retry_count("broken").await?, 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_event_hides_and_restores_forgotten_event() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let event = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            EventContent::Text("forgettable".into()),
+        );
+        let event_id = event.id.to_string();
+        engine.ingest_event_directly(event.clone()).await?;
+
+        engine.mark_event_forgotten(
+            TEST_USER,
+            &event_id,
+            &ForgettingTombstone {
+                user_id: TEST_USER.into(),
+                org_id: None,
+                target_kind: ForgetTargetKind::Event,
+                target_id: event_id.clone(),
+                reason_query: "hide".into(),
+                created_at: Utc::now(),
+                preview_id: None,
+                mode: ForgetMode::Logical,
+            },
+        )?;
+
+        assert!(engine.get_event(TEST_USER, &event_id).await?.is_none());
+        engine.clear_event_forgotten(TEST_USER, &event_id)?;
+        assert!(engine.get_event(TEST_USER, &event_id).await?.is_some());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_org_policy_and_backfill_status_default_invalid_and_valid_payloads() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let org_id = "org-alpha";
+
+        assert_eq!(
+            engine.get_org_share_policy(TEST_USER, org_id)?,
+            SharePolicy::default()
+        );
+
+        let policy_key = MemoroseEngine::org_share_policy_key(TEST_USER, org_id);
+        engine.system_kv().put(policy_key.as_bytes(), b"not-json")?;
+        assert_eq!(
+            engine.get_org_share_policy(TEST_USER, org_id)?,
+            SharePolicy::default()
+        );
+
+        assert_eq!(engine.get_org_backfill_status(TEST_USER, org_id)?, None);
+
+        let status_key =
+            MemoroseEngine::backfill_status_key(&MemoryDomain::Organization, TEST_USER, org_id);
+        engine.system_kv().put(status_key.as_bytes(), b"not-json")?;
+        assert_eq!(engine.get_org_backfill_status(TEST_USER, org_id)?, None);
+
+        let status = serde_json::json!({"state":"completed","processed":3});
+        engine
+            .system_kv()
+            .put(status_key.as_bytes(), &serde_json::to_vec(&status)?)?;
+        assert_eq!(engine.get_org_backfill_status(TEST_USER, org_id)?, Some(status));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_reflect_on_session_creates_l2_topics_and_graph_edges() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let stream_id = Uuid::new_v4();
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true)
+            .await?
+            .with_arbitrator(crate::arbitrator::Arbitrator::with_client(Arc::new(
+                MockCorrectionLLM {
+                    response: format!(
+                        r#"[{{"summary":"Residence topic","source_ids":["{}","{}"]}}]"#,
+                        Uuid::from_u128(11),
+                        Uuid::from_u128(12)
+                    ),
+                },
+            )));
+
+        let mut first = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "I live in Beijing".into(),
+            None,
+        );
+        first.id = Uuid::from_u128(11);
+        let mut second = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "My office is in Chaoyang".into(),
+            None,
+        );
+        second.id = Uuid::from_u128(12);
+
+        engine.store_memory_units(vec![first.clone(), second.clone()]).await?;
+        engine.reflect_on_session(TEST_USER, stream_id).await?;
+
+        let prefix = format!("u:{}:unit:", TEST_USER);
+        let kv = engine._kv.clone();
+        let prefix_bytes = prefix.into_bytes();
+        let all_units: Vec<(Vec<u8>, Vec<u8>)> =
+            tokio::task::spawn_blocking(move || kv.scan(&prefix_bytes)).await??;
+
+        let l2s: Vec<MemoryUnit> = all_units
+            .into_iter()
+            .filter_map(|(_, v)| serde_json::from_slice::<MemoryUnit>(&v).ok())
+            .filter(|unit| unit.level == 2)
+            .collect();
+        assert_eq!(l2s.len(), 1);
+        assert_eq!(l2s[0].content, "Residence topic");
+        assert_eq!(l2s[0].embedding.as_deref(), Some(&[0.0, 0.0, 0.0][..]));
+
+        let outgoing = engine.graph().get_outgoing_edges(TEST_USER, l2s[0].id).await?;
+        assert_eq!(outgoing.len(), 2);
+        assert!(outgoing.iter().any(|edge| edge.target_id == first.id));
+        assert!(outgoing.iter().any(|edge| edge.target_id == second.id));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_reflection_and_community_markers_roundtrip() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let rt = tokio::runtime::Runtime::new()?;
+        let engine = rt.block_on(MemoroseEngine::new_with_default_threshold(
+            temp_dir.path(),
+            1000,
+            true,
+            true,
+        ))?;
+
+        engine.set_needs_reflect("alice")?;
+        engine.set_needs_reflect("bob")?;
+        engine.set_needs_community("alice")?;
+        engine.set_needs_community("carol")?;
+
+        let mut reflections = engine.get_pending_reflections()?;
+        reflections.sort();
+        assert_eq!(reflections, vec!["alice".to_string(), "bob".to_string()]);
+
+        let mut communities = engine.get_pending_communities()?;
+        communities.sort();
+        assert_eq!(communities, vec!["alice".to_string(), "carol".to_string()]);
+
+        engine.clear_reflection_marker("alice")?;
+        engine.clear_community_marker("carol")?;
+
+        assert_eq!(engine.get_pending_reflections()?, vec!["bob".to_string()]);
+        assert_eq!(engine.get_pending_communities()?, vec!["alice".to_string()]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_ingest_event_directly_rejects_empty_variants() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let variants = vec![
+            EventContent::Text("   ".into()),
+            EventContent::Image(" ".into()),
+            EventContent::Audio(" ".into()),
+            EventContent::Video(" ".into()),
+            EventContent::Json(serde_json::Value::Null),
+            EventContent::Json(serde_json::Value::String(" ".into())),
+        ];
+
+        for content in variants {
+            let err = engine
+                .ingest_event_directly(Event::new(
+                    None,
+                    TEST_USER.into(),
+                    None,
+                    stream_id,
+                    content,
+                ))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("Rejected empty event"));
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_export_snapshot_writes_archive() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let output_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let event = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            EventContent::Text("snapshot me".into()),
+        );
+        engine.ingest_event_directly(event).await?;
+
+        let output_path = output_dir.path().join("snapshot.tar.gz");
+        engine.export_snapshot(output_path.clone()).await?;
+
+        assert!(output_path.exists());
+        assert!(std::fs::metadata(&output_path)?.len() > 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_restore_from_snapshot_replaces_existing_target_dir() -> Result<()> {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+
+        let archive_dir = tempdir()?;
+        let target_root = tempdir()?;
+        let snapshot_path = archive_dir.path().join("snapshot.tar.gz");
+        let target_dir = target_root.path().join("restore-target");
+
+        std::fs::create_dir_all(target_dir.join("stale"))?;
+        std::fs::write(target_dir.join("stale/old.txt"), b"old")?;
+
+        let file = std::fs::File::create(&snapshot_path)?;
+        let enc = GzEncoder::new(file, Compression::default());
+        let mut tar = tar::Builder::new(enc);
+        let mut header = tar::Header::new_gnu();
+        let payload = b"fresh";
+        header.set_size(payload.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        tar.append_data(&mut header, "rocksdb/new.txt", &payload[..])?;
+        let enc = tar.into_inner()?;
+        enc.finish()?;
+
+        MemoroseEngine::restore_from_snapshot(snapshot_path, target_dir.clone()).await?;
+
+        assert!(target_dir.join("rocksdb/new.txt").exists());
+        assert!(!target_dir.join("stale/old.txt").exists());
+        assert_eq!(std::fs::read(target_dir.join("rocksdb/new.txt"))?, b"fresh");
         Ok(())
     }
 
@@ -8106,6 +11855,713 @@ mod tests {
         assert!(local_results
             .iter()
             .all(|unit| MemoroseEngine::is_local_domain(&unit.domain)));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_batch_get_neighbors_and_multi_hop_traverse() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let node_a = Uuid::new_v4();
+        let node_b = Uuid::new_v4();
+        let node_c = Uuid::new_v4();
+        let node_d = Uuid::new_v4();
+
+        for edge in [
+            memorose_common::GraphEdge::new(
+                TEST_USER.into(),
+                node_a,
+                node_b,
+                memorose_common::RelationType::RelatedTo,
+                0.9,
+            ),
+            memorose_common::GraphEdge::new(
+                TEST_USER.into(),
+                node_b,
+                node_c,
+                memorose_common::RelationType::RelatedTo,
+                0.8,
+            ),
+            memorose_common::GraphEdge::new(
+                TEST_USER.into(),
+                node_b,
+                node_d,
+                memorose_common::RelationType::RelatedTo,
+                0.2,
+            ),
+        ] {
+            engine.graph().add_edge(&edge).await?;
+        }
+        engine.graph().flush().await?;
+
+        let neighbors = engine.batch_get_neighbors(TEST_USER, &[node_a, node_b]).await?;
+        assert_eq!(neighbors.get(&node_a).map(Vec::len), Some(1));
+        assert_eq!(neighbors.get(&node_b).map(Vec::len), Some(2));
+
+        let traversed = engine
+            .multi_hop_traverse(TEST_USER, vec![node_a], 2, Some(0.5))
+            .await?;
+        assert!(traversed.contains(&node_a));
+        assert!(traversed.contains(&node_b));
+        assert!(traversed.contains(&node_c));
+        assert!(!traversed.contains(&node_d));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_neighbors_cached_query_cache_stats_and_invalidate() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let node_a = Uuid::new_v4();
+        let node_b = Uuid::new_v4();
+        let edge = memorose_common::GraphEdge::new(
+            TEST_USER.into(),
+            node_a,
+            node_b,
+            memorose_common::RelationType::RelatedTo,
+            0.9,
+        );
+        engine.graph().add_edge(&edge).await?;
+        engine.graph().flush().await?;
+
+        let first = engine.get_neighbors_cached(TEST_USER, node_a).await?;
+        assert_eq!(first.len(), 1);
+
+        let stats = engine.query_cache_stats().await;
+        assert_eq!(stats.edge_cache_size, 1);
+
+        engine.graph().delete_edges_for_node(TEST_USER, node_a).await?;
+        let cached = engine.get_neighbors_cached(TEST_USER, node_a).await?;
+        assert_eq!(cached.len(), 1);
+
+        engine.invalidate_query_cache(TEST_USER).await;
+        let stats_after_invalidate = engine.query_cache_stats().await;
+        assert_eq!(stats_after_invalidate.edge_cache_size, 1);
+        engine.query_cache.clear().await;
+        let after_invalidate = engine.get_neighbors_cached(TEST_USER, node_a).await?;
+        assert!(after_invalidate.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_engine_filter_and_key_helpers() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        assert_eq!(engine.build_time_filter(None), None);
+        assert_eq!(
+            engine.build_time_filter(Some(TimeRange {
+                start: Some(Utc.timestamp_micros(1_700_000_000_000_000).unwrap()),
+                end: Some(Utc.timestamp_micros(1_700_000_300_000_000).unwrap()),
+            })),
+            Some("valid_time >= 1700000000000000 AND valid_time <= 1700000300000000".into())
+        );
+        assert_eq!(
+            engine.build_user_filter("o'hara", Some("importance > 0.7".into())),
+            Some("user_id = 'o''hara' AND importance > 0.7".into())
+        );
+        assert_eq!(
+            engine.build_global_filter(
+                MemoryDomain::Organization,
+                Some("org'o"),
+                Some("agent'a"),
+                Some("importance > 0.5".into()),
+            ),
+            Some(
+                "domain = 'organization' AND org_id = 'org''o' AND agent_id = 'agent''a' AND importance > 0.5"
+                    .into(),
+            )
+        );
+
+        assert_eq!(
+            MemoroseEngine::org_share_policy_key("user_a", "org_b"),
+            "share_policy:user:user_a:org:org_b"
+        );
+        let knowledge_id = Uuid::nil();
+        assert_eq!(
+            MemoroseEngine::organization_knowledge_key(knowledge_id),
+            format!("organization_knowledge:{knowledge_id}")
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_engine_text_and_topic_helpers() {
+        assert_eq!(
+            MemoroseEngine::normalize_whitespace("  hello\t there\n   world  "),
+            "hello there world"
+        );
+        assert_eq!(
+            MemoroseEngine::neutralize_first_person_language(
+                "I moved my project; we changed our plan for me."
+            ),
+            "the contributor moved the contributor's project; the organization changed the organization's plan for the contributor."
+        );
+        assert_eq!(
+            MemoroseEngine::build_organization_topic_key(" Retry / Procedure! 2026 "),
+            "retry-procedure-2026"
+        );
+        assert_eq!(
+            MemoroseEngine::fallback_organization_topic_label(
+                "  This   fallback topic uses six words max here  "
+            ),
+            Some("This fallback topic uses six words".into())
+        );
+        assert_eq!(MemoroseEngine::fallback_organization_topic_label(" \n\t "), None);
+
+        assert_eq!(
+            MemoroseEngine::organization_topic_candidates_from_keywords_and_content(
+                &[
+                    "Retry Procedure".into(),
+                    "retry procedure".into(),
+                    "Cleanup Playbook".into(),
+                ],
+                "ignored fallback content",
+            ),
+            vec![
+                ("Retry Procedure".into(), "retry-procedure".into()),
+                ("Cleanup Playbook".into(), "cleanup-playbook".into()),
+            ]
+        );
+        assert_eq!(
+            MemoroseEngine::organization_topic_candidates_from_keywords_and_content(
+                &[],
+                "Incident coordination playbook for regional outages and drills",
+            ),
+            vec![(
+                "Incident coordination playbook for regional outages".into(),
+                "incident-coordination-playbook-for-regional-outages".into(),
+            )]
+        );
+    }
+
+    #[test]
+    fn test_engine_similarity_policy_and_metric_helpers() {
+        let now = Utc.with_ymd_and_hms(2026, 4, 6, 9, 47, 58).unwrap();
+        assert_eq!(
+            MemoroseEngine::rac_metric_bucket_start(now),
+            Utc.with_ymd_and_hms(2026, 4, 6, 9, 0, 0).unwrap()
+        );
+
+        let base_record = OrganizationKnowledgeRecord {
+            id: Uuid::new_v4(),
+            org_id: "org_similarity".into(),
+            topic_label: "Cleanup Playbook".into(),
+            topic_alias_keys: vec!["cleanup-playbook".into()],
+            memory_type: MemoryType::Factual,
+            content: "Cleanup worker retry steps for incidents".into(),
+            embedding: Some(vec![1.0, 0.0]),
+            keywords: vec!["Cleanup Playbook".into(), "Retry".into()],
+            importance: 0.9,
+            valid_time: None,
+            created_at: now,
+            updated_at: now,
+        };
+
+        let both = MemoroseEngine::organization_similarity_score(
+            &base_record,
+            "cleanup retry",
+            &[1.0, 1.0],
+        );
+        let semantic_only =
+            MemoroseEngine::organization_similarity_score(&base_record, "unrelated topic", &[1.0, 1.0]);
+        let lexical_only = MemoroseEngine::organization_similarity_score(
+            &OrganizationKnowledgeRecord {
+                embedding: None,
+                ..base_record.clone()
+            },
+            "cleanup retry",
+            &[0.0, 1.0],
+        );
+        let none = MemoroseEngine::organization_similarity_score(
+            &OrganizationKnowledgeRecord {
+                embedding: None,
+                keywords: vec!["totally different".into()],
+                content: "nothing overlapping".into(),
+                ..base_record
+            },
+            "cleanup retry",
+            &[0.0, 1.0],
+        );
+
+        assert!(both > semantic_only);
+        assert!(both > 0.0);
+        assert!(semantic_only > 0.0);
+        assert!(lexical_only > 0.0);
+        assert_eq!(none, 0.0);
+
+        let normalized = MemoroseEngine::normalize_share_policy(
+            SharePolicy {
+                contribute: true,
+                consume: false,
+                include_history: true,
+                targets: vec![],
+            },
+            ShareTarget::Organization,
+        );
+        assert_eq!(normalized.targets, vec![ShareTarget::Organization]);
+        assert!(normalized.contribute);
+        assert!(!normalized.consume);
+        assert!(normalized.include_history);
+    }
+
+    #[tokio::test]
+    async fn test_engine_l3_task_helpers_and_auto_plan_goal() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true)
+            .await?
+            .with_arbitrator(crate::arbitrator::Arbitrator::with_client(Arc::new(
+                MockCorrectionLLM {
+                    response: r#"[{"summary":"Plan","dependencies":[]},{"summary":"Execute","description":"Ship it","dependencies":["Plan"]}]"#.into(),
+                },
+            )));
+
+        let user_id = "planner_user";
+        let stream_id = Uuid::new_v4();
+        let goal_id = Uuid::new_v4();
+
+        engine
+            .auto_plan_goal(
+                Some("org_plan".into()),
+                user_id.into(),
+                Some("agent_plan".into()),
+                stream_id,
+                goal_id,
+                "ship release".into(),
+                0,
+            )
+            .await?;
+
+        let tasks = engine.list_l3_tasks(user_id).await?;
+        assert_eq!(tasks.len(), 2);
+
+        let plan = tasks.iter().find(|task| task.title == "Plan").unwrap();
+        let execute = tasks.iter().find(|task| task.title == "Execute").unwrap();
+        assert_eq!(plan.parent_id, Some(goal_id));
+        assert_eq!(execute.parent_id, Some(goal_id));
+        assert_eq!(execute.description, "Ship it");
+        assert_eq!(execute.dependencies, vec![plan.task_id]);
+        assert_eq!(
+            engine.get_l3_task(user_id, plan.task_id).await?.map(|task| task.title),
+            Some("Plan".into())
+        );
+
+        let outgoing = engine.graph().get_outgoing_edges(user_id, execute.task_id).await?;
+        assert_eq!(outgoing.len(), 1);
+        assert_eq!(outgoing[0].target_id, goal_id);
+        assert_eq!(outgoing[0].relation, RelationType::IsSubTaskOf);
+
+        let empty_engine = MemoroseEngine::new_with_default_threshold(
+            temp_dir.path().join("empty"),
+            1000,
+            true,
+            true,
+        )
+        .await?
+        .with_arbitrator(crate::arbitrator::Arbitrator::with_client(Arc::new(
+            MockCorrectionLLM {
+                response: "[]".into(),
+            },
+        )));
+        empty_engine
+            .auto_plan_goal(
+                None,
+                "nobody".into(),
+                None,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                "noop".into(),
+                0,
+            )
+            .await?;
+        assert!(empty_engine.list_l3_tasks("nobody").await?.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_ready_l3_tasks_filters_blocked_and_missing_dependencies() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let user_id = "task_user";
+
+        let mut completed = memorose_common::L3Task::new(
+            None,
+            user_id.into(),
+            None,
+            "Done".into(),
+            "done".into(),
+        );
+        completed.status = memorose_common::TaskStatus::Completed;
+
+        let ready = memorose_common::L3Task::new(
+            None,
+            user_id.into(),
+            None,
+            "Ready".into(),
+            "ready".into(),
+        );
+
+        let mut blocked_by_progress = memorose_common::L3Task::new(
+            None,
+            user_id.into(),
+            None,
+            "Waiting".into(),
+            "waiting".into(),
+        );
+        blocked_by_progress.dependencies = vec![completed.task_id];
+        blocked_by_progress.status = memorose_common::TaskStatus::InProgress;
+
+        let mut dependent_ready = memorose_common::L3Task::new(
+            None,
+            user_id.into(),
+            None,
+            "DependentReady".into(),
+            "dep ready".into(),
+        );
+        dependent_ready.dependencies = vec![completed.task_id];
+
+        let mut blocked_missing_dep = memorose_common::L3Task::new(
+            None,
+            user_id.into(),
+            None,
+            "MissingDep".into(),
+            "missing dep".into(),
+        );
+        blocked_missing_dep.dependencies = vec![Uuid::new_v4()];
+
+        let mut blocked_incomplete_dep = memorose_common::L3Task::new(
+            None,
+            user_id.into(),
+            None,
+            "BlockedIncomplete".into(),
+            "blocked incomplete".into(),
+        );
+        blocked_incomplete_dep.dependencies = vec![ready.task_id];
+
+        for task in [
+            completed.clone(),
+            ready.clone(),
+            blocked_by_progress,
+            dependent_ready.clone(),
+            blocked_missing_dep,
+            blocked_incomplete_dep,
+        ] {
+            engine.store_l3_task(&task).await?;
+        }
+
+        let mut titles = engine
+            .get_ready_l3_tasks(user_id)
+            .await?
+            .into_iter()
+            .map(|task| task.title)
+            .collect::<Vec<_>>();
+        titles.sort();
+
+        assert_eq!(titles, vec!["DependentReady".to_string(), "Ready".to_string()]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_engine_organization_snapshot_helpers_and_detail_sorting() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let now = Utc.with_ymd_and_hms(2026, 4, 6, 10, 0, 0).unwrap();
+
+        let source_a = MemoryUnit::new(
+            Some("org_snapshot".into()),
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            MemoryType::Factual,
+            "source a".into(),
+            None,
+        );
+        let source_b = MemoryUnit::new(
+            Some("org_snapshot".into()),
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            MemoryType::Factual,
+            "source b".into(),
+            None,
+        );
+        let fallback_source = MemoryUnit::new(
+            Some("org_snapshot".into()),
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            MemoryType::Factual,
+            "fallback source".into(),
+            None,
+        );
+        engine
+            .store_memory_units(vec![
+                source_a.clone(),
+                source_b.clone(),
+                fallback_source.clone(),
+            ])
+            .await?;
+
+        let record = OrganizationKnowledgeRecord {
+            id: Uuid::new_v4(),
+            org_id: "org_snapshot".into(),
+            topic_label: "Release Guide".into(),
+            topic_alias_keys: vec!["release-guide".into()],
+            memory_type: MemoryType::Factual,
+            content: "release guide body".into(),
+            embedding: None,
+            keywords: vec!["release".into()],
+            importance: 0.8,
+            valid_time: None,
+            created_at: now,
+            updated_at: now,
+        };
+        let read_view = MemoroseEngine::materialize_organization_read_view(&record);
+
+        let contribution_active = OrganizationKnowledgeContributionRecord {
+            org_id: "org_snapshot".into(),
+            knowledge_id: record.id,
+            source_id: source_a.id,
+            contributor_user_id: TEST_USER.into(),
+            status: OrganizationKnowledgeContributionStatus::Active,
+            candidate_at: Some(now),
+            activated_at: Some(now),
+            approval_mode: Some(OrganizationKnowledgeApprovalMode::Auto),
+            approved_by: Some("system".into()),
+            updated_at: now,
+            revoked_at: None,
+        };
+        let contribution_candidate = OrganizationKnowledgeContributionRecord {
+            org_id: "org_snapshot".into(),
+            knowledge_id: record.id,
+            source_id: source_b.id,
+            contributor_user_id: TEST_USER.into(),
+            status: OrganizationKnowledgeContributionStatus::Candidate,
+            candidate_at: Some(now),
+            activated_at: None,
+            approval_mode: None,
+            approved_by: None,
+            updated_at: now + chrono::Duration::seconds(5),
+            revoked_at: None,
+        };
+        let contribution_revoked = OrganizationKnowledgeContributionRecord {
+            org_id: "org_snapshot".into(),
+            knowledge_id: record.id,
+            source_id: fallback_source.id,
+            contributor_user_id: TEST_USER.into(),
+            status: OrganizationKnowledgeContributionStatus::Revoked,
+            candidate_at: Some(now),
+            activated_at: None,
+            approval_mode: None,
+            approved_by: None,
+            updated_at: now + chrono::Duration::seconds(10),
+            revoked_at: Some(now + chrono::Duration::seconds(10)),
+        };
+
+        let membership_a = OrganizationKnowledgeMembershipRecord {
+            org_id: "org_snapshot".into(),
+            knowledge_id: record.id,
+            source_id: source_a.id,
+            contributor_user_id: TEST_USER.into(),
+            updated_at: now,
+        };
+        let membership_b = OrganizationKnowledgeMembershipRecord {
+            org_id: "org_snapshot".into(),
+            knowledge_id: record.id,
+            source_id: source_b.id,
+            contributor_user_id: TEST_USER.into(),
+            updated_at: now + chrono::Duration::seconds(1),
+        };
+
+        let detail = engine
+            .build_organization_knowledge_detail_record_from_snapshot(OrganizationKnowledgeSnapshot {
+                record: record.clone(),
+                read_view: read_view.clone(),
+                membership_sources: vec![
+                    (membership_b.clone(), source_b.clone()),
+                    (membership_a.clone(), source_a.clone()),
+                ],
+                contributions: vec![
+                    contribution_revoked.clone(),
+                    contribution_candidate.clone(),
+                    contribution_active.clone(),
+                ],
+            })
+            .await;
+
+        assert_eq!(detail.record.id, record.id);
+        assert_eq!(detail.read_view.id, read_view.id);
+        assert_eq!(detail.memberships.len(), 2);
+        assert_eq!(detail.memberships[0].membership.source_id, source_a.id);
+        assert_eq!(detail.memberships[1].membership.source_id, source_b.id);
+        assert_eq!(detail.contributions.len(), 3);
+        assert_eq!(detail.contributions[0].contribution.source_id, source_a.id);
+        assert_eq!(detail.contributions[1].contribution.source_id, source_b.id);
+        assert_eq!(detail.contributions[2].contribution.source_id, fallback_source.id);
+        assert_eq!(
+            detail.contributions[2]
+                .source_unit
+                .as_ref()
+                .map(|unit| unit.id),
+            Some(fallback_source.id)
+        );
+
+        let active_memberships = MemoroseEngine::organization_memberships_from_contributions(&[
+            contribution_active.clone(),
+            contribution_candidate,
+            contribution_revoked,
+        ]);
+        assert_eq!(active_memberships.len(), 1);
+        assert_eq!(active_memberships[0].source_id, source_a.id);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_engine_list_organization_knowledge_snapshots_orders_and_filters() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let now = Utc.with_ymd_and_hms(2026, 4, 6, 11, 0, 0).unwrap();
+
+        let record_old = OrganizationKnowledgeRecord {
+            id: Uuid::new_v4(),
+            org_id: "org_a".into(),
+            topic_label: "Alpha".into(),
+            topic_alias_keys: vec!["alpha".into()],
+            memory_type: MemoryType::Factual,
+            content: "alpha".into(),
+            embedding: None,
+            keywords: vec!["alpha".into()],
+            importance: 0.5,
+            valid_time: None,
+            created_at: now,
+            updated_at: now,
+        };
+        let record_new = OrganizationKnowledgeRecord {
+            id: Uuid::new_v4(),
+            org_id: "org_a".into(),
+            topic_label: "Beta".into(),
+            topic_alias_keys: vec!["beta".into()],
+            memory_type: MemoryType::Factual,
+            content: "beta".into(),
+            embedding: None,
+            keywords: vec!["beta".into()],
+            importance: 0.7,
+            valid_time: None,
+            created_at: now,
+            updated_at: now + chrono::Duration::seconds(30),
+        };
+        let other_org = OrganizationKnowledgeRecord {
+            id: Uuid::new_v4(),
+            org_id: "org_b".into(),
+            topic_label: "Gamma".into(),
+            topic_alias_keys: vec!["gamma".into()],
+            memory_type: MemoryType::Factual,
+            content: "gamma".into(),
+            embedding: None,
+            keywords: vec!["gamma".into()],
+            importance: 0.4,
+            valid_time: None,
+            created_at: now,
+            updated_at: now + chrono::Duration::seconds(10),
+        };
+
+        engine.store_organization_knowledge(&record_old)?;
+        engine.store_organization_knowledge(&record_new)?;
+        engine.store_organization_knowledge(&other_org)?;
+
+        let filtered = engine
+            .list_organization_knowledge_snapshots(Some("org_a"))
+            .await?;
+        assert_eq!(filtered.len(), 2);
+        assert_eq!(filtered[0].record.id, record_new.id);
+        assert_eq!(filtered[1].record.id, record_old.id);
+
+        let all = engine.list_organization_knowledge_snapshots(None).await?;
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[0].record.id, record_new.id);
+
+        assert!(engine
+            .get_organization_knowledge_detail_record(Uuid::new_v4())
+            .await?
+            .is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_engine_native_hit_and_metric_counter_helpers() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            MemoryType::Factual,
+            "native hit".into(),
+            None,
+        );
+        let mut hit = SharedSearchHit::native(unit.clone());
+        hit.keywords.push("tag".into());
+        assert_eq!(hit.memory_unit().id, unit.id);
+        assert_eq!(hit.clone().into_memory_unit().keywords, vec!["tag".to_string()]);
+
+        let mut metrics = RacMetricSnapshot {
+            fact_extraction_attempt_total: 1,
+            fact_extraction_success_total: 2,
+            correction_action_obsolete_total: 3,
+            correction_action_contradicts_total: 4,
+            correction_action_reaffirm_total: 5,
+            correction_action_ignore_total: 6,
+            tombstone_total: 7,
+        };
+        metrics.merge(&RacMetricSnapshot {
+            fact_extraction_attempt_total: 10,
+            fact_extraction_success_total: 20,
+            correction_action_obsolete_total: 30,
+            correction_action_contradicts_total: 40,
+            correction_action_reaffirm_total: 50,
+            correction_action_ignore_total: 60,
+            tombstone_total: 70,
+        });
+        assert_eq!(metrics.fact_extraction_attempt_total, 11);
+        assert_eq!(metrics.tombstone_total, 77);
+
+        assert!(matches!(
+            OrganizationKnowledgeContributionStatus::default(),
+            OrganizationKnowledgeContributionStatus::Active
+        ));
+
+        engine.increment_organization_metric_counter("org_metrics", "auto_approved_total", 0)?;
+        engine.increment_organization_metric_counter("org_metrics", "auto_approved_total", 2)?;
+        engine.increment_organization_metric_counter("org_metrics", "revoke_total", 1)?;
+        let org_snapshot = engine.get_organization_automation_counter_snapshot("org_metrics")?;
+        assert_eq!(org_snapshot.auto_approved_total, 2);
+        assert_eq!(org_snapshot.revoke_total, 1);
+        assert_eq!(engine.get_organization_metric_counter("org_metrics", "missing")?, 0);
+
+        engine.increment_rac_metric_counter("fact_extraction_attempt_total", 0)?;
+        engine.increment_rac_metric_counter("fact_extraction_attempt_total", 3)?;
+        engine.increment_rac_metric_counter("tombstone_total", 2)?;
+        let rac_snapshot = engine.get_rac_metric_snapshot()?;
+        assert_eq!(rac_snapshot.fact_extraction_attempt_total, 3);
+        assert_eq!(rac_snapshot.tombstone_total, 2);
 
         Ok(())
     }

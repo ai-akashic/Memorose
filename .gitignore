@@ -85,3 +85,6 @@ node*.log
 config.toml
 config.local.*
 *.local.toml
+
+# Keep extractor rule pack tracked
+!crates/memorose-core/src/fact_extraction_multilingual.json

@@ -21,10 +21,14 @@ export function useClusterStatus() {
   });
 }
 
-export function useStats(user_id?: string, org_id?: string) {
-  return useSWR<Stats>(`stats-${user_id ?? "_all"}-${org_id ?? "_all"}`, () => api.stats(user_id, org_id), {
+export function useStats(user_id?: string, org_id?: string, history_hours?: number) {
+  return useSWR<Stats>(
+    `stats-${user_id ?? "_all"}-${org_id ?? "_all"}-${history_hours ?? 24}`,
+    () => api.stats(user_id, org_id, history_hours),
+    {
     refreshInterval: 5000,
-  });
+    }
+  );
 }
 
 export function useMemories(params: {

@@ -163,6 +163,125 @@ struct BatchEmbedResponse {
 
 const GEMINI_BATCH_EMBED_MAX_SIZE: usize = 100;
 
+fn map_usage_metadata(
+    usage_metadata: Option<GeminiUsageMetadata>,
+) -> memorose_common::TokenUsage {
+    usage_metadata
+        .map(|metadata| memorose_common::TokenUsage {
+            prompt_tokens: metadata.prompt_token_count.unwrap_or(0),
+            completion_tokens: metadata.candidates_token_count.unwrap_or(0),
+            total_tokens: metadata.total_token_count.unwrap_or(0),
+        })
+        .unwrap_or_default()
+}
+
+fn parse_embed_response(
+    body: &str,
+    output_dimensionality: Option<i32>,
+) -> Result<super::LLMResponse<Vec<f32>>> {
+    let parsed: EmbedResponse = serde_json::from_str(body).map_err(|e| {
+        anyhow!(
+            "Failed to parse Gemini embedding response: {} - body: {}",
+            e,
+            body
+        )
+    })?;
+
+    if let Some(err) = parsed.error {
+        return Err(anyhow!("Gemini Embedding API error: {}", err.message));
+    }
+
+    let mut data = parsed
+        .embedding
+        .map(|embedding| embedding.values)
+        .ok_or_else(|| anyhow!("No embedding in Gemini response"))?;
+
+    if output_dimensionality.is_some() {
+        l2_normalize(&mut data);
+    }
+
+    Ok(super::LLMResponse {
+        data,
+        usage: Default::default(),
+    })
+}
+
+fn parse_batch_embed_response(
+    body: &str,
+    expected_count: usize,
+    output_dimensionality: Option<i32>,
+) -> Result<super::LLMResponse<Vec<Vec<f32>>>> {
+    let parsed: BatchEmbedResponse = serde_json::from_str(body).map_err(|e| {
+        anyhow!(
+            "Failed to parse Gemini batch embedding response: {} - body: {}",
+            e,
+            body
+        )
+    })?;
+
+    if let Some(err) = parsed.error {
+        return Err(anyhow!("Gemini Batch Embedding API error: {}", err.message));
+    }
+
+    let embeddings = parsed
+        .embeddings
+        .ok_or_else(|| anyhow!("No embeddings in Gemini batch response"))?;
+
+    if embeddings.len() != expected_count {
+        return Err(anyhow!(
+            "Gemini batch embedding count mismatch: requested={}, received={}",
+            expected_count,
+            embeddings.len()
+        ));
+    }
+
+    Ok(super::LLMResponse {
+        data: embeddings
+            .into_iter()
+            .map(|embedding| {
+                let mut values = embedding.values;
+                if output_dimensionality.is_some() {
+                    l2_normalize(&mut values);
+                }
+                values
+            })
+            .collect(),
+        usage: Default::default(),
+    })
+}
+
+fn parse_generate_response(body: &str) -> Result<super::LLMResponse<String>> {
+    let parsed: GenerateResponse = serde_json::from_str(body)
+        .map_err(|e| anyhow!("Failed to parse Gemini response: {} - body: {}", e, body))?;
+
+    if let Some(err) = parsed.error {
+        return Err(anyhow!("Gemini API error: {}", err.message));
+    }
+
+    let text = parsed
+        .candidates
+        .and_then(|candidates| candidates.into_iter().next())
+        .and_then(|candidate| candidate.content.parts.into_iter().next())
+        .map(|part| match part {
+            Part::Text { text } => text,
+            Part::Inline { .. } => String::new(),
+        })
+        .ok_or_else(|| anyhow!("No content in Gemini response"))?;
+
+    Ok(super::LLMResponse {
+        data: text,
+        usage: map_usage_metadata(parsed.usage_metadata),
+    })
+}
+
+fn trim_json_fence(text: &str) -> &str {
+    text.trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim()
+}
+
 #[async_trait]
 impl LLMClient for GeminiClient {
     async fn generate(&self, prompt: &str) -> Result<super::LLMResponse<String>> {
@@ -199,32 +318,7 @@ impl LLMClient for GeminiClient {
             return Err(anyhow!("Gemini Embedding API error ({}): {}", status, body));
         }
 
-        let parsed: EmbedResponse = serde_json::from_str(&body).map_err(|e| {
-            anyhow!(
-                "Failed to parse Gemini embedding response: {} - body: {}",
-                e,
-                body
-            )
-        })?;
-
-        if let Some(err) = parsed.error {
-            return Err(anyhow!("Gemini Embedding API error: {}", err.message));
-        }
-
-        let mut data = parsed
-            .embedding
-            .map(|e| e.values)
-            .ok_or_else(|| anyhow!("No embedding in Gemini response"))?;
-
-        // L2 normalize if output was truncated via MRL
-        if self.output_dimensionality.is_some() {
-            l2_normalize(&mut data);
-        }
-
-        Ok(super::LLMResponse {
-            data,
-            usage: Default::default(),
-        })
+        parse_embed_response(&body, self.output_dimensionality)
     }
 
     async fn embed_batch(&self, texts: Vec<String>) -> Result<super::LLMResponse<Vec<Vec<f32>>>> {
@@ -282,37 +376,8 @@ impl LLMClient for GeminiClient {
                 ));
             }
 
-            let parsed: BatchEmbedResponse = serde_json::from_str(&body).map_err(|e| {
-                anyhow!(
-                    "Failed to parse Gemini batch embedding response: {} - body: {}",
-                    e,
-                    body
-                )
-            })?;
-
-            if let Some(err) = parsed.error {
-                return Err(anyhow!("Gemini Batch Embedding API error: {}", err.message));
-            }
-
-            let embeddings = parsed
-                .embeddings
-                .ok_or_else(|| anyhow!("No embeddings in Gemini batch response"))?;
-
-            if embeddings.len() != chunk.len() {
-                return Err(anyhow!(
-                    "Gemini batch embedding count mismatch: requested={}, received={}",
-                    chunk.len(),
-                    embeddings.len()
-                ));
-            }
-
-            all_embeddings.extend(embeddings.into_iter().map(|e| {
-                let mut values = e.values;
-                if self.output_dimensionality.is_some() {
-                    l2_normalize(&mut values);
-                }
-                values
-            }));
+            let parsed = parse_batch_embed_response(&body, chunk.len(), self.output_dimensionality)?;
+            all_embeddings.extend(parsed.data);
         }
 
         Ok(super::LLMResponse {
@@ -358,13 +423,7 @@ impl LLMClient for GeminiClient {
 
         let response = self.call_generate(Some(system_prompt), text).await?;
 
-        let clean_json = response
-            .data
-            .trim()
-            .trim_start_matches("```json")
-            .trim_start_matches("```")
-            .trim_end_matches("```")
-            .trim();
+        let clean_json = trim_json_fence(&response.data);
 
         let parsed: super::CompressionOutput = serde_json::from_str(clean_json).map_err(|e| {
             anyhow!(
@@ -511,31 +570,7 @@ impl LLMClient for GeminiClient {
             return Err(anyhow!("Gemini Embedding API error ({}): {}", status, body));
         }
 
-        let parsed: EmbedResponse = serde_json::from_str(&body).map_err(|e| {
-            anyhow!(
-                "Failed to parse Gemini embedding response: {} - body: {}",
-                e,
-                body
-            )
-        })?;
-
-        if let Some(err) = parsed.error {
-            return Err(anyhow!("Gemini Embedding API error: {}", err.message));
-        }
-
-        let mut data = parsed
-            .embedding
-            .map(|e| e.values)
-            .ok_or_else(|| anyhow!("No embedding in Gemini response"))?;
-
-        if self.output_dimensionality.is_some() {
-            l2_normalize(&mut data);
-        }
-
-        Ok(super::LLMResponse {
-            data,
-            usage: Default::default(),
-        })
+        parse_embed_response(&body, self.output_dimensionality)
     }
 
     async fn embed_content_batch(
@@ -587,37 +622,8 @@ impl LLMClient for GeminiClient {
                 ));
             }
 
-            let parsed: BatchEmbedResponse = serde_json::from_str(&body).map_err(|e| {
-                anyhow!(
-                    "Failed to parse Gemini batch embedding response: {} - body: {}",
-                    e,
-                    body
-                )
-            })?;
-
-            if let Some(err) = parsed.error {
-                return Err(anyhow!("Gemini Batch Embedding API error: {}", err.message));
-            }
-
-            let embeddings = parsed
-                .embeddings
-                .ok_or_else(|| anyhow!("No embeddings in Gemini batch response"))?;
-
-            if embeddings.len() != chunk.len() {
-                return Err(anyhow!(
-                    "Gemini batch embedding count mismatch: requested={}, received={}",
-                    chunk.len(),
-                    embeddings.len()
-                ));
-            }
-
-            all_embeddings.extend(embeddings.into_iter().map(|e| {
-                let mut values = e.values;
-                if self.output_dimensionality.is_some() {
-                    l2_normalize(&mut values);
-                }
-                values
-            }));
+            let parsed = parse_batch_embed_response(&body, chunk.len(), self.output_dimensionality)?;
+            all_embeddings.extend(parsed.data);
         }
 
         Ok(super::LLMResponse {
@@ -693,33 +699,7 @@ impl GeminiClient {
             return Err(anyhow!("Gemini API error ({}): {}", status, body));
         }
 
-        let parsed: GenerateResponse = serde_json::from_str(&body)
-            .map_err(|e| anyhow!("Failed to parse Gemini response: {} - body: {}", e, body))?;
-
-        if let Some(err) = parsed.error {
-            return Err(anyhow!("Gemini API error: {}", err.message));
-        }
-
-        let text = parsed
-            .candidates
-            .and_then(|c| c.into_iter().next())
-            .and_then(|c| c.content.parts.into_iter().next())
-            .map(|p| match p {
-                Part::Text { text } => text,
-                _ => "".to_string(), // Should not happen for text-only response expectation, or handle properly
-            })
-            .ok_or_else(|| anyhow!("No content in Gemini response"))?;
-
-        let usage = parsed
-            .usage_metadata
-            .map(|m| memorose_common::TokenUsage {
-                prompt_tokens: m.prompt_token_count.unwrap_or(0),
-                completion_tokens: m.candidates_token_count.unwrap_or(0),
-                total_tokens: m.total_token_count.unwrap_or(0),
-            })
-            .unwrap_or_default();
-
-        Ok(super::LLMResponse { data: text, usage })
+        parse_generate_response(&body)
     }
 }
 

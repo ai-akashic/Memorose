@@ -21,7 +21,7 @@ export function ClientIntlProvider({
   }, [normalizedLocale]);
 
   return (
-    <NextIntlClientProvider locale={normalizedLocale} messages={messages}>
+    <NextIntlClientProvider locale={normalizedLocale} messages={messages} timeZone="UTC">
       {children}
     </NextIntlClientProvider>
   );

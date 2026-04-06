@@ -162,6 +162,28 @@ impl NeighborhoodCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::graph::GraphStore;
+    use anyhow::Result;
+    use lancedb::connect;
+    use memorose_common::RelationType;
+    use std::sync::Arc;
+
+    async fn test_graph_store(edges: &[GraphEdge]) -> Result<GraphStore> {
+        let db_path =
+            std::env::temp_dir().join(format!("memorose-executor-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&db_path)?;
+        let db = Arc::new(connect(db_path.to_str().unwrap()).execute().await?);
+        let store = GraphStore::new(db).await?;
+        for edge in edges {
+            store.add_edge(edge).await?;
+        }
+        store.flush().await?;
+        Ok(store)
+    }
+
+    fn edge(source_id: Uuid, target_id: Uuid, relation: RelationType, weight: f32) -> GraphEdge {
+        GraphEdge::new("user1".to_string(), source_id, target_id, relation, weight)
+    }
 
     #[tokio::test]
     async fn test_batch_vs_sequential_performance() {
@@ -195,5 +217,54 @@ mod tests {
 
         let node = Uuid::new_v4();
         assert_eq!(cache.get_degree(&node), 0);
+    }
+
+    #[tokio::test]
+    async fn test_batch_multi_hop_traverse_respects_threshold_and_hops() -> Result<()> {
+        let node_a = Uuid::new_v4();
+        let node_b = Uuid::new_v4();
+        let node_c = Uuid::new_v4();
+        let node_d = Uuid::new_v4();
+
+        let executor = BatchExecutor::new(
+            test_graph_store(&[
+                edge(node_a, node_b, RelationType::RelatedTo, 0.9),
+                edge(node_b, node_c, RelationType::RelatedTo, 0.8),
+                edge(node_b, node_d, RelationType::RelatedTo, 0.2),
+            ])
+            .await?,
+        );
+
+        let visited = executor
+            .batch_multi_hop_traverse("user1", vec![node_a], 2, Some(0.5))
+            .await?;
+
+        assert!(visited.contains(&node_a));
+        assert!(visited.contains(&node_b));
+        assert!(visited.contains(&node_c));
+        assert!(!visited.contains(&node_d));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_prefetch_neighborhoods_and_graph_store_accessor() -> Result<()> {
+        let node_a = Uuid::new_v4();
+        let node_b = Uuid::new_v4();
+        let node_c = Uuid::new_v4();
+        let graph_store = test_graph_store(&[
+            edge(node_a, node_b, RelationType::RelatedTo, 0.9),
+            edge(node_c, node_a, RelationType::Supports, 0.7),
+        ])
+        .await?;
+        let executor = BatchExecutor::new(graph_store.clone());
+
+        let cache = executor.prefetch_neighborhoods("user1", &[node_a, node_b]).await?;
+
+        assert_eq!(executor.graph_store().scan_all_edges().await?.len(), 2);
+        assert_eq!(cache.get_degree(&node_a), 2);
+        let neighbors = cache.get_neighbors(&node_a);
+        assert!(neighbors.contains(&node_b));
+        assert!(neighbors.contains(&node_c));
+        Ok(())
     }
 }

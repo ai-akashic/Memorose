@@ -716,3 +716,147 @@ impl GraphStore {
         Ok(edges)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Duration;
+    use lancedb::connect;
+    use memorose_common::{EdgeKind, RelationType};
+    use std::sync::Arc;
+
+    async fn test_store() -> Result<GraphStore> {
+        let db_path = std::env::temp_dir().join(format!("memorose-graph-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&db_path)?;
+        let db = Arc::new(connect(db_path.to_str().unwrap()).execute().await?);
+        GraphStore::new(db).await
+    }
+
+    fn scoped_edge(
+        user_id: &str,
+        source_id: Uuid,
+        target_id: Uuid,
+        relation: RelationType,
+        weight: f32,
+        namespace_key: &str,
+    ) -> GraphEdge {
+        GraphEdge::new_scoped(
+            user_id.to_string(),
+            source_id,
+            target_id,
+            relation,
+            weight,
+            namespace_key.to_string(),
+            None,
+            None,
+            EdgeKind::Native,
+        )
+    }
+
+    #[test]
+    fn test_dedup_edges_prefers_newer_then_heavier() {
+        let source_id = Uuid::new_v4();
+        let target_id = Uuid::new_v4();
+
+        let mut older = scoped_edge(
+            "user1",
+            source_id,
+            target_id,
+            RelationType::RelatedTo,
+            0.2,
+            "ns:user1",
+        );
+        older.transaction_time = Utc::now() - Duration::seconds(5);
+
+        let mut newer = older.clone();
+        newer.weight = 0.1;
+        newer.transaction_time = older.transaction_time + Duration::seconds(1);
+
+        let deduped = GraphStore::dedup_edges(vec![older.clone(), newer.clone()]);
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(deduped[0].transaction_time, newer.transaction_time);
+
+        let mut same_time_lighter = newer.clone();
+        same_time_lighter.weight = 0.3;
+        let mut same_time_heavier = newer;
+        same_time_heavier.weight = 0.9;
+
+        let deduped = GraphStore::dedup_edges(vec![same_time_lighter, same_time_heavier.clone()]);
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(deduped[0].weight, same_time_heavier.weight);
+    }
+
+    #[tokio::test]
+    async fn test_graph_store_roundtrip_and_batch_queries() -> Result<()> {
+        let store = test_store().await?;
+        let node_a = Uuid::new_v4();
+        let node_b = Uuid::new_v4();
+        let node_c = Uuid::new_v4();
+        let node_d = Uuid::new_v4();
+
+        let edge_ab = scoped_edge("user1", node_a, node_b, RelationType::RelatedTo, 0.4, "ns:u1");
+        let edge_ac = scoped_edge("user1", node_a, node_c, RelationType::Supports, 0.6, "ns:u1");
+        let edge_db = scoped_edge("user1", node_d, node_b, RelationType::Blocks, 0.9, "ns:u1");
+
+        store.add_edge(&edge_ab).await?;
+        store.add_edge(&edge_ac).await?;
+        store.add_edge(&edge_db).await?;
+        store.flush().await?;
+
+        let outgoing = store.get_outgoing_edges("user1", node_a).await?;
+        assert_eq!(outgoing.len(), 2);
+
+        let incoming = store.get_incoming_edges("user1", node_b).await?;
+        assert_eq!(incoming.len(), 2);
+
+        let all_edges = store.get_all_edges_for_user("user1").await?;
+        assert_eq!(all_edges.len(), 3);
+
+        let scanned = store.scan_all_edges().await?;
+        assert_eq!(scanned.len(), 3);
+
+        let batch_outgoing = store
+            .batch_get_outgoing_edges("user1", &[node_a, node_d, Uuid::new_v4()])
+            .await?;
+        assert_eq!(batch_outgoing.get(&node_a).map(Vec::len), Some(2));
+        assert_eq!(batch_outgoing.get(&node_d).map(Vec::len), Some(1));
+
+        let batch_incoming = store
+            .batch_get_incoming_edges("user1", &[node_b, node_c, Uuid::new_v4()])
+            .await?;
+        assert_eq!(batch_incoming.get(&node_b).map(Vec::len), Some(2));
+        assert_eq!(batch_incoming.get(&node_c).map(Vec::len), Some(1));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_reinforce_edge_and_delete_edges_for_node() -> Result<()> {
+        let store = test_store().await?;
+        let node_a = Uuid::new_v4();
+        let node_b = Uuid::new_v4();
+        let node_c = Uuid::new_v4();
+
+        let existing = scoped_edge("user1", node_a, node_b, RelationType::RelatedTo, 0.3, "ns:u1");
+        store.add_edge(&existing).await?;
+        store.flush().await?;
+
+        store.reinforce_edge("user1", node_a, node_b, 0.5).await?;
+        store.flush().await?;
+
+        let outgoing = store.get_outgoing_edges("user1", node_a).await?;
+        assert_eq!(outgoing.len(), 1);
+        assert!((outgoing[0].weight - 0.8).abs() < f32::EPSILON);
+
+        let buffered = scoped_edge("user1", node_b, node_c, RelationType::Supports, 0.2, "ns:u1");
+        store.add_edge(&buffered).await?;
+
+        let deleted = store.delete_edges_for_node("user1", node_b).await?;
+        assert_eq!(deleted, 2);
+        assert!(store.get_outgoing_edges("user1", node_a).await?.is_empty());
+        assert!(store.get_incoming_edges("user1", node_b).await?.is_empty());
+        assert!(store.get_outgoing_edges("user1", node_b).await?.is_empty());
+
+        Ok(())
+    }
+}

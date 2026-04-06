@@ -74,3 +74,46 @@ impl CommunityDetector {
         communities
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use memorose_common::RelationType;
+
+    fn edge(source_id: Uuid, target_id: Uuid) -> GraphEdge {
+        GraphEdge::new(
+            "user1".to_string(),
+            source_id,
+            target_id,
+            RelationType::RelatedTo,
+            1.0,
+        )
+    }
+
+    #[test]
+    fn test_detect_communities_returns_empty_for_empty_graph() {
+        let communities = CommunityDetector::detect_communities(&[]);
+        assert!(communities.is_empty());
+    }
+
+    #[test]
+    fn test_detect_communities_separates_disconnected_components() {
+        let node_a = Uuid::new_v4();
+        let node_b = Uuid::new_v4();
+        let node_c = Uuid::new_v4();
+        let node_d = Uuid::new_v4();
+        let node_e = Uuid::new_v4();
+
+        let communities = CommunityDetector::detect_communities(&[
+            edge(node_a, node_b),
+            edge(node_b, node_c),
+            edge(node_d, node_e),
+        ]);
+
+        assert_eq!(communities.len(), 5);
+        assert_eq!(communities.get(&node_a), communities.get(&node_b));
+        assert_eq!(communities.get(&node_b), communities.get(&node_c));
+        assert_eq!(communities.get(&node_d), communities.get(&node_e));
+        assert_ne!(communities.get(&node_a), communities.get(&node_d));
+    }
+}

@@ -17,7 +17,7 @@ import type { AgentSummary } from "@/lib/types";
 import { motion } from "framer-motion";
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
-import { DashboardHero, DashboardStatRail } from "@/components/dashboard-chrome";
+import { DashboardHero } from "@/components/dashboard-chrome";
 
 function formatRelativeTime(timestamp: number | null, now: number | null, t: ReturnType<typeof useTranslations>): string {
   if (!timestamp) return t("time.never");
@@ -56,7 +56,7 @@ function KpiCard({
         <CardContent className="p-5 flex flex-col gap-4 h-full relative z-10">
           <div className="flex items-center gap-2">
             <Icon className={`w-4 h-4 ${color} opacity-60 group-hover:opacity-100 transition-opacity shrink-0`} />
-            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground truncate">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground truncate">
               {label}
             </span>
           </div>
@@ -93,16 +93,16 @@ function AgentRow({ agent, index, now }: { agent: AgentSummary; index: number; n
         </div>
       </TableCell>
       <TableCell className="text-center">
-        <span className="font-mono text-[11px] text-foreground/60">{formatNumber(agent.total_memories)}</span>
+        <span className="font-mono text-[10px] text-foreground/60">{formatNumber(agent.total_memories)}</span>
       </TableCell>
       <TableCell className="text-center">
-        <span className="font-mono text-[11px] text-primary/70">{formatNumber(agent.l1_count)}</span>
+        <span className="font-mono text-[10px] text-primary/70">{formatNumber(agent.l1_count)}</span>
       </TableCell>
       <TableCell className="text-center">
-        <span className="font-mono text-[11px] text-success/70">{formatNumber(agent.l2_count)}</span>
+        <span className="font-mono text-[10px] text-success/70">{formatNumber(agent.l2_count)}</span>
       </TableCell>
       <TableCell className="text-center">
-        <span className="font-mono text-[11px] text-muted-foreground/50">{formatNumber(agent.total_events)}</span>
+        <span className="font-mono text-[10px] text-muted-foreground/50">{formatNumber(agent.total_events)}</span>
       </TableCell>
       <TableCell className="px-5">
         <span className={`font-mono text-[10px] uppercase tracking-wider ${isRecent ? "text-success/70" : "text-muted-foreground/30"}`}>{relTime}</span>
@@ -134,13 +134,6 @@ export default function AgentsPage() {
           kicker={t("sectionLabel")}
           title={t("title")}
         >
-          <DashboardStatRail
-            items={[
-              { label: t("kpi.count"), value: data?.total_count ?? 0, tone: "primary" },
-              { label: t("kpi.memories"), value: totalMemories, tone: "success" },
-              { label: t("kpi.events"), value: totalEvents, tone: "warning" },
-            ]}
-          />
         </DashboardHero>
       </motion.div>
 
@@ -162,19 +155,19 @@ export default function AgentsPage() {
         <Table>
           <TableHeader className="bg-card">
             <TableRow className="border-border hover:bg-transparent">
-              <TableHead className="px-5 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("table.agent")}</TableHead>
-              <TableHead className="text-center text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("table.memories")}</TableHead>
-              <TableHead className="text-center text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("table.l1")}</TableHead>
-              <TableHead className="text-center text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("table.l2")}</TableHead>
-              <TableHead className="text-center text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("table.events")}</TableHead>
-              <TableHead className="px-5 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("table.lastActive")}</TableHead>
+              <TableHead className="px-5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("table.agent")}</TableHead>
+              <TableHead className="text-center text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("table.memories")}</TableHead>
+              <TableHead className="text-center text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("table.l1")}</TableHead>
+              <TableHead className="text-center text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("table.l2")}</TableHead>
+              <TableHead className="text-center text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("table.events")}</TableHead>
+              <TableHead className="px-5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("table.lastActive")}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {error ? (
               <TableRow className="border-border hover:bg-transparent">
                 <TableCell colSpan={6} className="p-10 text-center">
-                  <span className="text-destructive text-[11px] font-medium uppercase tracking-widest">{t("syncError")}</span>
+                  <span className="text-destructive text-[10px] font-bold uppercase tracking-wider">{t("syncError")}</span>
                 </TableCell>
               </TableRow>
             ) : isLoading ? (
@@ -192,7 +185,7 @@ export default function AgentsPage() {
                     <div className="w-12 h-12 rounded-2xl bg-card border border-border flex items-center justify-center">
                       <Bot className="w-5 h-5 opacity-10" />
                     </div>
-                    <p className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("empty")}</p>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("empty")}</p>
                   </div>
                 </TableCell>
               </TableRow>

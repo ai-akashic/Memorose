@@ -174,6 +174,161 @@ impl HttpReranker {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Duration, Utc};
+    use memorose_common::{MemoryType, SharePolicy};
+    use tempfile::tempdir;
+    use uuid::Uuid;
+
+    fn build_memory(content: &str, importance: f32, age_days: i64) -> MemoryUnit {
+        let mut unit = MemoryUnit::new(
+            None,
+            "user-1".to_string(),
+            None,
+            Uuid::new_v4(),
+            MemoryType::Factual,
+            content.to_string(),
+            None,
+        );
+        unit.importance = importance;
+        unit.transaction_time = Utc::now() - Duration::days(age_days);
+        unit.last_accessed_at = unit.transaction_time;
+        unit.share_policy = SharePolicy::default();
+        unit
+    }
+
+    #[tokio::test]
+    async fn test_weighted_reranker_returns_empty_for_no_candidates() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let store = KvStore::open(temp_dir.path())?;
+        let reranker = WeightedReranker::new();
+
+        let reranked = reranker.rerank("query", &store, Vec::new()).await?;
+        assert!(reranked.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_weighted_reranker_prefers_recent_and_important_memories() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let store = KvStore::open(temp_dir.path())?;
+        let reranker = WeightedReranker::new();
+        reranker
+            .save_weights(
+                &store,
+                RerankerWeights {
+                    similarity_weight: 0.1,
+                    importance_weight: 1.0,
+                    recency_weight: 1.0,
+                },
+            )
+            .await?;
+
+        let old_high_similarity = build_memory("old", 0.1, 30);
+        let fresh_important = build_memory("fresh", 1.0, 0);
+
+        let reranked = reranker
+            .rerank(
+                "query",
+                &store,
+                vec![(old_high_similarity.clone(), 0.9), (fresh_important.clone(), 0.6)],
+            )
+            .await?;
+
+        assert_eq!(reranked.len(), 2);
+        assert_eq!(reranked[0].0.content, "fresh");
+        assert!(reranked[0].1 > reranked[1].1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_weighted_reranker_apply_feedback_updates_and_clamps_weights() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let store = KvStore::open(temp_dir.path())?;
+        let reranker = WeightedReranker::new();
+
+        for idx in 0..300 {
+            reranker
+                .apply_feedback(
+                    &store,
+                    Vec::new(),
+                    vec![format!("uncited-{idx}")],
+                )
+                .await?;
+        }
+
+        let weights = reranker.get_weights(&store).await?;
+        assert!((weights.similarity_weight - 0.1).abs() < 1e-6);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_weighted_reranker_reads_persisted_weights() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let store = KvStore::open(temp_dir.path())?;
+        let reranker = WeightedReranker::new();
+
+        store.put(
+            b"reranker:weights",
+            &serde_json::to_vec(&RerankerWeights {
+                similarity_weight: 1.4,
+                importance_weight: 0.7,
+                recency_weight: 0.2,
+            })?,
+        )?;
+
+        let weights = reranker.get_weights(&store).await?;
+        assert!((weights.similarity_weight - 1.4).abs() < 1e-6);
+        assert!((weights.importance_weight - 0.7).abs() < 1e-6);
+        assert!((weights.recency_weight - 0.2).abs() < 1e-6);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_http_reranker_returns_empty_for_no_candidates() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let store = KvStore::open(temp_dir.path())?;
+        let reranker = HttpReranker::new("http://localhost:9".to_string());
+
+        let reranked = reranker.rerank("query", &store, Vec::new()).await?;
+        assert!(reranked.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_http_reranker_invalid_endpoint_errors() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let store = KvStore::open(temp_dir.path())?;
+        let reranker = HttpReranker::new("not-a-valid-url".to_string());
+
+        let err = reranker
+            .rerank(
+                "query",
+                &store,
+                vec![(build_memory("candidate", 0.5, 1), 0.6)],
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(!err.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_http_reranker_apply_feedback_is_noop() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let store = KvStore::open(temp_dir.path())?;
+        let reranker = HttpReranker::new("http://localhost:9".to_string());
+
+        reranker
+            .apply_feedback(&store, vec!["a".to_string()], vec!["b".to_string()])
+            .await?;
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl Reranker for HttpReranker {
     async fn rerank(

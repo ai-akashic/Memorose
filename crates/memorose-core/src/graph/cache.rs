@@ -172,6 +172,7 @@ pub struct CacheStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use memorose_common::RelationType;
 
     #[tokio::test]
     async fn test_cache_hit_miss() {
@@ -256,5 +257,69 @@ mod tests {
 
         // Cache for user2 should be preserved
         assert!(cache.get_edges(&key2).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_node_list_stats_and_clear() {
+        let cache = QueryCache::new(CacheConfig::default());
+        let key = CacheKey::MultiHopTraversal {
+            user_id: "user1".to_string(),
+            start_nodes: vec![Uuid::new_v4()],
+            max_hops: 2,
+        };
+        let community_key = CacheKey::CommunityDetection {
+            user_id: "user1".to_string(),
+            algorithm: "louvain".to_string(),
+        };
+
+        cache
+            .put_edges(
+                community_key.clone(),
+                vec![GraphEdge::new(
+                    "user1".to_string(),
+                    Uuid::new_v4(),
+                    Uuid::new_v4(),
+                    RelationType::RelatedTo,
+                    1.0,
+                )],
+            )
+            .await;
+        cache.put_node_list(key.clone(), vec![Uuid::new_v4()]).await;
+
+        assert_eq!(cache.get_node_list(&key).await.unwrap().len(), 1);
+        assert!(QueryCache::key_matches_user(&community_key, "user1"));
+        assert!(!QueryCache::key_matches_user(&community_key, "user2"));
+
+        let stats = cache.stats().await;
+        assert_eq!(stats.edge_cache_size, 1);
+        assert_eq!(stats.node_cache_size, 1);
+        assert_eq!(stats.max_entries, CacheConfig::default().max_entries);
+
+        cache.clear().await;
+        assert!(cache.get_edges(&community_key).await.is_none());
+        assert!(cache.get_node_list(&key).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_disabled_cache_is_noop() {
+        let cache = QueryCache::new(CacheConfig {
+            enabled: false,
+            ..Default::default()
+        });
+
+        let key = CacheKey::OneHopNeighbors {
+            user_id: "user1".to_string(),
+            node_id: Uuid::new_v4(),
+            direction: Direction::Incoming,
+        };
+
+        cache.put_edges(key.clone(), vec![]).await;
+        cache.put_node_list(key.clone(), vec![Uuid::new_v4()]).await;
+
+        assert!(cache.get_edges(&key).await.is_none());
+        assert!(cache.get_node_list(&key).await.is_none());
+        let stats = cache.stats().await;
+        assert_eq!(stats.edge_cache_size, 0);
+        assert_eq!(stats.node_cache_size, 0);
     }
 }

@@ -784,6 +784,7 @@ mod tests {
     use crate::raft::types::ClientRequest;
     use crate::MemoroseEngine;
     use memorose_common::Event;
+    use std::collections::BTreeMap;
     use openraft::{LeaderId, LogId, Vote};
     use tempfile::tempdir;
     use uuid::Uuid;
@@ -801,6 +802,29 @@ mod tests {
         let read = store.read_vote().await.expect("read_vote failed");
         assert_eq!(read, Some(vote));
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_read_vote_is_none_by_default() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let mut store = MemoroseRaftStorage::new(engine);
+
+        assert_eq!(store.read_vote().await?, None);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_read_vote_returns_error_for_invalid_payload() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        engine.system_kv().put(b"raft:vote", b"invalid-vote")?;
+        let mut store = MemoroseRaftStorage::new(engine);
+
+        assert!(store.read_vote().await.is_err());
         Ok(())
     }
 
@@ -833,6 +857,395 @@ mod tests {
         assert_eq!(entries[0].log_id.index, 1);
         assert_eq!(entries[1].log_id.index, 2);
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_try_get_log_entries_supports_excluded_and_unbounded_ranges() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let mut store = MemoroseRaftStorage::new(engine);
+
+        let entries = (1..=3)
+            .map(|index| Entry {
+                log_id: LogId::new(LeaderId::new(1, 1), index),
+                payload: openraft::EntryPayload::Blank,
+            })
+            .collect::<Vec<_>>();
+        store.append_to_log(entries).await?;
+
+        let excluded = store
+            .try_get_log_entries((
+                std::ops::Bound::Excluded(1_u64),
+                std::ops::Bound::Included(3_u64),
+            ))
+            .await?;
+        assert_eq!(excluded.len(), 2);
+        assert_eq!(excluded[0].log_id.index, 2);
+        assert_eq!(excluded[1].log_id.index, 3);
+
+        let unbounded = store.try_get_log_entries(..).await?;
+        assert_eq!(unbounded.len(), 3);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_try_get_log_entries_supports_excluded_end_bound() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let mut store = MemoroseRaftStorage::new(engine);
+
+        let entries = (1..=3)
+            .map(|index| Entry {
+                log_id: LogId::new(LeaderId::new(1, 1), index),
+                payload: openraft::EntryPayload::Blank,
+            })
+            .collect::<Vec<_>>();
+        store.append_to_log(entries).await?;
+
+        let ranged = store
+            .try_get_log_entries((
+                std::ops::Bound::Included(1_u64),
+                std::ops::Bound::Excluded(3_u64),
+            ))
+            .await?;
+        assert_eq!(ranged.len(), 2);
+        assert_eq!(ranged[0].log_id.index, 1);
+        assert_eq!(ranged[1].log_id.index, 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_try_get_log_entries_returns_error_for_invalid_entry_bytes() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        engine
+            .system_kv()
+            .put(b"raft:log:00000000000000000001", b"invalid-entry")?;
+        let mut store = MemoroseRaftStorage::new(engine);
+
+        assert!(store.try_get_log_entries(..).await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_log_state_is_empty_by_default() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let mut store = MemoroseRaftStorage::new(engine);
+
+        let state = store.get_log_state().await.expect("get_log_state failed");
+        assert_eq!(state.last_log_id, None);
+        assert_eq!(state.last_purged_log_id, None);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_log_state_returns_error_for_invalid_last_log_index() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        engine.system_kv().put(b"raft:last_log_index", b"not-json")?;
+        let mut store = MemoroseRaftStorage::new(engine);
+
+        assert!(store.get_log_state().await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_log_state_returns_none_when_last_log_entry_missing() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        engine
+            .system_kv()
+            .put(b"raft:last_log_index", &serde_json::to_vec(&9_u64)?)?;
+        let mut store = MemoroseRaftStorage::new(engine);
+
+        let state = store.get_log_state().await?;
+        assert_eq!(state.last_log_id, None);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_log_state_returns_error_for_invalid_last_log_entry_payload(
+    ) -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        engine
+            .system_kv()
+            .put(b"raft:last_log_index", &serde_json::to_vec(&1_u64)?)?;
+        engine
+            .system_kv()
+            .put(b"raft:log:00000000000000000001", b"invalid-entry")?;
+        let mut store = MemoroseRaftStorage::new(engine);
+
+        assert!(store.get_log_state().await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_delete_conflict_logs_since_truncates_suffix() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let mut store = MemoroseRaftStorage::new(engine);
+
+        let entries = (1..=3)
+            .map(|index| Entry {
+                log_id: LogId::new(LeaderId::new(1, 1), index),
+                payload: openraft::EntryPayload::Blank,
+            })
+            .collect::<Vec<_>>();
+        store.append_to_log(entries).await?;
+
+        store
+            .delete_conflict_logs_since(LogId::new(LeaderId::new(1, 1), 2))
+            .await?;
+
+        let remaining = store.try_get_log_entries(1..=3).await?;
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].log_id.index, 1);
+        let state = store.get_log_state().await?;
+        assert_eq!(state.last_log_id.map(|v| v.index), Some(1));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_delete_conflict_logs_since_zero_clears_all_logs() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let mut store = MemoroseRaftStorage::new(engine);
+
+        let entries = (1..=2)
+            .map(|index| Entry {
+                log_id: LogId::new(LeaderId::new(1, 1), index),
+                payload: openraft::EntryPayload::Blank,
+            })
+            .collect::<Vec<_>>();
+        store.append_to_log(entries).await?;
+
+        store
+            .delete_conflict_logs_since(LogId::new(LeaderId::new(1, 1), 0))
+            .await?;
+
+        let remaining = store.try_get_log_entries(..).await?;
+        assert!(remaining.is_empty());
+        let state = store.get_log_state().await?;
+        assert_eq!(state.last_log_id, None);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_purge_logs_upto_removes_prefix() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let mut store = MemoroseRaftStorage::new(engine);
+
+        let entries = (1..=3)
+            .map(|index| Entry {
+                log_id: LogId::new(LeaderId::new(1, 1), index),
+                payload: openraft::EntryPayload::Blank,
+            })
+            .collect::<Vec<_>>();
+        store.append_to_log(entries).await?;
+
+        store
+            .purge_logs_upto(LogId::new(LeaderId::new(1, 1), 2))
+            .await?;
+
+        let remaining = store.try_get_log_entries(1..=3).await?;
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].log_id.index, 3);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_last_applied_state_reconstructs_membership_from_logs() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let mut store = MemoroseRaftStorage::new(engine.clone());
+
+        let membership: openraft::Membership<u64, BasicNode> = BTreeMap::from([
+            (1, BasicNode::new("127.0.0.1:3001")),
+            (2, BasicNode::new("127.0.0.1:3002")),
+        ])
+        .into();
+        let entry = Entry {
+            log_id: LogId::new(LeaderId::new(1, 1), 2),
+            payload: openraft::EntryPayload::Membership(membership.clone()),
+        };
+        store.append_to_log(vec![entry.clone()]).await?;
+        let last_applied = serde_json::to_vec(&entry.log_id)?;
+        engine.system_kv().put(b"raft:last_applied", &last_applied)?;
+
+        let (applied, stored_membership) = store.last_applied_state().await?;
+
+        assert_eq!(applied, Some(entry.log_id));
+        assert_eq!(stored_membership.log_id().as_ref(), Some(&entry.log_id));
+        assert_eq!(stored_membership.membership().voter_ids().count(), 2);
+        assert!(engine.system_kv().get(b"raft:last_membership")?.is_some());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_last_applied_state_defaults_without_progress_or_membership() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let mut store = MemoroseRaftStorage::new(engine);
+
+        let (applied, membership) = store.last_applied_state().await?;
+        assert_eq!(applied, None);
+        assert!(membership.log_id().is_none());
+        assert_eq!(membership.membership().voter_ids().count(), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_last_applied_state_prefers_persisted_membership() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let mut store = MemoroseRaftStorage::new(engine.clone());
+
+        let membership: openraft::Membership<u64, BasicNode> =
+            BTreeMap::from([(7, BasicNode::new("127.0.0.1:3007"))]).into();
+        let stored = openraft::StoredMembership::new(
+            Some(LogId::new(LeaderId::new(7, 1), 9)),
+            membership,
+        );
+        engine
+            .system_kv()
+            .put(b"raft:last_membership", &serde_json::to_vec(&stored)?)?;
+
+        let (_applied, loaded) = store.last_applied_state().await?;
+        assert_eq!(loaded.log_id().as_ref(), stored.log_id().as_ref());
+        assert_eq!(loaded.membership().voter_ids().count(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_last_applied_state_ignores_invalid_log_entries_during_migration(
+    ) -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let mut store = MemoroseRaftStorage::new(engine.clone());
+
+        engine.system_kv().put(
+            b"raft:last_applied",
+            &serde_json::to_vec(&LogId::new(LeaderId::new(1, 1), 2))?,
+        )?;
+        engine
+            .system_kv()
+            .put(b"raft:log:00000000000000000001", b"invalid-entry")?;
+
+        let (applied, membership) = store.last_applied_state().await?;
+        assert_eq!(applied.map(|log_id| log_id.index), Some(2));
+        assert!(membership.log_id().is_none());
+        assert_eq!(membership.membership().voter_ids().count(), 0);
+        assert!(engine.system_kv().get(b"raft:last_membership")?.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_buffers_and_current_snapshot_roundtrip() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let mut store = MemoroseRaftStorage::new(engine);
+
+        let receiving = store.begin_receiving_snapshot().await?;
+        assert_eq!(receiving.into_inner(), Vec::<u8>::new());
+        assert!(store.get_current_snapshot().await?.is_none());
+
+        let meta = SnapshotMeta {
+            last_log_id: Some(LogId::new(LeaderId::new(1, 1), 7)),
+            last_membership: openraft::StoredMembership::default(),
+            snapshot_id: "snap-7".to_string(),
+        };
+        let data = b"snapshot-bytes".to_vec();
+        *store.current_snapshot.lock().unwrap() = Some(StoredSnapshot {
+            meta: meta.clone(),
+            data: data.clone(),
+        });
+
+        let current = store
+            .get_current_snapshot()
+            .await?
+            .expect("snapshot should exist");
+        assert_eq!(current.meta.snapshot_id, "snap-7");
+        assert_eq!(current.snapshot.into_inner(), data);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_build_snapshot_populates_current_snapshot() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let mut store = MemoroseRaftStorage::new(engine);
+
+        let entry = Entry {
+            log_id: LogId::new(LeaderId::new(1, 2), 4),
+            payload: openraft::EntryPayload::Blank,
+        };
+        store.append_to_log(vec![entry.clone()]).await?;
+        store.apply_to_state_machine(&[entry.clone()]).await?;
+
+        let snapshot = store.build_snapshot().await?;
+        assert_eq!(snapshot.meta.last_log_id, Some(entry.log_id));
+        assert!(snapshot.meta.snapshot_id.contains("-4"));
+
+        let current = store.get_current_snapshot().await?.expect("snapshot cached");
+        assert_eq!(current.meta.last_log_id, Some(entry.log_id));
+        assert!(!current.snapshot.into_inner().is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_build_snapshot_without_logs_uses_default_log_id() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let mut store = MemoroseRaftStorage::new(engine);
+
+        let snapshot = store.build_snapshot().await?;
+        let last_log_id = snapshot.meta.last_log_id.expect("default log id");
+        assert_eq!(last_log_id.index, 0);
+        assert!(snapshot.meta.snapshot_id.ends_with("-0"));
+
+        let current = store.get_current_snapshot().await?.expect("snapshot cached");
+        assert_eq!(current.meta.last_log_id, Some(last_log_id));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_install_snapshot_returns_error_for_invalid_archive() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let mut store = MemoroseRaftStorage::new(engine);
+
+        let meta = SnapshotMeta {
+            last_log_id: None,
+            last_membership: openraft::StoredMembership::default(),
+            snapshot_id: "broken".to_string(),
+        };
+
+        let result = store
+            .install_snapshot(&meta, Box::new(Cursor::new(b"not-a-tar-gz".to_vec())))
+            .await;
+        assert!(result.is_err());
         Ok(())
     }
 
@@ -873,7 +1286,133 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Snapshot build/install requires full RocksDB + LanceDB lifecycle; tracked for future fix
+    async fn test_state_machine_blank_entry_updates_last_applied() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let mut store = MemoroseRaftStorage::new(engine);
+
+        let entry = Entry {
+            log_id: LogId::new(LeaderId::new(2, 3), 5),
+            payload: openraft::EntryPayload::Blank,
+        };
+
+        let responses = store.apply_to_state_machine(&[entry.clone()]).await?;
+        assert_eq!(responses.len(), 1);
+        assert!(responses[0].success);
+
+        let (last_applied, _) = store.last_applied_state().await?;
+        assert_eq!(last_applied, Some(entry.log_id));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_state_machine_invalid_event_returns_unsuccessful_response() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let mut store = MemoroseRaftStorage::new(engine.clone());
+
+        let entry = Entry {
+            log_id: LogId::new(LeaderId::new(3, 1), 6),
+            payload: openraft::EntryPayload::Normal(ClientRequest::IngestEvent(Event::new(
+                None,
+                "test_user".into(),
+                None,
+                Uuid::new_v4(),
+                memorose_common::EventContent::Text("   ".into()),
+            ))),
+        };
+
+        let responses = store.apply_to_state_machine(&[entry.clone()]).await?;
+        assert_eq!(responses.len(), 1);
+        assert!(!responses[0].success);
+
+        let (last_applied, _) = store.last_applied_state().await?;
+        assert_eq!(last_applied, Some(entry.log_id));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_log_reader_and_snapshot_builder_clone_storage() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let mut store = MemoroseRaftStorage::new(engine);
+
+        let mut reader = store.get_log_reader().await;
+        let mut builder = store.get_snapshot_builder().await;
+
+        assert!(reader.get_log_state().await.is_ok());
+        assert!(builder.get_current_snapshot().await?.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_state_machine_membership_application_persists_membership() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let mut store = MemoroseRaftStorage::new(engine.clone());
+
+        let membership: openraft::Membership<u64, BasicNode> = BTreeMap::from([
+            (1, BasicNode::new("127.0.0.1:3001")),
+            (2, BasicNode::new("127.0.0.1:3002")),
+        ])
+        .into();
+        let entry = Entry {
+            log_id: LogId::new(LeaderId::new(1, 1), 3),
+            payload: openraft::EntryPayload::Membership(membership),
+        };
+
+        let responses = store.apply_to_state_machine(&[entry.clone()]).await?;
+        assert_eq!(responses.len(), 1);
+        assert!(responses[0].success);
+        assert!(engine.system_kv().get(b"raft:last_membership")?.is_some());
+        assert_eq!(
+            engine
+                .system_kv()
+                .get(b"raft:last_applied")?
+                .map(|bytes| serde_json::from_slice::<LogId<u64>>(&bytes))
+                .transpose()?,
+            Some(entry.log_id)
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_state_machine_update_graph_application_stores_edge() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let mut store = MemoroseRaftStorage::new(engine.clone());
+
+        let edge = memorose_common::GraphEdge::new(
+            "test_user".to_string(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            memorose_common::RelationType::RelatedTo,
+            0.9,
+        );
+        let entry = Entry {
+            log_id: LogId::new(LeaderId::new(1, 1), 4),
+            payload: openraft::EntryPayload::Normal(ClientRequest::UpdateGraph(edge.clone())),
+        };
+
+        let responses = store.apply_to_state_machine(&[entry]).await?;
+        assert_eq!(responses.len(), 1);
+        assert!(responses[0].success);
+        engine.graph().flush().await?;
+        let outgoing = engine
+            .graph()
+            .get_outgoing_edges(&edge.user_id, edge.source_id)
+            .await?;
+        assert_eq!(outgoing.len(), 1);
+        assert_eq!(outgoing[0].target_id, edge.target_id);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_snapshot_build_and_install() -> anyhow::Result<()> {
         let temp_dir_src = tempdir()?;
         let engine_src =

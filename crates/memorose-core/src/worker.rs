@@ -1,8 +1,8 @@
 use crate::llm::{EmbedInput, EmbedPart, LLMClient};
 use crate::MemoroseEngine;
 use anyhow::Result;
-use memorose_common::{config::AppConfig, Asset, MemoryUnit};
-use std::collections::HashMap;
+use memorose_common::{config::AppConfig, Asset, GraphEdge, MemoryUnit};
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -51,6 +51,62 @@ impl BackgroundWorker {
             description,
             metadata: std::collections::HashMap::new(),
         }
+    }
+
+    async fn hydrate_extracted_facts(&self, unit: &mut MemoryUnit) {
+        if unit.level != 1 || unit.memory_type != memorose_common::MemoryType::Factual {
+            return;
+        }
+
+        let mut stored_facts = Vec::new();
+
+        if let Some(client) = self.llm_client.clone() {
+            let arbitrator = crate::arbitrator::Arbitrator::with_client(client);
+            match arbitrator.extract_memory_facts(unit).await {
+                Ok(facts) => {
+                    stored_facts.extend(
+                        facts
+                            .into_iter()
+                            .filter_map(crate::fact_extraction::stored_fact_from_extracted_fact),
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        "Memory fact extraction during worker hydration failed for {}: {:?}",
+                        unit.id,
+                        error
+                    );
+                }
+            }
+        }
+
+        if stored_facts.is_empty() {
+            stored_facts.extend(
+                crate::fact_extraction::detect_memory_facts(unit)
+                    .iter()
+                    .map(crate::fact_extraction::stored_fact_from_descriptor),
+            );
+        }
+
+        let mut deduped = Vec::new();
+        let mut seen = HashSet::new();
+        for fact in stored_facts {
+            let key = format!(
+                "{}|{}|{}|{}|{}",
+                fact.subject,
+                fact.subject_ref.as_deref().unwrap_or(""),
+                fact.attribute,
+                fact.canonical_value
+                    .as_deref()
+                    .unwrap_or(fact.value.as_str()),
+                fact.change_type
+            );
+            if seen.insert(key) {
+                deduped.push(fact);
+            }
+        }
+
+        unit.extracted_facts = deduped;
     }
 
     pub fn new(engine: MemoroseEngine) -> Self {
@@ -756,6 +812,166 @@ impl BackgroundWorker {
     }
 
     /// Helper for pipeline batch processing
+    async fn reconcile_staged_units_before_store(
+        &self,
+        units: &mut Vec<MemoryUnit>,
+    ) -> Result<Vec<GraphEdge>> {
+        let mut removed_ids = HashSet::new();
+        let mut staged_edges = Vec::new();
+        let mut edge_keys = HashSet::new();
+
+        for index in 0..units.len() {
+            let unit = units[index].clone();
+            if removed_ids.contains(&unit.id)
+                || unit.level != 1
+                || unit.memory_type != memorose_common::MemoryType::Factual
+                || !matches!(
+                    unit.domain,
+                    memorose_common::MemoryDomain::Agent | memorose_common::MemoryDomain::User
+                )
+            {
+                continue;
+            }
+
+            let context = units[..index]
+                .iter()
+                .filter(|candidate| {
+                    !removed_ids.contains(&candidate.id)
+                        && candidate.user_id == unit.user_id
+                        && candidate.level == 1
+                        && candidate.memory_type == memorose_common::MemoryType::Factual
+                        && matches!(
+                            candidate.domain,
+                            memorose_common::MemoryDomain::Agent
+                                | memorose_common::MemoryDomain::User
+                        )
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+
+            if context.is_empty() {
+                continue;
+            }
+
+            let actions = self
+                .engine
+                .detect_memory_correction_actions(&unit, &context)
+                .await?;
+
+            for action in actions {
+                if action.target_id == unit.id || removed_ids.contains(&action.target_id) {
+                    continue;
+                }
+
+                let Some(target_unit) = units[..index]
+                    .iter()
+                    .find(|candidate| candidate.id == action.target_id)
+                else {
+                    continue;
+                };
+
+                let decision = self
+                    .engine
+                    .validate_memory_correction_relation(
+                        &unit,
+                        target_unit,
+                        action.kind,
+                        action.confidence,
+                    )
+                    .await;
+
+                match decision {
+                    crate::engine::ValidatedCorrectionDecision::Tombstone { relation } => {
+                        removed_ids.insert(action.target_id);
+                        let _ =
+                            self.engine
+                                .record_rac_decision_with_review(&crate::engine::RacDecisionRecord {
+                                    created_at: chrono::Utc::now(),
+                                    stage: "staged_pre_store".into(),
+                                    user_id: unit.user_id.clone(),
+                                    org_id: unit.org_id.clone(),
+                                    source_unit_id: unit.id,
+                                    target_unit_id: Some(action.target_id),
+                                    action: format!("{:?}", action.kind).to_ascii_lowercase(),
+                                    confidence: action.confidence,
+                                    effect: crate::engine::RacDecisionEffect::Tombstone,
+                                    relation: Some(format!("{:?}", relation).to_ascii_lowercase()),
+                                    reason: action.reason.clone(),
+                                    guard_reason: None,
+                                });
+                    }
+                    crate::engine::ValidatedCorrectionDecision::RelationOnly {
+                        relation,
+                        guard_reason,
+                    } => {
+                        let relation_name = format!("{:?}", relation).to_ascii_lowercase();
+                        let edge_key = (
+                            unit.user_id.clone(),
+                            unit.id,
+                            action.target_id,
+                            relation_name.clone(),
+                        );
+                        if edge_keys.insert(edge_key) {
+                            staged_edges.push(GraphEdge::new(
+                                unit.user_id.clone(),
+                                unit.id,
+                                action.target_id,
+                                relation.clone(),
+                                action.confidence,
+                            ));
+                        }
+                        let _ =
+                            self.engine
+                                .record_rac_decision_with_review(&crate::engine::RacDecisionRecord {
+                                    created_at: chrono::Utc::now(),
+                                    stage: "staged_pre_store".into(),
+                                    user_id: unit.user_id.clone(),
+                                    org_id: unit.org_id.clone(),
+                                    source_unit_id: unit.id,
+                                    target_unit_id: Some(action.target_id),
+                                    action: format!("{:?}", action.kind).to_ascii_lowercase(),
+                                    confidence: action.confidence,
+                                    effect: crate::engine::RacDecisionEffect::RelationOnly,
+                                    relation: Some(relation_name),
+                                    reason: action.reason.clone(),
+                                    guard_reason,
+                                });
+                    }
+                    crate::engine::ValidatedCorrectionDecision::Skip {
+                        effect,
+                        guard_reason,
+                    } => {
+                        let _ =
+                            self.engine
+                                .record_rac_decision_with_review(&crate::engine::RacDecisionRecord {
+                                    created_at: chrono::Utc::now(),
+                                    stage: "staged_pre_store".into(),
+                                    user_id: unit.user_id.clone(),
+                                    org_id: unit.org_id.clone(),
+                                    source_unit_id: unit.id,
+                                    target_unit_id: Some(action.target_id),
+                                    action: format!("{:?}", action.kind).to_ascii_lowercase(),
+                                    confidence: action.confidence,
+                                    effect,
+                                    relation: None,
+                                    reason: action.reason.clone(),
+                                    guard_reason: Some(guard_reason),
+                                });
+                    }
+                }
+            }
+        }
+
+        units.retain(|unit| !removed_ids.contains(&unit.id));
+
+        let surviving_ids = units.iter().map(|unit| unit.id).collect::<HashSet<_>>();
+        staged_edges.retain(|edge| {
+            surviving_ids.contains(&edge.source_id) && surviving_ids.contains(&edge.target_id)
+        });
+
+        Ok(staged_edges)
+    }
+
     async fn process_pipeline_batch(
         &self,
         batch: Vec<(
@@ -905,6 +1121,7 @@ impl BackgroundWorker {
                 }
             }
 
+            self.hydrate_extracted_facts(&mut unit).await;
             units_to_store.push(unit);
             for evt_id in event_ids {
                 processed_ids.push(evt_id.to_string());
@@ -912,9 +1129,35 @@ impl BackgroundWorker {
         }
 
         if !units_to_store.is_empty() {
-            self.engine
-                .store_memory_units(units_to_store.clone())
+            let staged_edges = self
+                .reconcile_staged_units_before_store(&mut units_to_store)
                 .await?;
+
+            for unit in &units_to_store {
+                if unit.level == 1
+                    && unit.memory_type == memorose_common::MemoryType::Factual
+                    && matches!(
+                        unit.domain,
+                        memorose_common::MemoryDomain::Agent | memorose_common::MemoryDomain::User
+                    )
+                {
+                    if let Err(error) = self.engine.reconcile_conflicting_memory_unit(unit).await {
+                        tracing::error!(
+                            "Pre-store memory reconciliation failed for unit {}: {:?}",
+                            unit.id,
+                            error
+                        );
+                    }
+                }
+            }
+
+            self.engine
+                .store_memory_units_without_reconciliation(units_to_store.clone())
+                .await?;
+
+            for edge in staged_edges {
+                self.engine.graph().add_edge(&edge).await?;
+            }
 
             // Post-storage hooks (Reflection markers, etc.)
             let mut l1_increase_by_user: HashMap<String, usize> = HashMap::new();
@@ -1194,7 +1437,8 @@ mod tests {
     use super::*;
     use crate::llm::CompressionOutput;
     use async_trait::async_trait;
-    use memorose_common::{Event, EventContent};
+    use memorose_common::{Event, EventContent, L3Task, MemoryType, TaskStatus};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::tempdir;
     use uuid::Uuid;
 
@@ -1202,12 +1446,32 @@ mod tests {
 
     struct MockLLM {
         fail_compress: bool,
+        generate_response: Option<String>,
     }
+
+    struct ContextAwareCorrectionLLM;
+
+    struct BatchFallbackLLM {
+        single_embed_calls: AtomicUsize,
+    }
+
+    struct FactErrorLLM;
+
+    struct AssetErrorLLM;
+
+    struct ConfidenceCorrectionLLM {
+        confidence: f32,
+    }
+
+    struct TopicLLM;
 
     #[async_trait]
     impl crate::llm::LLMClient for MockLLM {
         async fn generate(&self, _prompt: &str) -> Result<crate::llm::LLMResponse<String>> {
-            Ok(crate::llm::LLMResponse::default())
+            Ok(crate::llm::LLMResponse {
+                data: self.generate_response.clone().unwrap_or_default(),
+                usage: Default::default(),
+            })
         }
         async fn embed(&self, _text: &str) -> Result<crate::llm::LLMResponse<Vec<f32>>> {
             Ok(crate::llm::LLMResponse {
@@ -1260,6 +1524,429 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl crate::llm::LLMClient for ContextAwareCorrectionLLM {
+        async fn generate(&self, prompt: &str) -> Result<crate::llm::LLMResponse<String>> {
+            let first_target_id = prompt
+                .lines()
+                .find_map(|line| {
+                    line.strip_prefix("ID: ")
+                        .and_then(|value| Uuid::parse_str(value.trim()).ok())
+                })
+                .map(|id| id.to_string());
+
+            let data = if prompt.contains("Content: I now live in Beijing") {
+                first_target_id
+                    .map(|target_id| {
+                        format!(
+                            r#"[{{"target_id":"{}","action":"OBSOLETE","reason":"Residence updated","confidence":0.97}}]"#,
+                            target_id
+                        )
+                    })
+                    .unwrap_or_else(|| "[]".into())
+            } else {
+                "[]".into()
+            };
+
+            Ok(crate::llm::LLMResponse {
+                data,
+                usage: Default::default(),
+            })
+        }
+
+        async fn embed(&self, _text: &str) -> Result<crate::llm::LLMResponse<Vec<f32>>> {
+            Ok(crate::llm::LLMResponse {
+                data: vec![0.0; 384],
+                usage: Default::default(),
+            })
+        }
+
+        async fn compress(
+            &self,
+            text: &str,
+            _is_agent: bool,
+        ) -> Result<crate::llm::LLMResponse<CompressionOutput>> {
+            Ok(crate::llm::LLMResponse {
+                data: CompressionOutput {
+                    content: text.to_string(),
+                    valid_at: None,
+                },
+                usage: Default::default(),
+            })
+        }
+
+        async fn summarize_group(
+            &self,
+            texts: Vec<String>,
+        ) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: texts.join("\n"),
+                usage: Default::default(),
+            })
+        }
+
+        async fn describe_image(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "image".into(),
+                usage: Default::default(),
+            })
+        }
+
+        async fn describe_video(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "video".into(),
+                usage: Default::default(),
+            })
+        }
+
+        async fn transcribe(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "audio".into(),
+                usage: Default::default(),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl crate::llm::LLMClient for BatchFallbackLLM {
+        async fn generate(&self, _prompt: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: String::new(),
+                usage: Default::default(),
+            })
+        }
+
+        async fn embed(&self, text: &str) -> Result<crate::llm::LLMResponse<Vec<f32>>> {
+            self.single_embed_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(crate::llm::LLMResponse {
+                data: vec![text.len() as f32],
+                usage: Default::default(),
+            })
+        }
+
+        async fn embed_content_batch(
+            &self,
+            _inputs: Vec<EmbedInput>,
+        ) -> Result<crate::llm::LLMResponse<Vec<Vec<f32>>>> {
+            Ok(crate::llm::LLMResponse {
+                data: vec![vec![999.0]],
+                usage: Default::default(),
+            })
+        }
+
+        async fn compress(
+            &self,
+            text: &str,
+            _is_agent: bool,
+        ) -> Result<crate::llm::LLMResponse<CompressionOutput>> {
+            Ok(crate::llm::LLMResponse {
+                data: CompressionOutput {
+                    content: text.to_string(),
+                    valid_at: None,
+                },
+                usage: Default::default(),
+            })
+        }
+
+        async fn summarize_group(
+            &self,
+            _texts: Vec<String>,
+        ) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "summary".into(),
+                usage: Default::default(),
+            })
+        }
+
+        async fn describe_image(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "image".into(),
+                usage: Default::default(),
+            })
+        }
+
+        async fn describe_video(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "video".into(),
+                usage: Default::default(),
+            })
+        }
+
+        async fn transcribe(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "audio".into(),
+                usage: Default::default(),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl crate::llm::LLMClient for FactErrorLLM {
+        async fn generate(&self, _prompt: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Err(anyhow::anyhow!("fact extraction failed"))
+        }
+
+        async fn embed(&self, _text: &str) -> Result<crate::llm::LLMResponse<Vec<f32>>> {
+            Ok(crate::llm::LLMResponse {
+                data: vec![0.0; 384],
+                usage: Default::default(),
+            })
+        }
+
+        async fn compress(
+            &self,
+            text: &str,
+            _is_agent: bool,
+        ) -> Result<crate::llm::LLMResponse<CompressionOutput>> {
+            Ok(crate::llm::LLMResponse {
+                data: CompressionOutput {
+                    content: text.to_string(),
+                    valid_at: None,
+                },
+                usage: Default::default(),
+            })
+        }
+
+        async fn summarize_group(
+            &self,
+            _texts: Vec<String>,
+        ) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "summary".into(),
+                usage: Default::default(),
+            })
+        }
+
+        async fn describe_image(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "image".into(),
+                usage: Default::default(),
+            })
+        }
+
+        async fn describe_video(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "video".into(),
+                usage: Default::default(),
+            })
+        }
+
+        async fn transcribe(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "audio".into(),
+                usage: Default::default(),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl crate::llm::LLMClient for AssetErrorLLM {
+        async fn generate(&self, _prompt: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: String::new(),
+                usage: Default::default(),
+            })
+        }
+
+        async fn embed(&self, _text: &str) -> Result<crate::llm::LLMResponse<Vec<f32>>> {
+            Ok(crate::llm::LLMResponse {
+                data: vec![0.0; 384],
+                usage: Default::default(),
+            })
+        }
+
+        async fn compress(
+            &self,
+            text: &str,
+            _is_agent: bool,
+        ) -> Result<crate::llm::LLMResponse<CompressionOutput>> {
+            Ok(crate::llm::LLMResponse {
+                data: CompressionOutput {
+                    content: text.to_string(),
+                    valid_at: None,
+                },
+                usage: Default::default(),
+            })
+        }
+
+        async fn summarize_group(
+            &self,
+            _texts: Vec<String>,
+        ) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "summary".into(),
+                usage: Default::default(),
+            })
+        }
+
+        async fn describe_image(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Err(anyhow::anyhow!("image description failed"))
+        }
+
+        async fn describe_video(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Err(anyhow::anyhow!("video description failed"))
+        }
+
+        async fn transcribe(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Err(anyhow::anyhow!("audio transcription failed"))
+        }
+    }
+
+    #[async_trait]
+    impl crate::llm::LLMClient for ConfidenceCorrectionLLM {
+        async fn generate(&self, prompt: &str) -> Result<crate::llm::LLMResponse<String>> {
+            let first_target_id = prompt
+                .lines()
+                .find_map(|line| {
+                    line.strip_prefix("ID: ")
+                        .and_then(|value| Uuid::parse_str(value.trim()).ok())
+                })
+                .map(|id| id.to_string());
+
+            let data = if prompt.contains("Content: I now live in Beijing") {
+                first_target_id
+                    .map(|target_id| {
+                        format!(
+                            r#"[{{"target_id":"{}","action":"OBSOLETE","reason":"Residence updated","confidence":{}}}]"#,
+                            target_id, self.confidence
+                        )
+                    })
+                    .unwrap_or_else(|| "[]".into())
+            } else {
+                "[]".into()
+            };
+
+            Ok(crate::llm::LLMResponse {
+                data,
+                usage: Default::default(),
+            })
+        }
+
+        async fn embed(&self, _text: &str) -> Result<crate::llm::LLMResponse<Vec<f32>>> {
+            Ok(crate::llm::LLMResponse {
+                data: vec![0.0; 384],
+                usage: Default::default(),
+            })
+        }
+
+        async fn compress(
+            &self,
+            text: &str,
+            _is_agent: bool,
+        ) -> Result<crate::llm::LLMResponse<CompressionOutput>> {
+            Ok(crate::llm::LLMResponse {
+                data: CompressionOutput {
+                    content: text.to_string(),
+                    valid_at: None,
+                },
+                usage: Default::default(),
+            })
+        }
+
+        async fn summarize_group(
+            &self,
+            texts: Vec<String>,
+        ) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: texts.join("\n"),
+                usage: Default::default(),
+            })
+        }
+
+        async fn describe_image(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "image".into(),
+                usage: Default::default(),
+            })
+        }
+
+        async fn describe_video(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "video".into(),
+                usage: Default::default(),
+            })
+        }
+
+        async fn transcribe(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "audio".into(),
+                usage: Default::default(),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl crate::llm::LLMClient for TopicLLM {
+        async fn generate(&self, prompt: &str) -> Result<crate::llm::LLMResponse<String>> {
+            let ids = prompt
+                .lines()
+                .filter_map(|line| {
+                    line.strip_prefix("ID: ")
+                        .and_then(|value| Uuid::parse_str(value.trim()).ok())
+                })
+                .map(|id| format!(r#""{}""#, id))
+                .collect::<Vec<_>>()
+                .join(",");
+
+            Ok(crate::llm::LLMResponse {
+                data: format!(r#"[{{"summary":"Topic summary","source_ids":[{}]}}]"#, ids),
+                usage: Default::default(),
+            })
+        }
+
+        async fn embed(&self, _text: &str) -> Result<crate::llm::LLMResponse<Vec<f32>>> {
+            Ok(crate::llm::LLMResponse {
+                data: vec![0.0; 3],
+                usage: Default::default(),
+            })
+        }
+
+        async fn compress(
+            &self,
+            text: &str,
+            _is_agent: bool,
+        ) -> Result<crate::llm::LLMResponse<CompressionOutput>> {
+            Ok(crate::llm::LLMResponse {
+                data: CompressionOutput {
+                    content: text.to_string(),
+                    valid_at: None,
+                },
+                usage: Default::default(),
+            })
+        }
+
+        async fn summarize_group(
+            &self,
+            texts: Vec<String>,
+        ) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: texts.join("\n"),
+                usage: Default::default(),
+            })
+        }
+
+        async fn describe_image(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "image".into(),
+                usage: Default::default(),
+            })
+        }
+
+        async fn describe_video(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "video".into(),
+                usage: Default::default(),
+            })
+        }
+
+        async fn transcribe(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "audio".into(),
+                usage: Default::default(),
+            })
+        }
+    }
+
     #[tokio::test]
     async fn test_consolidation_with_llm_failure() -> Result<()> {
         let temp_dir = tempdir()?;
@@ -1269,6 +1956,7 @@ mod tests {
         let mut worker = BackgroundWorker::new(engine.clone());
         worker.llm_client = Some(Arc::new(MockLLM {
             fail_compress: true,
+            generate_response: None,
         }));
         *worker.last_consolidation.lock().await =
             std::time::Instant::now() - Duration::from_secs(1);
@@ -1294,6 +1982,461 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_normalize_asset_storage_key_and_build_asset() {
+        let http = BackgroundWorker::normalize_asset_storage_key("image", "https://a/b.png");
+        assert_eq!(http, "https://a/b.png");
+
+        let generated = BackgroundWorker::normalize_asset_storage_key("image", " raw-inline ");
+        assert!(generated.starts_with("inline://image/"));
+
+        let asset = BackgroundWorker::build_asset(
+            " raw-inline ".into(),
+            "photo.png",
+            "image",
+            Some("preview".into()),
+        );
+        assert_eq!(asset.original_name, "photo.png");
+        assert_eq!(asset.asset_type, "image");
+        assert_eq!(asset.description.as_deref(), Some("preview"));
+        assert!(asset.storage_key.starts_with("inline://image/"));
+    }
+
+    #[test]
+    fn test_parse_metadata_embedding_and_semantic_fingerprint() {
+        let metadata = serde_json::json!({"embedding":[1.0, 2.5, 3.25]});
+        assert_eq!(
+            BackgroundWorker::parse_metadata_embedding(&metadata),
+            Some(Some(vec![1.0, 2.5, 3.25]))
+        );
+
+        let empty = serde_json::json!({"embedding":[]});
+        assert_eq!(BackgroundWorker::parse_metadata_embedding(&empty), Some(None));
+
+        let invalid = serde_json::json!({"embedding":[1.0, "oops"]});
+        assert_eq!(BackgroundWorker::parse_metadata_embedding(&invalid), Some(None));
+
+        let fingerprint_a =
+            BackgroundWorker::generate_semantic_fingerprint("Tool failed at 12:01!!!");
+        let fingerprint_b =
+            BackgroundWorker::generate_semantic_fingerprint("tool failed at 12:02");
+        assert_eq!(fingerprint_a, fingerprint_b);
+    }
+
+    #[tokio::test]
+    async fn test_extract_text_and_embed_input_for_text_json_and_inline_media() -> Result<()> {
+        let stream_id = Uuid::new_v4();
+        let llm = MockLLM {
+            fail_compress: false,
+            generate_response: None,
+        };
+
+        let text_event = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            EventContent::Text("Hello".into()),
+        );
+        let (text, text_input, text_assets) =
+            BackgroundWorker::extract_text_and_embed_input(&text_event, Some(&llm)).await;
+        assert_eq!(text, "Hello");
+        assert!(matches!(text_input, EmbedInput::Text(ref v) if v == "Hello"));
+        assert!(text_assets.is_empty());
+
+        let json_event = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            EventContent::Json(serde_json::json!({"kind":"demo"})),
+        );
+        let (json_text, json_input, json_assets) =
+            BackgroundWorker::extract_text_and_embed_input(&json_event, Some(&llm)).await;
+        assert!(json_text.contains("\"kind\":\"demo\""));
+        assert!(matches!(json_input, EmbedInput::Text(_)));
+        assert!(json_assets.is_empty());
+
+        let image_event = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            EventContent::Image("YmFzZTY0aW1hZ2U=".into()),
+        );
+        let (image_text, image_input, image_assets) =
+            BackgroundWorker::extract_text_and_embed_input(&image_event, Some(&llm)).await;
+        assert_eq!(image_text, "image");
+        assert!(matches!(image_input, EmbedInput::Multimodal { .. }));
+        assert_eq!(image_assets.len(), 1);
+
+        let audio_event = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            EventContent::Audio("YmFzZTY0YXVkaW8=".into()),
+        );
+        let (_, audio_input, audio_assets) =
+            BackgroundWorker::extract_text_and_embed_input(&audio_event, Some(&llm)).await;
+        assert!(matches!(audio_input, EmbedInput::Multimodal { .. }));
+        assert_eq!(audio_assets.len(), 1);
+
+        let video_event = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            EventContent::Video("YmFzZTY0dmlkZW8=".into()),
+        );
+        let (_, video_input, video_assets) =
+            BackgroundWorker::extract_text_and_embed_input(&video_event, Some(&llm)).await;
+        assert!(matches!(video_input, EmbedInput::Multimodal { .. }));
+        assert_eq!(video_assets.len(), 1);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_extract_text_and_embed_input_without_llm_uses_plain_fallbacks() -> Result<()> {
+        let stream_id = Uuid::new_v4();
+
+        let image_event = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            EventContent::Image("ZmFrZS1pbWFnZQ==".into()),
+        );
+        let (image_text, _, _) =
+            BackgroundWorker::extract_text_and_embed_input(&image_event, None).await;
+        assert_eq!(image_text, "Image at ZmFrZS1pbWFnZQ==");
+
+        let audio_event = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            EventContent::Audio("ZmFrZS1hdWRpbw==".into()),
+        );
+        let (audio_text, _, _) =
+            BackgroundWorker::extract_text_and_embed_input(&audio_event, None).await;
+        assert_eq!(audio_text, "Audio at ZmFrZS1hdWRpbw==");
+
+        let video_event = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            EventContent::Video("ZmFrZS12aWRlbw==".into()),
+        );
+        let (video_text, _, _) =
+            BackgroundWorker::extract_text_and_embed_input(&video_event, None).await;
+        assert_eq!(video_text, "Video at ZmFrZS12aWRlbw==");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_extract_text_and_embed_input_falls_back_when_media_llm_calls_fail() -> Result<()> {
+        let stream_id = Uuid::new_v4();
+        let llm = AssetErrorLLM;
+
+        let image_event = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            EventContent::Image("aW1hZ2UtYnl0ZXM=".into()),
+        );
+        let (image_text, image_input, image_assets) =
+            BackgroundWorker::extract_text_and_embed_input(&image_event, Some(&llm)).await;
+        assert_eq!(image_text, "Image at aW1hZ2UtYnl0ZXM=");
+        assert!(matches!(image_input, EmbedInput::Multimodal { .. }));
+        assert!(image_assets[0].storage_key.starts_with("inline://image/"));
+
+        let audio_event = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            EventContent::Audio("YXVkaW8tYnl0ZXM=".into()),
+        );
+        let (audio_text, audio_input, audio_assets) =
+            BackgroundWorker::extract_text_and_embed_input(&audio_event, Some(&llm)).await;
+        assert_eq!(audio_text, "Audio at YXVkaW8tYnl0ZXM=");
+        assert!(matches!(audio_input, EmbedInput::Multimodal { .. }));
+        assert!(audio_assets[0].storage_key.starts_with("inline://audio/"));
+
+        let video_event = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            EventContent::Video("dmlkZW8tYnl0ZXM=".into()),
+        );
+        let (video_text, video_input, video_assets) =
+            BackgroundWorker::extract_text_and_embed_input(&video_event, Some(&llm)).await;
+        assert_eq!(video_text, "Video at dmlkZW8tYnl0ZXM=");
+        assert!(matches!(video_input, EmbedInput::Multimodal { .. }));
+        assert!(video_assets[0].storage_key.starts_with("inline://video/"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_hydrate_extracted_facts_skips_non_l1_and_falls_back_on_llm_error() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut worker = BackgroundWorker::new(engine);
+        worker.llm_client = Some(Arc::new(MockLLM {
+            fail_compress: false,
+            generate_response: None,
+        }));
+
+        let mut non_l1 = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            MemoryType::Factual,
+            "I live in Beijing".into(),
+            None,
+        );
+        non_l1.level = 2;
+        worker.hydrate_extracted_facts(&mut non_l1).await;
+        assert!(non_l1.extracted_facts.is_empty());
+
+        let mut factual = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            MemoryType::Factual,
+            "I now live in Beijing".into(),
+            None,
+        );
+        worker.hydrate_extracted_facts(&mut factual).await;
+        assert!(factual
+            .extracted_facts
+            .iter()
+            .any(|fact| fact.attribute == "residence"
+                && fact.canonical_value.as_deref() == Some("beijing")));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_hydrate_extracted_facts_logs_llm_error_and_uses_rule_fallback() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut worker = BackgroundWorker::new(engine);
+        worker.llm_client = Some(Arc::new(FactErrorLLM));
+
+        let mut factual = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            MemoryType::Factual,
+            "I now live in Beijing".into(),
+            None,
+        );
+        worker.hydrate_extracted_facts(&mut factual).await;
+
+        assert!(factual
+            .extracted_facts
+            .iter()
+            .any(|fact| fact.attribute == "residence"
+                && fact.canonical_value.as_deref() == Some("beijing")));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_decay_cycle_decays_and_prunes_active_users() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            MemoryType::Factual,
+            "Low importance memory".into(),
+            None,
+        );
+        unit.importance = 0.15;
+        let unit_id = unit.id;
+        engine.store_memory_unit(unit).await?;
+        engine
+            .system_kv()
+            .put(format!("active_user:{TEST_USER}").as_bytes(), b"1")?;
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.config.decay_interval_secs = 1;
+        worker.config.decay_factor = 0.5;
+        worker.config.prune_threshold = 0.1;
+        *worker.last_decay.lock().await = std::time::Instant::now() - Duration::from_secs(2);
+
+        worker.run_decay_cycle().await?;
+
+        assert!(engine.get_memory_unit(TEST_USER, unit_id).await?.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_l3_task_cycle_completes_ready_tasks_and_emits_event() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        engine
+            .store_memory_unit(MemoryUnit::new(
+                None,
+                TEST_USER.into(),
+                None,
+                stream_id,
+                MemoryType::Factual,
+                "seed user entry".into(),
+                None,
+            ))
+            .await?;
+
+        let mut completed_dep = L3Task::new(
+            None,
+            TEST_USER.into(),
+            None,
+            "Dependency".into(),
+            "already finished".into(),
+        );
+        completed_dep.status = TaskStatus::Completed;
+        completed_dep.progress = 1.0;
+        engine.store_l3_task(&completed_dep).await?;
+
+        let mut ready = L3Task::new(
+            None,
+            TEST_USER.into(),
+            None,
+            "Ready task".into(),
+            "should auto complete".into(),
+        );
+        ready.dependencies = vec![completed_dep.task_id];
+        engine.store_l3_task(&ready).await?;
+
+        let mut blocked = L3Task::new(
+            None,
+            TEST_USER.into(),
+            None,
+            "Blocked task".into(),
+            "missing dep".into(),
+        );
+        blocked.dependencies = vec![Uuid::new_v4()];
+        engine.store_l3_task(&blocked).await?;
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.llm_client = Some(Arc::new(MockLLM {
+            fail_compress: false,
+            generate_response: Some("LLM summary".into()),
+        }));
+
+        worker.run_l3_task_cycle().await?;
+
+        let ready_after = engine
+            .get_l3_task(TEST_USER, ready.task_id)
+            .await?
+            .expect("ready task should exist");
+        assert_eq!(ready_after.status, TaskStatus::Completed);
+        assert_eq!(ready_after.progress, 1.0);
+        assert_eq!(ready_after.result_summary.as_deref(), Some("LLM summary"));
+
+        let blocked_after = engine
+            .get_l3_task(TEST_USER, blocked.task_id)
+            .await?
+            .expect("blocked task should exist");
+        assert_eq!(blocked_after.status, TaskStatus::Pending);
+
+        let pending_events = engine.fetch_pending_events().await?;
+        assert_eq!(pending_events.len(), 1);
+        assert_eq!(pending_events[0].agent_id.as_deref(), Some("system_worker"));
+        assert!(matches!(
+            &pending_events[0].content,
+            EventContent::Text(content)
+                if content.contains("Completed Milestone 'Ready task': LLM summary")
+        ));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_consolidation_cycle_returns_false_when_no_pending_events() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let mut worker = BackgroundWorker::new(engine);
+        worker.config.consolidation_interval_ms = 1;
+        *worker.last_consolidation.lock().await = std::time::Instant::now() - Duration::from_secs(1);
+
+        assert!(!worker.run_consolidation_cycle().await?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_consolidation_cycle_skips_when_interval_not_elapsed() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let worker = BackgroundWorker::new(engine);
+        let processed = worker.run_consolidation_cycle().await?;
+
+        assert!(!processed);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_consolidation_cycle_marks_exhausted_retries_failed() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let worker = BackgroundWorker::new(engine.clone());
+        *worker.last_consolidation.lock().await =
+            std::time::Instant::now() - Duration::from_secs(1);
+
+        let event = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            EventContent::Text("Retry me".into()),
+        );
+        let event_id = event.id.to_string();
+        engine.ingest_event_directly(event).await?;
+
+        for _ in 0..worker.config.consolidation_max_retries {
+            engine.increment_retry_count_if_pending(&event_id).await?;
+        }
+
+        let processed = worker.run_consolidation_cycle().await?;
+        assert!(!processed);
+        assert_eq!(engine.fetch_pending_events().await?.len(), 0);
+        assert_eq!(engine.get_retry_count(&event_id).await?, 0);
+
+        Ok(())
+    }
+
     #[tokio::test]
     async fn test_consolidation_cycle_success() -> Result<()> {
         let temp_dir = tempdir()?;
@@ -1303,6 +2446,7 @@ mod tests {
         let mut worker = BackgroundWorker::new(engine.clone());
         worker.llm_client = Some(Arc::new(MockLLM {
             fail_compress: false,
+            generate_response: None,
         }));
         *worker.last_consolidation.lock().await =
             std::time::Instant::now() - Duration::from_secs(1);
@@ -1334,6 +2478,7 @@ mod tests {
         let mut worker = BackgroundWorker::new(engine.clone());
         worker.llm_client = Some(Arc::new(MockLLM {
             fail_compress: false,
+            generate_response: None,
         }));
         *worker.last_consolidation.lock().await =
             std::time::Instant::now() - Duration::from_secs(1);
@@ -1366,6 +2511,721 @@ mod tests {
         assert!(l1s.iter().any(|u| u.stream_id == stream_a));
         assert!(l1s.iter().any(|u| u.stream_id == stream_b));
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_process_pipeline_batch_reconciles_before_store() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let stream_id = Uuid::new_v4();
+
+        let old_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Home base: Shanghai".into(),
+            None,
+        );
+        let old_id = old_unit.id;
+
+        let correction_llm = Arc::new(MockLLM {
+            fail_compress: false,
+            generate_response: Some(format!(
+                r#"[{{"target_id":"{}","action":"OBSOLETE","reason":"Residence updated","confidence":0.96}}]"#,
+                old_id
+            )),
+        });
+
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true)
+            .await?
+            .with_arbitrator(crate::arbitrator::Arbitrator::with_client(
+                correction_llm.clone(),
+            ));
+        engine.store_memory_unit(old_unit).await?;
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.llm_client = Some(correction_llm);
+
+        let processed = worker
+            .process_pipeline_batch(vec![(
+                vec![Uuid::new_v4()],
+                TEST_USER.into(),
+                stream_id,
+                "I now live in Beijing".into(),
+                None,
+                Vec::new(),
+                serde_json::json!({}),
+                None,
+            )])
+            .await?;
+
+        assert_eq!(processed.len(), 1);
+        assert!(engine.is_memory_unit_forgotten(TEST_USER, old_id)?);
+        assert!(engine.get_memory_unit(TEST_USER, old_id).await?.is_none());
+
+        let l1s = engine.fetch_recent_l1_units(TEST_USER, 10).await?;
+        assert!(l1s
+            .iter()
+            .any(|unit| unit.content == "I now live in Beijing"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_process_pipeline_batch_reconciles_staged_units_before_store() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let stream_id = Uuid::new_v4();
+
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true)
+            .await?
+            .with_arbitrator(crate::arbitrator::Arbitrator::with_client(Arc::new(
+                ContextAwareCorrectionLLM,
+            )));
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.llm_client = Some(Arc::new(MockLLM {
+            fail_compress: false,
+            generate_response: None,
+        }));
+
+        let processed = worker
+            .process_pipeline_batch(vec![
+                (
+                    vec![Uuid::new_v4()],
+                    TEST_USER.into(),
+                    stream_id,
+                    "I live in Shanghai".into(),
+                    None,
+                    Vec::new(),
+                    serde_json::json!({}),
+                    None,
+                ),
+                (
+                    vec![Uuid::new_v4()],
+                    TEST_USER.into(),
+                    stream_id,
+                    "I now live in Beijing".into(),
+                    None,
+                    Vec::new(),
+                    serde_json::json!({}),
+                    None,
+                ),
+            ])
+            .await?;
+
+        assert_eq!(processed.len(), 2);
+
+        let l1s = engine.fetch_recent_l1_units(TEST_USER, 10).await?;
+        assert_eq!(l1s.len(), 1);
+        assert_eq!(l1s[0].content, "I now live in Beijing");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_process_pipeline_batch_persists_extracted_facts() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.llm_client = Some(Arc::new(MockLLM {
+            fail_compress: false,
+            generate_response: Some(
+                r#"{"facts":[{"subject":"user","subject_ref":"user:self","attribute":"residence","value":"Beijing","change_type":"update","temporal_status":"current","polarity":"positive","evidence_span":"I now live in Beijing","confidence":0.93}]}"#
+                    .into(),
+            ),
+        }));
+
+        let processed = worker
+            .process_pipeline_batch(vec![(
+                vec![Uuid::new_v4()],
+                TEST_USER.into(),
+                stream_id,
+                "I now live in Beijing".into(),
+                None,
+                Vec::new(),
+                serde_json::json!({}),
+                None,
+            )])
+            .await?;
+
+        assert_eq!(processed.len(), 1);
+
+        let l1s = engine.fetch_recent_l1_units(TEST_USER, 10).await?;
+        assert_eq!(l1s.len(), 1);
+        assert_eq!(l1s[0].extracted_facts.len(), 1);
+        assert_eq!(
+            l1s[0].extracted_facts[0].subject_ref.as_deref(),
+            Some("user:self")
+        );
+        assert_eq!(
+            l1s[0].extracted_facts[0].canonical_value.as_deref(),
+            Some("beijing")
+        );
+        assert_eq!(
+            l1s[0].extracted_facts[0].evidence_span.as_deref(),
+            Some("I now live in Beijing")
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_process_pipeline_batch_falls_back_to_multi_rule_fact_extraction() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.llm_client = Some(Arc::new(MockLLM {
+            fail_compress: false,
+            generate_response: None,
+        }));
+
+        let processed = worker
+            .process_pipeline_batch(vec![(
+                vec![Uuid::new_v4()],
+                TEST_USER.into(),
+                stream_id,
+                "I now live in Beijing and my email is dylan@example.com".into(),
+                None,
+                Vec::new(),
+                serde_json::json!({}),
+                None,
+            )])
+            .await?;
+
+        assert_eq!(processed.len(), 1);
+
+        let l1s = engine.fetch_recent_l1_units(TEST_USER, 10).await?;
+        assert_eq!(l1s.len(), 1);
+        assert_eq!(l1s[0].extracted_facts.len(), 2);
+        assert!(l1s[0]
+            .extracted_facts
+            .iter()
+            .any(|fact| fact.attribute == "residence"
+                && fact.canonical_value.as_deref() == Some("beijing")));
+        assert!(l1s[0]
+            .extracted_facts
+            .iter()
+            .any(|fact| fact.attribute == "contact"
+                && fact.canonical_value.as_deref() == Some("dylan@example.com")));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_process_pipeline_batch_uses_metadata_embedding_and_task_metadata() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let parent_id = Uuid::new_v4();
+        let stream_id = Uuid::new_v4();
+
+        let worker = BackgroundWorker::new(engine.clone());
+        let processed = worker
+            .process_pipeline_batch(vec![(
+                vec![Uuid::new_v4()],
+                TEST_USER.into(),
+                stream_id,
+                "Task progress update".into(),
+                Some("2026-04-06T10:20:30Z".into()),
+                Vec::new(),
+                serde_json::json!({
+                    "embedding": [0.25, 0.5, 0.75],
+                    "target_level": 1,
+                    "parent_id": parent_id.to_string(),
+                    "task_status": "Completed",
+                    "task_progress": 0.6
+                }),
+                None,
+            )])
+            .await?;
+
+        assert_eq!(processed.len(), 1);
+        let l1s = engine.fetch_recent_l1_units(TEST_USER, 10).await?;
+        assert_eq!(l1s.len(), 1);
+        assert_eq!(l1s[0].embedding.as_deref(), Some(&[0.25, 0.5, 0.75][..]));
+        assert_eq!(l1s[0].valid_time.map(|dt| dt.to_rfc3339()), Some("2026-04-06T10:20:30+00:00".into()));
+        assert!(l1s[0].references.contains(&parent_id));
+        assert_eq!(l1s[0].task_metadata.as_ref().map(|meta| meta.progress), Some(0.6));
+        assert_eq!(
+            l1s[0].task_metadata.as_ref().map(|meta| meta.status.clone()),
+            Some(TaskStatus::Completed)
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_process_pipeline_batch_falls_back_to_individual_embed_content_calls() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+        let llm = Arc::new(BatchFallbackLLM {
+            single_embed_calls: AtomicUsize::new(0),
+        });
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.llm_client = Some(llm.clone());
+
+        let processed = worker
+            .process_pipeline_batch(vec![
+                (
+                    vec![Uuid::new_v4()],
+                    TEST_USER.into(),
+                    stream_id,
+                    "alpha".into(),
+                    None,
+                    Vec::new(),
+                    serde_json::json!({}),
+                    None,
+                ),
+                (
+                    vec![Uuid::new_v4()],
+                    TEST_USER.into(),
+                    stream_id,
+                    "beta beta".into(),
+                    None,
+                    Vec::new(),
+                    serde_json::json!({}),
+                    None,
+                ),
+            ])
+            .await?;
+
+        assert_eq!(processed.len(), 2);
+        assert_eq!(llm.single_embed_calls.load(Ordering::SeqCst), 2);
+        let l1s = engine.fetch_recent_l1_units(TEST_USER, 10).await?;
+        assert_eq!(l1s.len(), 2);
+        assert!(l1s.iter().any(|unit| unit.content == "alpha" && unit.embedding.as_deref() == Some(&[5.0][..])));
+        assert!(l1s.iter().any(|unit| unit.content == "beta beta" && unit.embedding.as_deref() == Some(&[9.0][..])));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_process_pipeline_batch_sets_reflect_and_community_markers() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.config.community_trigger_l1_step = 1;
+
+        let processed = worker
+            .process_pipeline_batch(vec![(
+                vec![Uuid::new_v4()],
+                TEST_USER.into(),
+                stream_id,
+                "hello marker".into(),
+                None,
+                Vec::new(),
+                serde_json::json!({}),
+                None,
+            )])
+            .await?;
+
+        assert_eq!(processed.len(), 1);
+        assert_eq!(engine.get_pending_reflections()?, vec![TEST_USER.to_string()]);
+        assert_eq!(engine.get_pending_communities()?, vec![TEST_USER.to_string()]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_process_pipeline_batch_stages_relation_only_edge_for_medium_confidence_obsolete(
+    ) -> Result<()> {
+        let temp_dir = tempdir()?;
+        let stream_id = Uuid::new_v4();
+        let correction_llm = Arc::new(ConfidenceCorrectionLLM { confidence: 0.78 });
+
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true)
+            .await?
+            .with_arbitrator(crate::arbitrator::Arbitrator::with_client(
+                correction_llm.clone(),
+            ));
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.llm_client = Some(correction_llm);
+
+        let processed = worker
+            .process_pipeline_batch(vec![
+                (
+                    vec![Uuid::new_v4()],
+                    TEST_USER.into(),
+                    stream_id,
+                    "I live in Shanghai".into(),
+                    None,
+                    Vec::new(),
+                    serde_json::json!({}),
+                    None,
+                ),
+                (
+                    vec![Uuid::new_v4()],
+                    TEST_USER.into(),
+                    stream_id,
+                    "I now live in Beijing".into(),
+                    None,
+                    Vec::new(),
+                    serde_json::json!({}),
+                    None,
+                ),
+            ])
+            .await?;
+
+        assert_eq!(processed.len(), 2);
+
+        let l1s = engine.fetch_recent_l1_units(TEST_USER, 10).await?;
+        assert_eq!(l1s.len(), 2);
+        let shanghai = l1s
+            .iter()
+            .find(|unit| unit.content == "I live in Shanghai")
+            .expect("old unit should exist");
+        let beijing = l1s
+            .iter()
+            .find(|unit| unit.content == "I now live in Beijing")
+            .expect("new unit should exist");
+
+        let outgoing = engine.graph().get_outgoing_edges(TEST_USER, beijing.id).await?;
+        assert!(outgoing.iter().any(|edge| edge.target_id == shanghai.id));
+        let recent = engine
+            .list_recent_rac_decisions(8)?
+            .into_iter()
+            .find(|record| record.stage == "staged_pre_store")
+            .expect("expected staged relation-only decision");
+        assert_eq!(recent.effect, crate::engine::RacDecisionEffect::RelationOnly);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_process_pipeline_batch_skips_low_confidence_obsolete_action() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let stream_id = Uuid::new_v4();
+        let correction_llm = Arc::new(ConfidenceCorrectionLLM { confidence: 0.4 });
+
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true)
+            .await?
+            .with_arbitrator(crate::arbitrator::Arbitrator::with_client(
+                correction_llm.clone(),
+            ));
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.llm_client = Some(correction_llm);
+
+        worker
+            .process_pipeline_batch(vec![
+                (
+                    vec![Uuid::new_v4()],
+                    TEST_USER.into(),
+                    stream_id,
+                    "I live in Shanghai".into(),
+                    None,
+                    Vec::new(),
+                    serde_json::json!({}),
+                    None,
+                ),
+                (
+                    vec![Uuid::new_v4()],
+                    TEST_USER.into(),
+                    stream_id,
+                    "I now live in Beijing".into(),
+                    None,
+                    Vec::new(),
+                    serde_json::json!({}),
+                    None,
+                ),
+            ])
+            .await?;
+
+        let l1s = engine.fetch_recent_l1_units(TEST_USER, 10).await?;
+        assert_eq!(l1s.len(), 2);
+        let shanghai = l1s
+            .iter()
+            .find(|unit| unit.content == "I live in Shanghai")
+            .expect("old unit should exist");
+        let beijing = l1s
+            .iter()
+            .find(|unit| unit.content == "I now live in Beijing")
+            .expect("new unit should exist");
+
+        let outgoing = engine.graph().get_outgoing_edges(TEST_USER, beijing.id).await?;
+        assert!(outgoing
+            .iter()
+            .all(|edge| edge.target_id != shanghai.id
+                || !matches!(edge.relation, memorose_common::RelationType::EvolvedTo)));
+        let recent = engine
+            .list_recent_rac_decisions(8)?
+            .into_iter()
+            .find(|record| record.stage == "staged_pre_store")
+            .expect("expected staged skip decision");
+        assert_ne!(recent.effect, crate::engine::RacDecisionEffect::Tombstone);
+        assert_ne!(recent.effect, crate::engine::RacDecisionEffect::RelationOnly);
+        assert_eq!(recent.guard_reason.as_deref(), Some("obsolete_low_confidence"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_consolidation_cycle_uses_semantic_dedup_for_multi_event_batch() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.config.consolidation_interval_ms = 1;
+        *worker.last_consolidation.lock().await = std::time::Instant::now() - Duration::from_secs(1);
+
+        let stream_id = Uuid::new_v4();
+        let event_1 = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            EventContent::Text("First duplicate message".into()),
+        );
+        let event_2 = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            EventContent::Text("Second duplicate message".into()),
+        );
+        engine.ingest_event_directly(event_1).await?;
+        engine.ingest_event_directly(event_2).await?;
+
+        let combined = "Message 1: First duplicate message\nMessage 2: Second duplicate message";
+        let fingerprint = BackgroundWorker::generate_semantic_fingerprint(combined);
+        engine.system_kv().put(
+            format!("dedup:{TEST_USER}:{fingerprint}").as_bytes(),
+            chrono::Utc::now().timestamp().to_string().as_bytes(),
+        )?;
+
+        assert!(worker.run_consolidation_cycle().await?);
+
+        let l1s = engine.fetch_recent_l1_units(TEST_USER, 10).await?;
+        assert_eq!(l1s.len(), 1);
+        assert_eq!(l1s[0].content, combined);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_consolidation_cycle_groups_assistant_events_as_procedural_memory() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.config.consolidation_interval_ms = 1;
+        *worker.last_consolidation.lock().await = std::time::Instant::now() - Duration::from_secs(1);
+
+        let mut event = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            EventContent::Text("Assistant reply".into()),
+        );
+        event.metadata = serde_json::json!({"role":"assistant"});
+        engine.ingest_event_directly(event).await?;
+
+        assert!(worker.run_consolidation_cycle().await?);
+
+        let l1s = engine.fetch_recent_l1_units(TEST_USER, 10).await?;
+        assert_eq!(l1s.len(), 1);
+        assert_eq!(l1s[0].memory_type, MemoryType::Procedural);
+        assert_eq!(l1s[0].content, "Message 1: Assistant reply");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_is_leader_without_raft_returns_true() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let worker = BackgroundWorker::with_config(engine, AppConfig::default());
+
+        assert!(worker.is_leader().await);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_compaction_cycle_skips_when_interval_not_elapsed() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let mut worker = BackgroundWorker::with_config(engine, AppConfig::default());
+        worker.config.compaction_interval_secs = 60;
+
+        let before = *worker.last_compaction.lock().await;
+        worker.run_compaction_cycle().await?;
+        let after = *worker.last_compaction.lock().await;
+        assert_eq!(before, after);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_compaction_cycle_updates_timestamp_when_elapsed() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let mut worker = BackgroundWorker::with_config(engine, AppConfig::default());
+        worker.config.compaction_interval_secs = 1;
+
+        *worker.last_compaction.lock().await = std::time::Instant::now() - Duration::from_secs(2);
+        let before = *worker.last_compaction.lock().await;
+        worker.run_compaction_cycle().await?;
+        let after = *worker.last_compaction.lock().await;
+        assert!(after > before);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_l3_task_cycle_without_llm_uses_default_summary() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        engine
+            .store_memory_unit(MemoryUnit::new(
+                None,
+                TEST_USER.into(),
+                None,
+                Uuid::new_v4(),
+                MemoryType::Factual,
+                "seed user entry".into(),
+                None,
+            ))
+            .await?;
+
+        let ready = L3Task::new(
+            None,
+            TEST_USER.into(),
+            None,
+            "Ready task".into(),
+            "default summary".into(),
+        );
+        engine.store_l3_task(&ready).await?;
+
+        let worker = BackgroundWorker::with_config(engine.clone(), AppConfig::default());
+        worker.run_l3_task_cycle().await?;
+
+        let ready_after = engine
+            .get_l3_task(TEST_USER, ready.task_id)
+            .await?
+            .expect("ready task should exist");
+        assert_eq!(ready_after.status, TaskStatus::Completed);
+        assert_eq!(
+            ready_after.result_summary.as_deref(),
+            Some("Task automatically completed by backend worker without LLM interaction.")
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_insight_cycle_without_llm_returns_early() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let worker = BackgroundWorker::with_config(engine.clone(), AppConfig::default());
+
+        engine.set_needs_reflect(TEST_USER)?;
+        worker.run_insight_cycle().await?;
+
+        assert_eq!(engine.get_pending_reflections()?, vec![TEST_USER.to_string()]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_insight_cycle_clears_marker_when_no_recent_streams() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.llm_client = Some(Arc::new(MockLLM {
+            fail_compress: false,
+            generate_response: None,
+        }));
+        worker.config.insight_interval_ms = 1;
+        *worker.last_insight.lock().await = std::time::Instant::now() - Duration::from_secs(1);
+
+        engine.set_needs_reflect(TEST_USER)?;
+        worker.run_insight_cycle().await?;
+
+        assert!(engine.get_pending_reflections()?.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_insight_cycle_generates_topics_and_clears_marker() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let llm = Arc::new(TopicLLM);
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true)
+            .await?
+            .with_arbitrator(crate::arbitrator::Arbitrator::with_client(llm.clone()));
+
+        let stream_id = Uuid::new_v4();
+        engine
+            .store_memory_unit(MemoryUnit::new(
+                None,
+                TEST_USER.into(),
+                None,
+                stream_id,
+                MemoryType::Factual,
+                "I live in Beijing".into(),
+                None,
+            ))
+            .await?;
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.llm_client = Some(llm);
+        worker.config.insight_interval_ms = 1;
+        *worker.last_insight.lock().await = std::time::Instant::now() - Duration::from_secs(1);
+
+        engine.set_needs_reflect(TEST_USER)?;
+        worker.run_insight_cycle().await?;
+
+        assert!(engine.get_pending_reflections()?.is_empty());
+
+        let prefix = format!("u:{}:unit:", TEST_USER);
+        let kv = engine.kv();
+        let all_units = kv.scan(prefix.as_bytes())?;
+        let topics = all_units
+            .into_iter()
+            .filter_map(|(_, value)| serde_json::from_slice::<MemoryUnit>(&value).ok())
+            .filter(|unit| unit.level == 2 && unit.content == "Topic summary")
+            .collect::<Vec<_>>();
+        assert_eq!(topics.len(), 1);
+        assert_eq!(topics[0].embedding.as_deref(), Some(&[0.0, 0.0, 0.0][..]));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_community_cycle_clears_marker_when_no_edges_exist() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.config.community_interval_ms = 1;
+        *worker.last_community.lock().await = std::time::Instant::now() - Duration::from_secs(1);
+
+        engine.set_needs_community(TEST_USER)?;
+        worker.run_community_cycle().await?;
+
+        assert!(engine.get_pending_communities()?.is_empty());
         Ok(())
     }
 }

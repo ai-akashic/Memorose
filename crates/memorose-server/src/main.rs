@@ -224,6 +224,27 @@ async fn main() {
         .route("/search", post(dashboard::handlers::search))
         .route("/forget/preview", post(dashboard::handlers::forget_preview))
         .route("/forget/execute", post(dashboard::handlers::forget_execute))
+        .route(
+            "/corrections/semantic/preview",
+            post(dashboard::handlers::semantic_memory_preview),
+        )
+        .route(
+            "/corrections/semantic/execute",
+            post(dashboard::handlers::semantic_memory_execute),
+        )
+        .route(
+            "/corrections/manual",
+            post(dashboard::handlers::apply_manual_correction),
+        )
+        .route("/corrections/reviews", get(dashboard::handlers::list_rac_reviews))
+        .route(
+            "/corrections/reviews/:review_id/approve",
+            post(dashboard::handlers::approve_rac_review),
+        )
+        .route(
+            "/corrections/reviews/:review_id/reject",
+            post(dashboard::handlers::reject_rac_review),
+        )
         .route("/chat", post(dashboard::handlers::chat))
         .route("/config", get(dashboard::handlers::get_config))
         .route(
@@ -277,6 +298,14 @@ async fn main() {
         .route(
             "/v1/users/:user_id/memories/:id",
             delete(delete_memory_unit_hard),
+        )
+        .route(
+            "/v1/users/:user_id/memories/semantic/preview",
+            post(dashboard::handlers::user_semantic_memory_preview),
+        )
+        .route(
+            "/v1/users/:user_id/memories/semantic/execute",
+            post(dashboard::handlers::user_semantic_memory_execute),
         )
         .route(
             "/v1/users/:user_id/streams/:stream_id/tasks/tree",
@@ -348,6 +377,32 @@ async fn main() {
     );
     let listener = tokio::net::TcpListener::bind(http_addr).await.unwrap();
 
+    if config.needs_explicit_bootstrap_seed() {
+        tracing::warn!(
+            "Raft auto-bootstrap is enabled, but multi-node topology has no explicit seed; \
+             set `raft.bootstrap_seed_node_id` to the physical node that should initialize the cluster."
+        );
+    }
+
+    if config.should_auto_initialize_raft() {
+        let bootstrap_seed = config
+            .raft
+            .bootstrap_seed_node_id
+            .unwrap_or_else(|| config.physical_node_id());
+        tracing::info!(
+            "Auto-initializing Raft cluster on bootstrap seed node {}...",
+            bootstrap_seed
+        );
+        let results = state.shard_manager.initialize_all(&config).await;
+        let bootstrap_errors = bootstrap_initialize_errors(&results);
+        if !bootstrap_errors.is_empty() {
+            panic!(
+                "raft auto-bootstrap failed during startup: {}",
+                bootstrap_errors.join("; ")
+            );
+        }
+    }
+
     let state_for_shutdown = state.clone();
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
@@ -361,6 +416,24 @@ async fn main() {
         .unwrap();
 
     tracing::info!("Memorose Server stopped.");
+}
+
+fn bootstrap_initialize_errors(results: &[serde_json::Value]) -> Vec<String> {
+    results
+        .iter()
+        .filter_map(|result| {
+            result
+                .get("error")
+                .and_then(|value| value.as_str())
+                .map(|error| {
+                    let shard_id = result
+                        .get("shard_id")
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
+                    format!("shard {shard_id}: {error}")
+                })
+        })
+        .collect()
 }
 
 fn dashboard_ui_origin() -> String {
@@ -1409,5 +1482,32 @@ mod tests {
         assert!(!hard_delete_memory_unit_for_user(&engine, "test-user", Uuid::new_v4()).await?);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_bootstrap_initialize_errors_collects_failures() {
+        let results = vec![
+            serde_json::json!({"shard_id": 0, "status": "initialized"}),
+            serde_json::json!({"shard_id": 1, "error": "network timeout"}),
+            serde_json::json!({"shard_id": 2, "error": "storage unavailable"}),
+        ];
+
+        assert_eq!(
+            bootstrap_initialize_errors(&results),
+            vec![
+                "shard 1: network timeout".to_string(),
+                "shard 2: storage unavailable".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_bootstrap_initialize_errors_ignores_success_records() {
+        let results = vec![
+            serde_json::json!({"shard_id": 0, "status": "initialized"}),
+            serde_json::json!({"shard_id": 1, "status": "already_initialized"}),
+        ];
+
+        assert!(bootstrap_initialize_errors(&results).is_empty());
     }
 }

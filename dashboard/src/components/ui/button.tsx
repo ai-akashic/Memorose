@@ -10,11 +10,11 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default:
-          "bg-primary text-primary-foreground shadow-[0_14px_32px_rgba(255,122,87,0.22)] hover:bg-primary/92 hover:shadow-[0_18px_40px_rgba(255,122,87,0.28)]",
+          "bg-primary text-primary-foreground shadow-[0_14px_32px_rgba(255,122,87,0.22)] hover:bg-primary/95 hover:-translate-y-0.5 hover:scale-[1.02] hover:shadow-[0_18px_40px_rgba(255,122,87,0.35)] transition-all duration-300",
         destructive:
-          "bg-destructive text-white shadow-[0_12px_26px_rgba(220,38,38,0.2)] hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60",
+          "bg-destructive text-white shadow-[0_12px_26px_rgba(220,38,38,0.2)] hover:bg-destructive/90 hover:-translate-y-0.5 hover:shadow-[0_16px_32px_rgba(220,38,38,0.3)] focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60 transition-all duration-300",
         outline:
-          "border border-white/10 bg-white/[0.03] text-foreground shadow-none hover:bg-white/[0.06] hover:text-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50",
+          "border border-white/10 bg-white/[0.03] text-foreground shadow-none hover:bg-white/[0.06] hover:-translate-y-0.5 hover:shadow-sm hover:border-white/20 hover:text-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50 transition-all duration-300",
         secondary:
           "bg-secondary/80 text-secondary-foreground hover:bg-secondary",
         ghost:

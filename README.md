@@ -325,6 +325,20 @@ Memorose includes a modern, glassmorphic Next.js dashboard that runs as a separa
 - **Knowledge Graph:** Interactive visualization of memory relationships.
 - **Playground:** Live query testing with real-time results and multi-modal chat.
 - **Cluster Health:** Multi-node Raft status monitoring.
+- **Correction Observability:** Inspect RAC decisions, review queues, and semantic forget/update previews.
+
+### Semantic orchestration via SDK / control plane
+
+Natural-language forget / update flows are designed to be called from your SDK or agent runtime, while the dashboard acts as the observability and review surface.
+
+```bash
+curl -X POST http://localhost:3000/v1/users/dylan/memories/semantic/preview \
+  -H "Content-Type: application/json" \
+  -d '{
+    "instruction": "I now live in Beijing and no longer live in Shanghai",
+    "mode": "auto"
+  }'
+```
 
 ---
 
@@ -334,6 +348,9 @@ Memorose includes a modern, glassmorphic Next.js dashboard that runs as a separa
 |--------|----------|-------------|
 | `POST` | `/v1/users/:uid/streams/:sid/events` | Ingest event (text, image, audio, video, json) |
 | `POST` | `/v1/users/:uid/streams/:sid/retrieve` | Hybrid search with optional cross-modal query |
+| `POST` | `/v1/users/:uid/memories/semantic/preview` | Preview semantic forget/update plan |
+| `POST` | `/v1/users/:uid/memories/semantic/execute` | Execute semantic forget/update plan |
+| `GET` | `/v1/dashboard/corrections/reviews` | Observe pending / approved / rejected correction reviews (dashboard auth) |
 | `GET` | `/v1/users/:uid/tasks/tree` | Get all goal/task hierarchies |
 | `GET` | `/v1/users/:uid/tasks/ready` | Get auto-executable tasks |
 | `PUT` | `/v1/users/:uid/tasks/:tid/status` | Update task status |
@@ -371,4 +388,3 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 <div align="center">
   <sub>Built with Rust. Designed for agents that remember.</sub>
 </div>
-

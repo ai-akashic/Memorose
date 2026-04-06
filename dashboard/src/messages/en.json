@@ -78,7 +78,8 @@
       "list": "List",
       "graph": "Graph",
       "search": "Search",
-      "tasks": "Tasks"
+      "tasks": "Tasks",
+      "corrections": "Corrections"
     },
     "table": {
       "user": "User",
@@ -87,7 +88,17 @@
       "score": "Score",
       "access": "Access",
       "refs": "Refs",
-      "content": "Content"
+      "content": "Content",
+      "actions": "Actions"
+    },
+    "quickActions": {
+      "userRequired": "Set a specific user_id above before deleting a memory.",
+      "useAsSource": "Use as source",
+      "useAsTarget": "Use as target",
+      "hardDelete": "Hard delete",
+      "deleteConfirm": "Hard delete this memory unit now? This cannot be undone.",
+      "deleteSuccess": "Memory hard-deleted",
+      "deleteFailed": "Hard delete failed"
     },
     "filters": {
       "allLevels": "ALL",
@@ -137,6 +148,72 @@
       "empty": "No neural pathways established yet",
       "nodes": "nodes",
       "edges": "edges"
+    },
+    "corrections": {
+      "userRequired": "Set a specific user_id above before applying corrections or reviewing guarded updates.",
+      "reviewLoadFailed": "Failed to load correction reviews",
+      "reviewActionFailed": "Failed to update review status",
+      "reviewApproved": "Review approved",
+      "reviewRejected": "Review rejected",
+      "semantic": {
+        "title": "Semantic Orchestration",
+        "description": "Write a natural-language instruction. The planner previews whether it should forget existing memories or create a new memory and update older facts.",
+        "instructionPlaceholder": "Examples: \"Forget my old address in Shanghai\" · \"I now live in Beijing, not Shanghai anymore\"",
+        "missingInstruction": "Instruction is required",
+        "preview": "Preview plan",
+        "execute": "Execute plan",
+        "clear": "Clear",
+        "previewReady": "Semantic plan is ready",
+        "previewFailed": "Semantic preview failed",
+        "executeFailed": "Semantic execution failed",
+        "executeForgetSuccess": "Semantic forget executed · {count} affected memory unit(s)",
+        "executeUpdateSuccess": "Semantic update executed · {count} affected memory unit(s)",
+        "noPlan": "Preview a semantic plan before executing",
+        "modeAuto": "Auto",
+        "modeForget": "Forget",
+        "modeUpdate": "Update",
+        "logicalForget": "Logical forget",
+        "hardForget": "Hard delete",
+        "forgetSummary": "{memories} memory unit(s) · {events} event(s) matched",
+        "matchedMemories": "Matched Memories",
+        "matchedEvents": "Matched Events",
+        "newMemory": "New Memory",
+        "extractedFacts": "Extracted Facts",
+        "plannedActions": "Planned Actions",
+        "noActions": "No correction actions are needed; executing will just store the new memory."
+      },
+      "status": {
+        "pending": "Pending",
+        "approved": "Approved",
+        "rejected": "Rejected"
+      },
+      "manual": {
+        "title": "Manual Correction",
+        "description": "Submit an explicit obsolete / contradicts / reaffirm / ignore action between two memory units.",
+        "sourcePlaceholder": "source_unit_id",
+        "targetPlaceholder": "target_unit_id",
+        "confidencePlaceholder": "confidence (0-1)",
+        "reviewerPlaceholder": "reviewer (optional)",
+        "reasonPlaceholder": "reason / audit note (optional)",
+        "missingIds": "Both source_unit_id and target_unit_id are required",
+        "submit": "Apply correction",
+        "success": "Manual correction applied · {count} affected unit(s)",
+        "failed": "Manual correction failed"
+      },
+      "review": {
+        "title": "Review Queue",
+        "description": "Approve or reject guarded relation-only updates before they become tombstones.",
+        "notePlaceholder": "review note (optional)",
+        "refresh": "Refresh",
+        "empty": "No review records for this filter",
+        "source": "Source",
+        "target": "Target",
+        "reason": "Reason",
+        "guard": "Guard",
+        "confidence": "Confidence",
+        "approve": "Approve",
+        "reject": "Reject"
+      }
     },
     "taskScope": "Please set a specific user scope above to view task trees.",
     "tasks": {
@@ -220,6 +297,7 @@
       "errorCreateFailed": "Failed to create organization"
     },
     "knowledge": {
+      "metricsTitle": "Knowledge Metrics",
       "title": "Canonical Knowledge",
       "description": "Shared organization knowledge published into the canonical org scope for {orgId}.",
       "empty": "No organization knowledge has been published yet.",
@@ -393,6 +471,41 @@
       "localL2": "Local L2",
       "sharedL1": "Shared L1",
       "sharedL2": "Shared L2"
+    },
+    "rac": {
+      "actionsTitle": "RAC Actions",
+      "qualityTitle": "RAC Quality",
+      "extractionAttempts": "Extraction Attempts",
+      "extractionSuccesses": "Extraction Successes",
+      "successRate": "Success Rate",
+      "tombstones": "Tombstones",
+      "obsolete": "Obsolete",
+      "contradicts": "Contradicts",
+      "reaffirm": "Reaffirm",
+      "ignore": "Ignore",
+      "historyTitle": "RAC History",
+      "window24h": "24h",
+      "window7d": "7d",
+      "legendExtraction": "Blue · Extraction Successes",
+      "legendObsolete": "Amber · Obsolete Actions",
+      "legendContradicts": "Contradicts",
+      "legendTombstones": "Tombstones",
+      "recentTitle": "Recent RAC Decisions",
+      "recentEmpty": "No recent RAC decisions yet.",
+      "guardReason": "Guard",
+      "source": "Source",
+      "target": "Target",
+      "relation": "Relation",
+      "successRateCard": "RAC Success Rate",
+      "obsoleteCard": "Obsolete Actions",
+      "contradictsCard": "Contradict Actions",
+      "tombstonesCard": "Tombstones"
+    },
+    "corrections": {
+      "title": "Semantic Control Plane",
+      "pendingReviews": "Pending Reviews",
+      "description": "Dashboard is used for observability and review. Primary semantic forget/update flows should be triggered from your SDK or agent runtime.",
+      "empty": "No pending review items."
     }
   },
   "Settings": {

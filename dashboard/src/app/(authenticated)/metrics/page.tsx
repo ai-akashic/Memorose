@@ -25,13 +25,12 @@ import {
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useOrgScope } from "@/lib/org-scope";
-import { RainbowWaterfall } from "@/components/RainbowWaterfall";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { GraphData } from "@/lib/types";
 import { motion } from "framer-motion";
 import { useTranslations } from "next-intl";
-import { DashboardHero, DashboardStatRail } from "@/components/dashboard-chrome";
+import { DashboardHero } from "@/components/dashboard-chrome";
 
 function NumberTicker({ value }: { value: number }) {
   const [displayValue, setDisplayValue] = useState(0);
@@ -68,6 +67,7 @@ function StatCard({
   color = "text-primary",
   className = "",
   delay = 0,
+  compact = false,
 }: {
   label: string;
   value: string | number;
@@ -75,6 +75,7 @@ function StatCard({
   color?: string;
   className?: string;
   delay?: number;
+  compact?: boolean;
 }) {
   return (
     <motion.div
@@ -84,14 +85,14 @@ function StatCard({
       className={`h-full ${className}`}
     >
       <Card className="glass-card group relative overflow-hidden transition-all duration-500 h-full">
-        <CardContent className="p-5 flex flex-col gap-4 h-full relative z-10">
-          <div className="flex items-center gap-2">
-            <Icon className={`w-4 h-4 ${color} opacity-60 group-hover:opacity-100 transition-opacity shrink-0`} />
-            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground truncate">
+        <CardContent className={`relative z-10 flex h-full flex-col ${compact ? "gap-2.5 p-3.5" : "gap-4 p-5"}`}>
+          <div className={`flex items-center ${compact ? "gap-1.5" : "gap-2"}`}>
+            <Icon className={`${compact ? "h-3.5 w-3.5" : "h-4 w-4"} ${color} opacity-60 group-hover:opacity-100 transition-opacity shrink-0`} />
+            <span className={`${compact ? "text-[9px]" : "text-[10px]"} font-bold uppercase tracking-wider text-muted-foreground truncate`}>
               {label}
             </span>
           </div>
-          <div className="text-3xl font-bold tracking-tighter font-mono text-foreground/90 group-hover:text-white transition-colors">
+          <div className={`${compact ? "text-2xl xl:text-[1.65rem]" : "text-3xl"} font-bold tracking-tighter font-mono text-foreground/90 transition-colors group-hover:text-white`}>
             {typeof value === "number" ? <NumberTicker value={value} /> : value}
           </div>
         </CardContent>
@@ -115,11 +116,11 @@ function RelationDistribution({ graphData, className = "" }: { graphData: GraphD
   return (
     <Card className={`glass-card flex flex-col border-white/[0.04] ${className}`}>
       <CardHeader className="pb-2 flex-shrink-0">
-        <CardTitle className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("pathways")}</CardTitle>
+        <CardTitle className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("pathways")}</CardTitle>
       </CardHeader>
       <CardContent className="flex-1 flex flex-col justify-center items-center p-4">
         {data.length === 0 ? (
-          <p className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("pathwaysEmpty")}</p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("pathwaysEmpty")}</p>
         ) : (
           <div className="h-full w-full min-h-[160px] flex-1">
             <ResponsiveContainer width="100%" height="100%">
@@ -185,7 +186,7 @@ function ImportanceHistogram({
   return (
     <Card className={`glass-card flex flex-col border-white/[0.04] ${className}`}>
       <CardHeader className="pb-0 flex-shrink-0">
-        <CardTitle className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("density")}</CardTitle>
+        <CardTitle className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("density")}</CardTitle>
       </CardHeader>
       <CardContent className="flex-1 pt-6">
         <div className="h-full w-full">
@@ -230,7 +231,7 @@ function WorkerStatus({ config, className = "" }: { config: NonNullable<ReturnTy
       <CardHeader className="pb-4 border-b border-border">
         <div className="flex items-center gap-2">
           <div className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
-          <CardTitle className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("node.title")}</CardTitle>
+          <CardTitle className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("node.title")}</CardTitle>
         </div>
       </CardHeader>
       <CardContent className="space-y-3 pt-4 px-5">
@@ -240,8 +241,8 @@ function WorkerStatus({ config, className = "" }: { config: NonNullable<ReturnTy
           { label: t("node.snapshot"), value: `${snapshotLogs} ${t("node.logs")}` },
         ].map((item) => (
           <div key={item.label} className="flex flex-col gap-0.5">
-            <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{item.label}</span>
-            <span className="font-mono text-[11px] text-foreground/70">{item.value}</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{item.label}</span>
+            <span className="font-mono text-[10px] text-foreground/70">{item.value}</span>
           </div>
         ))}
       </CardContent>
@@ -261,7 +262,7 @@ function BreakdownCard({
   return (
     <Card className={`glass-card border-white/[0.04] ${className}`}>
       <CardHeader className="pb-3">
-        <CardTitle className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+        <CardTitle className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
           {title}
         </CardTitle>
       </CardHeader>
@@ -327,13 +328,6 @@ export default function MetricsPage() {
             title={t("title")}
             description={scopedOrgId ? t("subtitleOrg", { orgId: scopedOrgId }) : t("subtitle")}
           >
-            <DashboardStatRail
-              items={[
-                { label: t("stats.ingested"), value: stats?.total_events ?? 0, tone: "primary" },
-                { label: t("stats.totalMemory"), value: stats?.total_memory_units ?? 0, tone: "success" },
-                { label: t("stats.edges"), value: stats?.total_edges ?? 0, tone: "warning" },
-              ]}
-            />
           </DashboardHero>
         </motion.div>
 
@@ -341,76 +335,64 @@ export default function MetricsPage() {
           initial={{ opacity: 0, scale: 0.98 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-          className="grid grid-cols-1 md:grid-cols-4 gap-3 auto-rows-[140px]"
+          className="space-y-3"
         >
-          {/* Top Row KPIs */}
-          <StatCard label={t("stats.ingested")} value={stats?.total_events ?? 0} icon={Activity} delay={0.1} />
-          <StatCard label={t("stats.pending")} value={stats?.pending_events ?? 0} icon={Activity} color="text-warning" delay={0.15} />
-          <StatCard label={t("stats.localMemory")} value={stats?.memory_by_scope.local ?? 0} icon={Database} color="text-success" delay={0.2} />
-          <StatCard label={t("stats.sharedMemory")} value={stats?.memory_by_scope.shared ?? 0} icon={Share2} color="text-warning" delay={0.25} />
-          <StatCard label={t("stats.totalMemory")} value={stats?.total_memory_units ?? 0} icon={Layers} color="text-primary" delay={0.3} />
-          <StatCard label={t("stats.edges")} value={stats?.total_edges ?? 0} icon={GitBranch} color="text-primary" delay={0.25} />
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
+            <StatCard label={t("stats.ingested")} value={stats?.total_events ?? 0} icon={Activity} delay={0.1} compact />
+            <StatCard label={t("stats.pending")} value={stats?.pending_events ?? 0} icon={Activity} color="text-warning" delay={0.15} compact />
+            <StatCard label={t("stats.localMemory")} value={stats?.memory_by_scope.local ?? 0} icon={Database} color="text-success" delay={0.2} compact />
+            <StatCard label={t("stats.sharedMemory")} value={stats?.memory_by_scope.shared ?? 0} icon={Share2} color="text-warning" delay={0.25} compact />
+            <StatCard label={t("stats.totalMemory")} value={stats?.total_memory_units ?? 0} icon={Layers} color="text-primary" delay={0.3} compact />
+            <StatCard label={t("stats.edges")} value={stats?.total_edges ?? 0} icon={GitBranch} color="text-primary" delay={0.35} compact />
+          </div>
 
-          {/* Pipeline Flow - Large Block */}
-          <Card className="glass-card md:col-span-2 md:row-span-2 p-6 flex flex-col relative group overflow-hidden transition-colors">
+          <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+            <ImportanceHistogram orgId={scopedOrgId || undefined} className="min-h-[280px]" />
+            <RelationDistribution graphData={graphData} className="min-h-[280px]" />
+          </div>
 
-             <div className="flex items-center gap-2 mb-6 relative z-10">
-               <Layers className="w-3.5 h-3.5 text-primary opacity-40 group-hover:opacity-70 transition-opacity" />
-               <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">{t("cognitiveFlow")}</span>
-             </div>
-             <div className="flex-1 w-full h-full relative z-10 min-h-0 flex items-center justify-center pt-2 pb-4">
-               {stats && <RainbowWaterfall stats={stats} />}
-             </div>
-          </Card>
+          <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
+            {cluster ? (
+              <WorkerStatus config={cluster} className="min-h-[220px]" />
+            ) : (
+              <div className="glass-card min-h-[220px] rounded-xl opacity-10 animate-pulse" />
+            )}
 
-          {/* Importance Distribution - Large Center Block */}
-          <ImportanceHistogram orgId={scopedOrgId || undefined} className="md:col-span-2 md:row-span-2" />
+            <BreakdownCard
+              title={t("domainMix.title")}
+              className="min-h-[220px]"
+              rows={[
+                { label: t("domainMix.agent"), value: stats?.memory_by_domain.agent ?? 0, tone: "text-primary" },
+                { label: t("domainMix.user"), value: stats?.memory_by_domain.user ?? 0, tone: "text-success" },
+                {
+                  label: t("domainMix.organization"),
+                  value: stats?.memory_by_domain.organization ?? 0,
+                  tone: "text-foreground/80",
+                },
+              ]}
+            />
 
-          {/* Relation Dist - Large Block */}
-          <RelationDistribution graphData={graphData} className="md:col-span-2 md:row-span-2" />
-
-          {/* Worker Status - Vertical Block */}
-          {cluster ? (
-            <WorkerStatus config={cluster} className="md:col-span-1 md:row-span-2" />
-          ) : (
-            <div className="md:col-span-1 md:row-span-2 glass-card rounded-xl opacity-10 animate-pulse" />
-          )}
-
-          <BreakdownCard
-            title={t("domainMix.title")}
-            className="md:col-span-1 md:row-span-2"
-            rows={[
-              { label: t("domainMix.agent"), value: stats?.memory_by_domain.agent ?? 0, tone: "text-primary" },
-              { label: t("domainMix.user"), value: stats?.memory_by_domain.user ?? 0, tone: "text-success" },
-              {
-                label: t("domainMix.organization"),
-                value: stats?.memory_by_domain.organization ?? 0,
-                tone: "text-foreground/80",
-              },
-            ]}
-          />
-
-          <BreakdownCard
-            title={t("levelByScope.title")}
-            className="md:col-span-1 md:row-span-2"
-            rows={[
-              { label: t("levelByScope.localL1"), value: stats?.memory_by_level_and_scope.local.l1 ?? 0, tone: "text-primary" },
-              { label: t("levelByScope.localL2"), value: stats?.memory_by_level_and_scope.local.l2 ?? 0, tone: "text-success" },
-              { label: t("levelByScope.sharedL1"), value: stats?.memory_by_level_and_scope.shared.l1 ?? 0, tone: "text-warning" },
-              {
-                label: t("levelByScope.sharedL2"),
-                value: stats?.memory_by_level_and_scope.shared.l2 ?? 0,
-                tone: "text-foreground/80",
-              },
-            ]}
-          />
+            <BreakdownCard
+              title={t("levelByScope.title")}
+              className="min-h-[220px]"
+              rows={[
+                { label: t("levelByScope.localL1"), value: stats?.memory_by_level_and_scope.local.l1 ?? 0, tone: "text-primary" },
+                { label: t("levelByScope.localL2"), value: stats?.memory_by_level_and_scope.local.l2 ?? 0, tone: "text-success" },
+                { label: t("levelByScope.sharedL1"), value: stats?.memory_by_level_and_scope.shared.l1 ?? 0, tone: "text-warning" },
+                {
+                  label: t("levelByScope.sharedL2"),
+                  value: stats?.memory_by_level_and_scope.shared.l2 ?? 0,
+                  tone: "text-foreground/80",
+                },
+              ]}
+            />
+          </div>
+          <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
+            <StatCard label={t("stats.agentDomain")} value={stats?.memory_by_domain.agent ?? 0} icon={Bot} delay={0.35} />
+            <StatCard label={t("stats.userDomain")} value={stats?.memory_by_domain.user ?? 0} icon={User} color="text-success" delay={0.4} />
+            <StatCard label={t("stats.orgDomain")} value={stats?.memory_by_domain.organization ?? 0} icon={Database} delay={0.45} />
+          </div>
         </motion.div>
-
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          <StatCard label={t("stats.agentDomain")} value={stats?.memory_by_domain.agent ?? 0} icon={Bot} delay={0.35} />
-          <StatCard label={t("stats.userDomain")} value={stats?.memory_by_domain.user ?? 0} icon={User} color="text-success" delay={0.4} />
-          <StatCard label={t("stats.orgDomain")} value={stats?.memory_by_domain.organization ?? 0} icon={Database} delay={0.45} />
-        </div>
       </div>
     </div>
   );

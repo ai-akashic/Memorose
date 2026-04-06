@@ -230,6 +230,26 @@ impl<'a> QueryPlanner<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Result;
+    use lancedb::connect;
+    use std::sync::Arc;
+
+    async fn test_graph_store(edges: &[GraphEdge]) -> Result<GraphStore> {
+        let db_path =
+            std::env::temp_dir().join(format!("memorose-query-builder-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&db_path)?;
+        let db = Arc::new(connect(db_path.to_str().unwrap()).execute().await?);
+        let store = GraphStore::new(db).await?;
+        for edge in edges {
+            store.add_edge(edge).await?;
+        }
+        store.flush().await?;
+        Ok(store)
+    }
+
+    fn edge(source_id: Uuid, target_id: Uuid, relation: RelationType, weight: f32) -> GraphEdge {
+        GraphEdge::new("user1".to_string(), source_id, target_id, relation, weight)
+    }
 
     #[tokio::test]
     async fn test_query_builder_api() {
@@ -247,5 +267,110 @@ mod tests {
             .limit(10);
 
         // Execute: let results = query.execute(&graph).await?;
+    }
+
+    #[tokio::test]
+    async fn test_execute_returns_start_nodes_when_no_traversal() -> Result<()> {
+        let start = Uuid::new_v4();
+        let graph = test_graph_store(&[]).await?;
+
+        let results = GraphQueryBuilder::new("user1".to_string())
+            .start_from(vec![start])
+            .execute(&graph)
+            .await?;
+
+        assert_eq!(results, vec![start]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_execute_supports_outgoing_bidirectional_and_limit() -> Result<()> {
+        let node_a = Uuid::new_v4();
+        let node_b = Uuid::new_v4();
+        let node_c = Uuid::new_v4();
+        let node_d = Uuid::new_v4();
+        let graph = test_graph_store(&[
+            edge(node_a, node_b, RelationType::RelatedTo, 0.9),
+            edge(node_b, node_c, RelationType::RelatedTo, 0.8),
+            edge(node_d, node_a, RelationType::RelatedTo, 0.95),
+        ])
+        .await?;
+
+        let outgoing = GraphQueryBuilder::new("user1".to_string())
+            .start_from(vec![node_a])
+            .traverse(RelationType::RelatedTo)
+            .build()
+            .execute(&graph)
+            .await?;
+        assert_eq!(outgoing, vec![node_b]);
+
+        let bidirectional = GraphQueryBuilder::new("user1".to_string())
+            .start_from(vec![node_a])
+            .traverse(RelationType::RelatedTo)
+            .bidirectional()
+            .build()
+            .limit(1)
+            .execute(&graph)
+            .await?;
+        assert_eq!(bidirectional.len(), 1);
+        assert!(bidirectional[0] == node_b || bidirectional[0] == node_d);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_execute_supports_incoming_and_weight_filtering() -> Result<()> {
+        let node_a = Uuid::new_v4();
+        let node_b = Uuid::new_v4();
+        let node_c = Uuid::new_v4();
+        let graph = test_graph_store(&[
+            edge(node_b, node_a, RelationType::RelatedTo, 0.9),
+            edge(node_c, node_a, RelationType::RelatedTo, 0.2),
+        ])
+        .await?;
+
+        let query = GraphQueryBuilder {
+            user_id: "user1".to_string(),
+            start_nodes: vec![node_a],
+            traversals: vec![TraversalSpec {
+                relation_types: vec![RelationType::RelatedTo],
+                direction: TraversalDirection::Incoming,
+                min_hops: 1,
+                max_hops: 1,
+                weight_threshold: Some(0.5),
+            }],
+            limit: None,
+        };
+
+        let results = query.execute(&graph).await?;
+
+        assert_eq!(results, vec![node_b]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_batch_get_edges_filters_relation_types() -> Result<()> {
+        let node_a = Uuid::new_v4();
+        let node_b = Uuid::new_v4();
+        let node_c = Uuid::new_v4();
+        let graph = test_graph_store(&[
+            edge(node_a, node_b, RelationType::RelatedTo, 0.9),
+            edge(node_a, node_c, RelationType::Supports, 0.7),
+        ])
+        .await?;
+        let planner = QueryPlanner::new(&graph);
+
+        let edges = planner
+            .batch_get_edges(
+                "user1",
+                &[node_a],
+                &[RelationType::Supports],
+                TraversalDirection::Outgoing,
+            )
+            .await?;
+
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].target_id, node_c);
+        assert_eq!(edges[0].relation, RelationType::Supports);
+        Ok(())
     }
 }
