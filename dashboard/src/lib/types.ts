@@ -102,15 +102,18 @@ export interface Stats {
   memory_by_level: {
     l1: number;
     l2: number;
+    l3: number;
   };
   memory_by_level_and_scope: {
     local: {
       l1: number;
       l2: number;
+      l3: number;
     };
     shared: {
       l1: number;
       l2: number;
+      l3: number;
     };
   };
   uptime_seconds: number;

@@ -226,6 +226,7 @@ function PipelineCard({ stats, t }: { stats: NonNullable<ReturnType<typeof useSt
           { label: "L0", count: stats.pending_events, color: "bg-warning", glow: "shadow-[0_0_10px_rgba(245,158,11,0.3)]" },
           { label: "L1", count: stats.memory_by_level.l1, color: "bg-primary", glow: "shadow-[0_0_10px_rgba(56,125,255,0.3)]" },
           { label: "L2", count: stats.memory_by_level.l2, color: "bg-success", glow: "shadow-[0_0_10px_rgba(34,197,94,0.3)]" },
+          { label: "L3", count: stats.memory_by_level.l3, color: "bg-accent", glow: "shadow-[0_0_10px_rgba(168,85,247,0.25)]" },
         ].map((level) => (
           <div key={level.label} className="relative">
             <div className="flex justify-between items-end mb-1.5">

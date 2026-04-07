@@ -36,7 +36,7 @@ export function CommandPalette() {
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-[20vh] bg-background/50 backdrop-blur-sm" onClick={() => setOpen(false)}>
       <Command 
-        className="w-[600px] max-w-full rounded-xl glass-card overflow-hidden shadow-2xl border border-white/[0.05] bg-card/80 animate-in fade-in zoom-in-95 duration-200" 
+        className="w-[600px] max-w-full rounded-xl glass-card overflow-hidden border border-white/[0.05] bg-card/80 animate-in fade-in zoom-in-95 duration-200" 
         onClick={(e) => e.stopPropagation()}
         loop
       >

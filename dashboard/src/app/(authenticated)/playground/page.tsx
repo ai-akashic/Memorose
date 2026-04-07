@@ -235,28 +235,8 @@ function ChatPanel() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <Card className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-[2rem] border border-white/8 bg-card/75 shadow-[0_24px_80px_rgba(0,0,0,0.24)]">
+      <Card className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-[2rem] border border-white/8 bg-card/75">
         <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),transparent)]" />
-        <div className="shrink-0 border-b border-white/6 px-6 py-4 md:px-7">
-          <PanelIntro
-            icon={Bot}
-            eyebrow={t("tabs.chat")}
-            title={t("chat.welcomeTitle")}
-            trailing={
-              <div className="flex flex-wrap items-center justify-end gap-3">
-                {scopedOrgId ? <ScopeBadge text={t("chat.orgScope", { orgId: scopedOrgId })} /> : null}
-                <div className="rounded-2xl border border-border/70 bg-background/45 px-4 py-2.5 text-right">
-                  <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground/70">
-                    {t("tabs.chat")}
-                  </div>
-                  <div className="mt-1 font-mono text-lg font-semibold text-foreground/90">
-                    {messages.length}
-                  </div>
-                </div>
-              </div>
-            }
-          />
-        </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 scroll-smooth md:px-6" ref={scrollRef}>
           <div className="mx-auto max-w-3xl space-y-6">
@@ -266,12 +246,9 @@ function ChatPanel() {
                   initial={{ opacity: 0, scale: 0.98 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.98 }}
-                  className="flex min-h-[min(36vh,22rem)] flex-col items-center justify-center rounded-[2rem] border border-dashed border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.015))] px-8 text-muted-foreground"
+                  className="flex min-h-[min(36vh,22rem)] flex-col items-center justify-center px-8 text-muted-foreground"
                 >
-                  <div className="mb-7 flex h-20 w-20 items-center justify-center rounded-[2rem] border border-primary/15 bg-primary/10 text-primary shadow-[0_16px_40px_rgba(255,92,92,0.12)]">
-                    <Bot className="h-10 w-10 opacity-70" />
-                  </div>
-                  <h3 className="mb-3 text-xl font-semibold tracking-tight text-foreground/85">{t("chat.welcomeTitle")}</h3>
+                  <Bot className="h-10 w-10 opacity-45" />
                 </motion.div>
               )}
             </AnimatePresence>
@@ -318,7 +295,7 @@ function ChatPanel() {
         <div className="sticky bottom-0 z-20 shrink-0 border-t border-white/6 bg-card/90 px-5 py-4 backdrop-blur md:px-6">
           <div className="group relative mx-auto max-w-3xl">
             <div className="absolute -inset-1 rounded-[1.7rem] bg-gradient-to-r from-primary/18 via-primary/8 to-transparent blur-xl opacity-20 transition duration-1000 group-hover:opacity-40" />
-            <div className="relative rounded-[1.7rem] border border-white/8 bg-background/60 p-2.5 shadow-[0_16px_48px_rgba(0,0,0,0.22)] backdrop-blur-xl">
+            <div className="relative rounded-[1.7rem] border border-white/8 bg-background/60 p-2.5 backdrop-blur-xl">
               <div className="flex items-center gap-4">
               <Input
                 type="text"
@@ -403,7 +380,7 @@ function RetrievePanel() {
 
   return (
     <div className="space-y-6">
-      <Card className="rounded-[2rem] border border-white/8 bg-card/75 p-6 shadow-[0_22px_64px_rgba(0,0,0,0.2)]">
+      <Card className="rounded-[2rem] border border-white/8 bg-card/75 p-6">
         <div className="space-y-6">
           <PanelIntro
             icon={Search}
@@ -503,7 +480,7 @@ function RetrievePanel() {
             </Card>
           ) : (
             results.results.map((r, i) => (
-              <Card key={r.unit.id || i} className="rounded-[1.7rem] border border-white/8 bg-card/75 shadow-[0_16px_40px_rgba(0,0,0,0.12)]">
+              <Card key={r.unit.id || i} className="rounded-[1.7rem] border border-white/8 bg-card/75">
                 <div className="p-5">
                   <div className="mb-3 flex items-start justify-between gap-4">
                     <p className="flex-1 text-sm leading-7 text-foreground/92">{r.unit.content}</p>
@@ -604,7 +581,7 @@ function ForgetPanel() {
 
   return (
     <div className="space-y-6">
-      <Card className="rounded-[2rem] border border-white/8 bg-card/75 p-6 shadow-[0_22px_64px_rgba(0,0,0,0.2)]">
+      <Card className="rounded-[2rem] border border-white/8 bg-card/75 p-6">
         <div className="space-y-6">
           <PanelIntro
             icon={Trash2}

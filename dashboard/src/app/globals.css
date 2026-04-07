@@ -194,34 +194,12 @@
 
 @layer components {
   .glass-card {
-    @apply rounded-[1.6rem] border border-white/10 bg-card/60 shadow-[0_8px_32px_rgba(0,0,0,0.32)] backdrop-blur-2xl transition-all duration-300 ease-out;
+    @apply rounded-[1.6rem] border border-white/10 bg-card/60 backdrop-blur-xl transition-colors duration-200 ease-out;
     position: relative;
-    overflow: hidden;
-  }
-
-  .glass-card::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background:
-      linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 40%),
-      linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 60%);
-    opacity: 1;
-    z-index: 0;
-  }
-
-  .glass-card > * {
-    position: relative;
-    z-index: 1;
   }
 
   .glass-card:hover {
-    @apply border-white/20 bg-card/70;
-    transform: translateY(-2px) scale(1.005);
-    box-shadow:
-      0 26px 70px rgba(0, 0, 0, 0.45),
-      0 0 0 1px rgba(255, 255, 255, 0.05);
+    @apply border-white/16 bg-card/64;
   }
 
   .dashboard-stat-pill {

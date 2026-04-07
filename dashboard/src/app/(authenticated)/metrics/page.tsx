@@ -378,11 +378,17 @@ export default function MetricsPage() {
               rows={[
                 { label: t("levelByScope.localL1"), value: stats?.memory_by_level_and_scope.local.l1 ?? 0, tone: "text-primary" },
                 { label: t("levelByScope.localL2"), value: stats?.memory_by_level_and_scope.local.l2 ?? 0, tone: "text-success" },
+                { label: t("levelByScope.localL3"), value: stats?.memory_by_level_and_scope.local.l3 ?? 0, tone: "text-accent" },
                 { label: t("levelByScope.sharedL1"), value: stats?.memory_by_level_and_scope.shared.l1 ?? 0, tone: "text-warning" },
                 {
                   label: t("levelByScope.sharedL2"),
                   value: stats?.memory_by_level_and_scope.shared.l2 ?? 0,
                   tone: "text-foreground/80",
+                },
+                {
+                  label: t("levelByScope.sharedL3"),
+                  value: stats?.memory_by_level_and_scope.shared.l3 ?? 0,
+                  tone: "text-muted-foreground",
                 },
               ]}
             />

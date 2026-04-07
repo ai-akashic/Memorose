@@ -53,6 +53,7 @@ impl DomainBreakdown {
 struct LevelBreakdown {
     l1: usize,
     l2: usize,
+    l3: usize,
 }
 
 #[derive(Clone, Default)]
@@ -76,6 +77,7 @@ impl MemoryAggregate {
         match unit.level {
             1 => target.l1 += 1,
             2 => target.l2 += 1,
+            3 => target.l3 += 1,
             _ => {}
         }
     }
@@ -86,8 +88,10 @@ impl MemoryAggregate {
         self.by_domain.organization += other.by_domain.organization;
         self.local_levels.l1 += other.local_levels.l1;
         self.local_levels.l2 += other.local_levels.l2;
+        self.local_levels.l3 += other.local_levels.l3;
         self.shared_levels.l1 += other.shared_levels.l1;
         self.shared_levels.l2 += other.shared_levels.l2;
+        self.shared_levels.l3 += other.shared_levels.l3;
     }
 
     fn total_memories(&self) -> usize {
@@ -108,6 +112,10 @@ impl MemoryAggregate {
 
     fn total_l2(&self) -> usize {
         self.local_levels.l2 + self.shared_levels.l2
+    }
+
+    fn total_l3(&self) -> usize {
+        self.local_levels.l3 + self.shared_levels.l3
     }
 }
 
@@ -1406,6 +1414,7 @@ pub async fn stats(
         "memory_by_level": {
             "l1": total_memory.total_l1(),
             "l2": total_memory.total_l2(),
+            "l3": total_memory.total_l3(),
         },
         "memory_by_scope": {
             "local": total_memory.local_memories(),
