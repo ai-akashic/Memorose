@@ -1,12 +1,34 @@
 use crate::llm::{EmbedInput, EmbedPart, LLMClient};
 use crate::MemoroseEngine;
 use anyhow::Result;
-use memorose_common::{config::AppConfig, Asset, GraphEdge, MemoryUnit};
-use std::collections::{HashMap, HashSet};
+use memorose_common::{config::AppConfig, tokenizer::count_tokens, Asset, Event, EventContent, GraphEdge, MemoryUnit};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::Duration;
+
+type PackedGroupKey = (String, uuid::Uuid, Option<String>);
+
+#[derive(Debug, Clone)]
+struct PackedEventGroup {
+    key: PackedGroupKey,
+    seq_no: u64,
+    events: Vec<Event>,
+}
+
+struct ProducedBatch {
+    key: PackedGroupKey,
+    seq_no: u64,
+    event_ids: Vec<uuid::Uuid>,
+    user_id: String,
+    stream_id: uuid::Uuid,
+    summary: String,
+    valid_at: Option<String>,
+    assets: Vec<Asset>,
+    metadata: serde_json::Value,
+    embed_input: Option<EmbedInput>,
+}
 
 pub struct BackgroundWorker {
     engine: MemoroseEngine,
@@ -21,6 +43,149 @@ pub struct BackgroundWorker {
 }
 
 impl BackgroundWorker {
+    fn packed_event_key(event: &Event) -> PackedGroupKey {
+        let is_agent = event.metadata.get("role").and_then(|v| v.as_str()) == Some("assistant")
+            || event.metadata.get("agent_id").is_some();
+        let agent_id = if is_agent {
+            event.metadata
+                .get("agent_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or(Some("default_agent".to_string()))
+        } else {
+            None
+        };
+        (event.user_id.clone(), event.stream_id, agent_id)
+    }
+
+    fn estimate_event_pack_tokens(event: &Event) -> usize {
+        let content_tokens = match &event.content {
+            EventContent::Text(text) => count_tokens(text),
+            EventContent::Json(value) => count_tokens(&value.to_string()),
+            EventContent::Image(url) | EventContent::Audio(url) | EventContent::Video(url) => {
+                count_tokens(url) + 12
+            }
+        };
+        content_tokens + 4
+    }
+
+    fn pack_events_for_consolidation(&self, events: Vec<Event>) -> Vec<PackedEventGroup> {
+        let mut packed_batches = Vec::new();
+        let mut current_batch = Vec::new();
+        let mut current_key: Option<PackedGroupKey> = None;
+        let mut current_tokens = 0usize;
+        let mut next_seq_by_key: HashMap<PackedGroupKey, u64> = HashMap::new();
+        let target_tokens = self.config.consolidation_target_tokens.max(1);
+        let max_events_per_pack = self.config.consolidation_max_events_per_pack.max(1);
+
+        for event in events {
+            let key = Self::packed_event_key(&event);
+            let event_tokens = Self::estimate_event_pack_tokens(&event).max(1);
+            let should_flush = Some(&key) != current_key.as_ref()
+                || current_batch.len() >= max_events_per_pack
+                || (!current_batch.is_empty() && current_tokens + event_tokens > target_tokens);
+
+            if should_flush {
+                if !current_batch.is_empty() {
+                    let flushed_key = current_key
+                        .as_ref()
+                        .expect("current_key must exist when flushing a non-empty batch")
+                        .clone();
+                    let seq_no = next_seq_by_key
+                        .entry(flushed_key.clone())
+                        .and_modify(|seq| *seq += 1)
+                        .or_insert(0);
+                    packed_batches.push(PackedEventGroup {
+                        key: flushed_key,
+                        seq_no: *seq_no,
+                        events: std::mem::take(&mut current_batch),
+                    });
+                }
+                current_key = Some(key);
+                current_tokens = 0;
+            }
+
+            current_tokens += event_tokens;
+            current_batch.push(event);
+        }
+
+        if !current_batch.is_empty() {
+            let flushed_key = current_key
+                .as_ref()
+                .expect("current_key must exist when flushing a non-empty batch")
+                .clone();
+            let seq_no = next_seq_by_key
+                .entry(flushed_key.clone())
+                .and_modify(|seq| *seq += 1)
+                .or_insert(0);
+            packed_batches.push(PackedEventGroup {
+                key: flushed_key,
+                seq_no: *seq_no,
+                events: current_batch,
+            });
+        }
+
+        packed_batches
+    }
+
+    fn schedule_packed_groups_fairly(
+        &self,
+        packed_batches: Vec<PackedEventGroup>,
+    ) -> Vec<PackedEventGroup> {
+        let mut by_key: HashMap<PackedGroupKey, VecDeque<PackedEventGroup>> = HashMap::new();
+        let mut active_keys = VecDeque::new();
+
+        for group in packed_batches {
+            let key = group.key.clone();
+            let queue = by_key.entry(key.clone()).or_default();
+            if queue.is_empty() {
+                active_keys.push_back(key);
+            }
+            queue.push_back(group);
+        }
+
+        let mut scheduled = Vec::new();
+        while let Some(key) = active_keys.pop_front() {
+            let mut should_requeue = false;
+            if let Some(queue) = by_key.get_mut(&key) {
+                if let Some(group) = queue.pop_front() {
+                    scheduled.push(group);
+                }
+                should_requeue = !queue.is_empty();
+            }
+
+            if should_requeue {
+                active_keys.push_back(key);
+            } else {
+                by_key.remove(&key);
+            }
+        }
+
+        scheduled
+    }
+
+    fn limit_scheduled_groups_by_event_budget(
+        &self,
+        scheduled_batches: Vec<PackedEventGroup>,
+        event_budget: usize,
+    ) -> Vec<PackedEventGroup> {
+        let event_budget = event_budget.max(1);
+        let mut selected = Vec::new();
+        let mut selected_events = 0usize;
+
+        for group in scheduled_batches {
+            let group_events = group.events.len().max(1);
+            if selected.is_empty() || selected_events + group_events <= event_budget {
+                selected_events += group_events;
+                selected.push(group);
+            } else {
+                break;
+            }
+        }
+
+        selected
+    }
+
     fn normalize_asset_storage_key(asset_type: &str, storage_key: &str) -> String {
         let trimmed = storage_key.trim();
         if trimmed.starts_with("http://")
@@ -546,13 +711,11 @@ impl BackgroundWorker {
         }
 
         let batch_size = self.config.consolidation_batch_size.max(1);
-        let events = self.engine.fetch_pending_events_limited(batch_size).await?;
+        let fetch_limit = batch_size.saturating_mul(self.config.consolidation_fetch_multiplier.max(1));
+        let events = self.engine.fetch_pending_events_limited(fetch_limit).await?;
         if events.is_empty() {
             return Ok(false);
         }
-
-        // Track all fetched IDs for fallback retry handling
-        let all_fetched_ids: Vec<String> = events.iter().map(|e| e.id.to_string()).collect();
 
         // 1. Filter valid events
         let max_retries = self.config.consolidation_max_retries;
@@ -598,44 +761,41 @@ impl BackgroundWorker {
 
         valid_events.sort_by(|a, b| a.transaction_time.cmp(&b.transaction_time));
 
-        // 1.5 Batching / Prompt Packing (Group contiguous events)
-        let mut packed_batches: Vec<Vec<memorose_common::Event>> = Vec::new();
-        let mut current_batch: Vec<memorose_common::Event> = Vec::new();
-        let mut current_key: Option<(String, uuid::Uuid, Option<String>)> = None;
+        // 1.5 Batching / Prompt Packing with overfetch + fair selection
+        let pending_valid_count = valid_events.len();
+        let packed_batches = self.pack_events_for_consolidation(valid_events);
+        let scheduled_batches = self.schedule_packed_groups_fairly(packed_batches);
+        let scheduled_batches =
+            self.limit_scheduled_groups_by_event_budget(scheduled_batches, batch_size);
+        let distinct_keys = scheduled_batches
+            .iter()
+            .map(|group| group.key.clone())
+            .collect::<HashSet<_>>()
+            .len();
+        let selected_event_count = scheduled_batches
+            .iter()
+            .map(|group| group.events.len())
+            .sum::<usize>();
+        let all_fetched_ids: Vec<String> = scheduled_batches
+            .iter()
+            .flat_map(|group| group.events.iter().map(|event| event.id.to_string()))
+            .collect();
 
-        for event in valid_events {
-            let is_agent = event.metadata.get("role").and_then(|v| v.as_str()) == Some("assistant")
-                || event.metadata.get("agent_id").is_some();
-            let agent_id = if is_agent {
-                event
-                    .metadata
-                    .get("agent_id")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    .or(Some("default_agent".to_string())) // Fallback to group all raw assistant messages together
-            } else {
-                None
-            };
-
-            let key = (event.user_id.clone(), event.stream_id, agent_id);
-
-            if Some(&key) != current_key.as_ref() || current_batch.len() >= 10 {
-                // Max 10 events per packed prompt
-                if !current_batch.is_empty() {
-                    packed_batches.push(std::mem::take(&mut current_batch));
-                }
-                current_key = Some(key);
-            }
-            current_batch.push(event);
-        }
-        if !current_batch.is_empty() {
-            packed_batches.push(current_batch);
+        if scheduled_batches.is_empty() {
+            return Ok(false);
         }
 
         tracing::info!(
-            "Consolidating {} packed event groups via pipeline (concurrency={})...",
-            packed_batches.len(),
-            self.config.llm_concurrency
+            "Consolidating {} packed event groups via pipeline (selected_events={}, deferred_events={}, keys={}, concurrency={}, fetch_limit={}, target_tokens={}, max_events_per_pack={}, store_batch_size={})...",
+            scheduled_batches.len(),
+            selected_event_count,
+            pending_valid_count.saturating_sub(selected_event_count),
+            distinct_keys,
+            self.config.llm_concurrency,
+            fetch_limit,
+            self.config.consolidation_target_tokens,
+            self.config.consolidation_max_events_per_pack,
+            self.config.consolidation_store_batch_size
         );
 
         // 2. Pipeline: Producer (Compress) -> Channel -> Consumer (Embed & Store)
@@ -648,43 +808,18 @@ impl BackgroundWorker {
         let producer_handle = tokio::spawn(async move {
             let mut join_set = tokio::task::JoinSet::new();
 
-            for mut events in packed_batches {
+            for packed_group in scheduled_batches {
+                let PackedEventGroup {
+                    key,
+                    seq_no,
+                    events,
+                } = packed_group;
+
                 if events.is_empty() {
                     continue;
                 }
                 let llm = llm_client_clone.clone();
                 let engine = engine_clone.clone();
-
-                // For a packed batch, we will extract the common identifiers from the first event
-                let first_event = events.remove(0);
-                let (first_text, first_embed_input, mut assets) =
-                    Self::extract_text_and_embed_input(&first_event, llm.as_deref()).await;
-                let mut combined_text = format!("Message 1: {}", first_text);
-                // Track the first multimodal embed input for the batch
-                let embed_input = if first_embed_input.has_multimodal_parts() {
-                    Some(first_embed_input)
-                } else {
-                    None
-                };
-
-                // Metadata logic (merge simple fields or keep first)
-                let metadata = first_event.metadata.clone();
-                let user_id = first_event.user_id.clone();
-                let stream_id = first_event.stream_id;
-                let is_agent = metadata.get("role").and_then(|v| v.as_str()) == Some("assistant")
-                    || metadata.get("agent_id").is_some();
-
-                // We keep all event IDs to mark them as processed later
-                let mut event_ids = vec![first_event.id];
-
-                // Append the rest
-                for (i, evt) in events.into_iter().enumerate() {
-                    let (evt_text, _evt_embed_input, evt_assets) =
-                        Self::extract_text_and_embed_input(&evt, llm.as_deref()).await;
-                    combined_text.push_str(&format!("\nMessage {}: {}", i + 2, evt_text));
-                    event_ids.push(evt.id);
-                    assets.extend(evt_assets);
-                }
 
                 // Limit concurrency
                 if join_set.len() >= concurrency_limit {
@@ -701,6 +836,35 @@ impl BackgroundWorker {
                 }
 
                 join_set.spawn(async move {
+                    let mut events_iter = events.into_iter();
+                    let first_event = events_iter
+                        .next()
+                        .expect("packed group must contain at least one event");
+                    let (first_text, first_embed_input, mut assets) =
+                        Self::extract_text_and_embed_input(&first_event, llm.as_deref()).await;
+                    let mut combined_text = format!("Message 1: {}", first_text);
+                    let embed_input = if first_embed_input.has_multimodal_parts() {
+                        Some(first_embed_input)
+                    } else {
+                        None
+                    };
+
+                    let metadata = first_event.metadata.clone();
+                    let user_id = first_event.user_id.clone();
+                    let stream_id = first_event.stream_id;
+                    let is_agent =
+                        metadata.get("role").and_then(|v| v.as_str()) == Some("assistant")
+                            || metadata.get("agent_id").is_some();
+                    let mut event_ids = vec![first_event.id];
+
+                    for (index, evt) in events_iter.enumerate() {
+                        let (evt_text, _evt_embed_input, evt_assets) =
+                            Self::extract_text_and_embed_input(&evt, llm.as_deref()).await;
+                        combined_text.push_str(&format!("\nMessage {}: {}", index + 2, evt_text));
+                        event_ids.push(evt.id);
+                        assets.extend(evt_assets);
+                    }
+
                     // Semantic Deduplication Check
                     let fingerprint = Self::generate_semantic_fingerprint(&combined_text);
                     let dedup_key = format!("dedup:{}:{}", user_id, fingerprint);
@@ -743,7 +907,18 @@ impl BackgroundWorker {
                         (compressed, valid)
                     };
 
-                    (event_ids, user_id, stream_id, summary, valid_at, assets, metadata, embed_input)
+                    ProducedBatch {
+                        key,
+                        seq_no,
+                        event_ids,
+                        user_id,
+                        stream_id,
+                        summary,
+                        valid_at,
+                        assets,
+                        metadata,
+                        embed_input,
+                    }
                 });
             }
 
@@ -764,12 +939,34 @@ impl BackgroundWorker {
 
         // 3. Consumer Loop (Embed & Store)
         let mut buffer = Vec::new();
-        let mini_batch_size = 20;
+        let mini_batch_size = self.config.consolidation_store_batch_size.max(1);
         let mut processed_ids = std::collections::HashSet::new();
         let mut any_processed = false;
+        let mut next_commit_seq_by_key: HashMap<PackedGroupKey, u64> = HashMap::new();
+        let mut pending_by_key: HashMap<PackedGroupKey, HashMap<u64, ProducedBatch>> = HashMap::new();
 
         while let Some(item) = rx.recv().await {
-            buffer.push(item);
+            let key = item.key.clone();
+            let pending = pending_by_key.entry(key.clone()).or_default();
+            pending.insert(item.seq_no, item);
+
+            let next_seq = next_commit_seq_by_key.entry(key.clone()).or_insert(0);
+            while let Some(ready) = pending.remove(next_seq) {
+                buffer.push((
+                    ready.event_ids,
+                    ready.user_id,
+                    ready.stream_id,
+                    ready.summary,
+                    ready.valid_at,
+                    ready.assets,
+                    ready.metadata,
+                    ready.embed_input,
+                ));
+                *next_seq += 1;
+            }
+            if pending.is_empty() {
+                pending_by_key.remove(&key);
+            }
             if buffer.len() >= mini_batch_size {
                 let batch: Vec<_> = buffer.drain(..).collect();
                 if let Ok(ids) = self.process_pipeline_batch(batch).await {
@@ -883,22 +1080,22 @@ impl BackgroundWorker {
                 match decision {
                     crate::engine::ValidatedCorrectionDecision::Tombstone { relation } => {
                         removed_ids.insert(action.target_id);
-                        let _ =
-                            self.engine
-                                .record_rac_decision_with_review(&crate::engine::RacDecisionRecord {
-                                    created_at: chrono::Utc::now(),
-                                    stage: "staged_pre_store".into(),
-                                    user_id: unit.user_id.clone(),
-                                    org_id: unit.org_id.clone(),
-                                    source_unit_id: unit.id,
-                                    target_unit_id: Some(action.target_id),
-                                    action: format!("{:?}", action.kind).to_ascii_lowercase(),
-                                    confidence: action.confidence,
-                                    effect: crate::engine::RacDecisionEffect::Tombstone,
-                                    relation: Some(format!("{:?}", relation).to_ascii_lowercase()),
-                                    reason: action.reason.clone(),
-                                    guard_reason: None,
-                                });
+                        let _ = self.engine.record_rac_decision_with_review(
+                            &crate::engine::RacDecisionRecord {
+                                created_at: chrono::Utc::now(),
+                                stage: "staged_pre_store".into(),
+                                user_id: unit.user_id.clone(),
+                                org_id: unit.org_id.clone(),
+                                source_unit_id: unit.id,
+                                target_unit_id: Some(action.target_id),
+                                action: format!("{:?}", action.kind).to_ascii_lowercase(),
+                                confidence: action.confidence,
+                                effect: crate::engine::RacDecisionEffect::Tombstone,
+                                relation: Some(format!("{:?}", relation).to_ascii_lowercase()),
+                                reason: action.reason.clone(),
+                                guard_reason: None,
+                            },
+                        );
                     }
                     crate::engine::ValidatedCorrectionDecision::RelationOnly {
                         relation,
@@ -920,43 +1117,43 @@ impl BackgroundWorker {
                                 action.confidence,
                             ));
                         }
-                        let _ =
-                            self.engine
-                                .record_rac_decision_with_review(&crate::engine::RacDecisionRecord {
-                                    created_at: chrono::Utc::now(),
-                                    stage: "staged_pre_store".into(),
-                                    user_id: unit.user_id.clone(),
-                                    org_id: unit.org_id.clone(),
-                                    source_unit_id: unit.id,
-                                    target_unit_id: Some(action.target_id),
-                                    action: format!("{:?}", action.kind).to_ascii_lowercase(),
-                                    confidence: action.confidence,
-                                    effect: crate::engine::RacDecisionEffect::RelationOnly,
-                                    relation: Some(relation_name),
-                                    reason: action.reason.clone(),
-                                    guard_reason,
-                                });
+                        let _ = self.engine.record_rac_decision_with_review(
+                            &crate::engine::RacDecisionRecord {
+                                created_at: chrono::Utc::now(),
+                                stage: "staged_pre_store".into(),
+                                user_id: unit.user_id.clone(),
+                                org_id: unit.org_id.clone(),
+                                source_unit_id: unit.id,
+                                target_unit_id: Some(action.target_id),
+                                action: format!("{:?}", action.kind).to_ascii_lowercase(),
+                                confidence: action.confidence,
+                                effect: crate::engine::RacDecisionEffect::RelationOnly,
+                                relation: Some(relation_name),
+                                reason: action.reason.clone(),
+                                guard_reason,
+                            },
+                        );
                     }
                     crate::engine::ValidatedCorrectionDecision::Skip {
                         effect,
                         guard_reason,
                     } => {
-                        let _ =
-                            self.engine
-                                .record_rac_decision_with_review(&crate::engine::RacDecisionRecord {
-                                    created_at: chrono::Utc::now(),
-                                    stage: "staged_pre_store".into(),
-                                    user_id: unit.user_id.clone(),
-                                    org_id: unit.org_id.clone(),
-                                    source_unit_id: unit.id,
-                                    target_unit_id: Some(action.target_id),
-                                    action: format!("{:?}", action.kind).to_ascii_lowercase(),
-                                    confidence: action.confidence,
-                                    effect,
-                                    relation: None,
-                                    reason: action.reason.clone(),
-                                    guard_reason: Some(guard_reason),
-                                });
+                        let _ = self.engine.record_rac_decision_with_review(
+                            &crate::engine::RacDecisionRecord {
+                                created_at: chrono::Utc::now(),
+                                stage: "staged_pre_store".into(),
+                                user_id: unit.user_id.clone(),
+                                org_id: unit.org_id.clone(),
+                                source_unit_id: unit.id,
+                                target_unit_id: Some(action.target_id),
+                                action: format!("{:?}", action.kind).to_ascii_lowercase(),
+                                confidence: action.confidence,
+                                effect,
+                                relation: None,
+                                reason: action.reason.clone(),
+                                guard_reason: Some(guard_reason),
+                            },
+                        );
                     }
                 }
             }
@@ -1464,6 +1661,11 @@ mod tests {
     }
 
     struct TopicLLM;
+    struct OutOfOrderCompressionLLM;
+    struct ConcurrentAssetLLM {
+        active_describes: AtomicUsize,
+        max_describes: AtomicUsize,
+    }
 
     #[async_trait]
     impl crate::llm::LLMClient for MockLLM {
@@ -1535,7 +1737,10 @@ mod tests {
                 })
                 .map(|id| id.to_string());
 
-            let data = if prompt.contains("Content: I now live in Beijing") {
+            let data = if prompt.contains("Content: I now live in Beijing")
+                || prompt.contains("Content: Maintenant j'habite à Lyon")
+                || prompt.contains("Content: btw, I moved from Shanghai to Beijing lol")
+            {
                 first_target_id
                     .map(|target_id| {
                         format!(
@@ -1586,6 +1791,176 @@ mod tests {
         }
 
         async fn describe_image(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "image".into(),
+                usage: Default::default(),
+            })
+        }
+
+        async fn describe_video(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "video".into(),
+                usage: Default::default(),
+            })
+        }
+
+        async fn transcribe(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "audio".into(),
+                usage: Default::default(),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl crate::llm::LLMClient for OutOfOrderCompressionLLM {
+        async fn generate(&self, prompt: &str) -> Result<crate::llm::LLMResponse<String>> {
+            let first_target_id = prompt
+                .lines()
+                .find_map(|line| {
+                    line.strip_prefix("ID: ")
+                        .and_then(|value| Uuid::parse_str(value.trim()).ok())
+                })
+                .map(|id| id.to_string());
+
+            let data = if prompt.contains("Content: Message 1: I now live in Beijing")
+                || prompt.contains("Content: I now live in Beijing")
+            {
+                first_target_id
+                    .map(|target_id| {
+                        format!(
+                            r#"[{{"target_id":"{}","action":"OBSOLETE","reason":"Residence updated","confidence":0.97}}]"#,
+                            target_id
+                        )
+                    })
+                    .unwrap_or_else(|| "[]".into())
+            } else {
+                "[]".into()
+            };
+
+            Ok(crate::llm::LLMResponse {
+                data,
+                usage: Default::default(),
+            })
+        }
+
+        async fn embed(&self, _text: &str) -> Result<crate::llm::LLMResponse<Vec<f32>>> {
+            Ok(crate::llm::LLMResponse {
+                data: vec![0.0; 384],
+                usage: Default::default(),
+            })
+        }
+
+        async fn compress(
+            &self,
+            text: &str,
+            _is_agent: bool,
+        ) -> Result<crate::llm::LLMResponse<CompressionOutput>> {
+            if text.contains("I live in Shanghai") {
+                tokio::time::sleep(Duration::from_millis(80)).await;
+            } else {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+
+            Ok(crate::llm::LLMResponse {
+                data: CompressionOutput {
+                    content: text.to_string(),
+                    valid_at: None,
+                },
+                usage: Default::default(),
+            })
+        }
+
+        async fn summarize_group(
+            &self,
+            texts: Vec<String>,
+        ) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: texts.join("\n"),
+                usage: Default::default(),
+            })
+        }
+
+        async fn describe_image(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "image".into(),
+                usage: Default::default(),
+            })
+        }
+
+        async fn describe_video(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "video".into(),
+                usage: Default::default(),
+            })
+        }
+
+        async fn transcribe(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "audio".into(),
+                usage: Default::default(),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl crate::llm::LLMClient for ConcurrentAssetLLM {
+        async fn generate(&self, _prompt: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: String::new(),
+                usage: Default::default(),
+            })
+        }
+
+        async fn embed(&self, _text: &str) -> Result<crate::llm::LLMResponse<Vec<f32>>> {
+            Ok(crate::llm::LLMResponse {
+                data: vec![0.0; 384],
+                usage: Default::default(),
+            })
+        }
+
+        async fn compress(
+            &self,
+            text: &str,
+            _is_agent: bool,
+        ) -> Result<crate::llm::LLMResponse<CompressionOutput>> {
+            Ok(crate::llm::LLMResponse {
+                data: CompressionOutput {
+                    content: text.to_string(),
+                    valid_at: None,
+                },
+                usage: Default::default(),
+            })
+        }
+
+        async fn summarize_group(
+            &self,
+            texts: Vec<String>,
+        ) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: texts.join("\n"),
+                usage: Default::default(),
+            })
+        }
+
+        async fn describe_image(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            let current = self.active_describes.fetch_add(1, Ordering::SeqCst) + 1;
+            let mut observed = self.max_describes.load(Ordering::SeqCst);
+            while current > observed {
+                match self.max_describes.compare_exchange(
+                    observed,
+                    current,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) => break,
+                    Err(actual) => observed = actual,
+                }
+            }
+
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            self.active_describes.fetch_sub(1, Ordering::SeqCst);
+
             Ok(crate::llm::LLMResponse {
                 data: "image".into(),
                 usage: Default::default(),
@@ -2011,15 +2386,20 @@ mod tests {
         );
 
         let empty = serde_json::json!({"embedding":[]});
-        assert_eq!(BackgroundWorker::parse_metadata_embedding(&empty), Some(None));
+        assert_eq!(
+            BackgroundWorker::parse_metadata_embedding(&empty),
+            Some(None)
+        );
 
         let invalid = serde_json::json!({"embedding":[1.0, "oops"]});
-        assert_eq!(BackgroundWorker::parse_metadata_embedding(&invalid), Some(None));
+        assert_eq!(
+            BackgroundWorker::parse_metadata_embedding(&invalid),
+            Some(None)
+        );
 
         let fingerprint_a =
             BackgroundWorker::generate_semantic_fingerprint("Tool failed at 12:01!!!");
-        let fingerprint_b =
-            BackgroundWorker::generate_semantic_fingerprint("tool failed at 12:02");
+        let fingerprint_b = BackgroundWorker::generate_semantic_fingerprint("tool failed at 12:02");
         assert_eq!(fingerprint_a, fingerprint_b);
     }
 
@@ -2138,7 +2518,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_extract_text_and_embed_input_falls_back_when_media_llm_calls_fail() -> Result<()> {
+    async fn test_extract_text_and_embed_input_falls_back_when_media_llm_calls_fail() -> Result<()>
+    {
         let stream_id = Uuid::new_v4();
         let llm = AssetErrorLLM;
 
@@ -2386,7 +2767,8 @@ mod tests {
 
         let mut worker = BackgroundWorker::new(engine);
         worker.config.consolidation_interval_ms = 1;
-        *worker.last_consolidation.lock().await = std::time::Instant::now() - Duration::from_secs(1);
+        *worker.last_consolidation.lock().await =
+            std::time::Instant::now() - Duration::from_secs(1);
 
         assert!(!worker.run_consolidation_cycle().await?);
         Ok(())
@@ -2515,6 +2897,380 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_consolidation_token_aware_packing_can_merge_more_than_ten_events() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.llm_client = Some(Arc::new(MockLLM {
+            fail_compress: false,
+            generate_response: None,
+        }));
+        worker.config.consolidation_interval_ms = 1;
+        worker.config.consolidation_batch_size = 32;
+        worker.config.consolidation_target_tokens = 10_000;
+        worker.config.consolidation_max_events_per_pack = 32;
+        *worker.last_consolidation.lock().await =
+            std::time::Instant::now() - Duration::from_secs(1);
+
+        let stream_id = Uuid::new_v4();
+        for index in 0..12 {
+            let event = Event::new(
+                None,
+                TEST_USER.into(),
+                None,
+                stream_id,
+                EventContent::Text(format!("Short event {index}")),
+            );
+            engine.ingest_event_directly(event).await?;
+        }
+
+        worker.run_consolidation_cycle().await?;
+
+        let l1s = engine.fetch_recent_l1_units(TEST_USER, 10).await?;
+        assert_eq!(l1s.len(), 1);
+        assert_eq!(l1s[0].stream_id, stream_id);
+        assert!(l1s[0].content.contains("Message 12: Short event 11"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_consolidation_cycle_preserves_same_stream_commit_order_when_compression_finishes_out_of_order(
+    ) -> Result<()> {
+        let temp_dir = tempdir()?;
+        let llm = Arc::new(OutOfOrderCompressionLLM);
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true)
+            .await?
+            .with_arbitrator(crate::arbitrator::Arbitrator::with_client(llm.clone()));
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.llm_client = Some(llm);
+        worker.config.consolidation_interval_ms = 1;
+        worker.config.llm_concurrency = 2;
+        worker.config.consolidation_batch_size = 8;
+        worker.config.consolidation_target_tokens = 4;
+        worker.config.consolidation_max_events_per_pack = 1;
+        *worker.last_consolidation.lock().await =
+            std::time::Instant::now() - Duration::from_secs(1);
+
+        let stream_id = Uuid::new_v4();
+        engine
+            .ingest_event_directly(Event::new(
+                None,
+                TEST_USER.into(),
+                None,
+                stream_id,
+                EventContent::Text("I live in Shanghai".into()),
+            ))
+            .await?;
+        engine
+            .ingest_event_directly(Event::new(
+                None,
+                TEST_USER.into(),
+                None,
+                stream_id,
+                EventContent::Text("I now live in Beijing".into()),
+            ))
+            .await?;
+
+        assert!(worker.run_consolidation_cycle().await?);
+
+        let l1s = engine.fetch_recent_l1_units(TEST_USER, 10).await?;
+        assert_eq!(l1s.len(), 1);
+        assert_eq!(l1s[0].content, "Message 1: I now live in Beijing");
+
+        let recent = engine.list_recent_rac_decisions(8)?;
+        assert!(recent.iter().any(|record| {
+            record.stage == "staged_pre_store"
+                && matches!(
+                    record.effect,
+                    crate::engine::RacDecisionEffect::Tombstone
+                        | crate::engine::RacDecisionEffect::RelationOnly
+                )
+        }));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_consolidation_cycle_overfetches_and_avoids_hot_stream_monopoly() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.llm_client = Some(Arc::new(MockLLM {
+            fail_compress: false,
+            generate_response: None,
+        }));
+        worker.config.consolidation_interval_ms = 1;
+        worker.config.consolidation_batch_size = 2;
+        worker.config.consolidation_fetch_multiplier = 3;
+        worker.config.consolidation_target_tokens = 4;
+        worker.config.consolidation_max_events_per_pack = 1;
+        *worker.last_consolidation.lock().await =
+            std::time::Instant::now() - Duration::from_secs(1);
+
+        let now = chrono::Utc::now();
+        let stream_a = Uuid::new_v4();
+        let stream_b = Uuid::new_v4();
+
+        let mut a1 = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_a,
+            EventContent::Text("A1".into()),
+        );
+        a1.transaction_time = now;
+
+        let mut a2 = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_a,
+            EventContent::Text("A2".into()),
+        );
+        a2.transaction_time = now + chrono::Duration::milliseconds(1);
+
+        let mut b1 = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_b,
+            EventContent::Text("B1".into()),
+        );
+        b1.transaction_time = now + chrono::Duration::milliseconds(2);
+
+        engine.ingest_event_directly(a1).await?;
+        engine.ingest_event_directly(a2).await?;
+        engine.ingest_event_directly(b1).await?;
+
+        assert!(worker.run_consolidation_cycle().await?);
+
+        let l1s = engine.fetch_recent_l1_units(TEST_USER, 10).await?;
+        assert_eq!(l1s.len(), 2);
+        assert!(l1s.iter().any(|unit| unit.stream_id == stream_a));
+        assert!(l1s.iter().any(|unit| unit.stream_id == stream_b));
+
+        let pending = engine.fetch_pending_events().await?;
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].stream_id, stream_a);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_consolidation_cycle_parallelizes_multimodal_preprocessing() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let llm = Arc::new(ConcurrentAssetLLM {
+            active_describes: AtomicUsize::new(0),
+            max_describes: AtomicUsize::new(0),
+        });
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.llm_client = Some(llm.clone());
+        worker.config.consolidation_interval_ms = 1;
+        worker.config.llm_concurrency = 2;
+        worker.config.consolidation_batch_size = 2;
+        worker.config.consolidation_fetch_multiplier = 1;
+        worker.config.consolidation_target_tokens = 4;
+        worker.config.consolidation_max_events_per_pack = 1;
+        *worker.last_consolidation.lock().await =
+            std::time::Instant::now() - Duration::from_secs(1);
+
+        engine
+            .ingest_event_directly(Event::new(
+                None,
+                TEST_USER.into(),
+                None,
+                Uuid::new_v4(),
+                EventContent::Image("inline://image/a".into()),
+            ))
+            .await?;
+        engine
+            .ingest_event_directly(Event::new(
+                None,
+                TEST_USER.into(),
+                None,
+                Uuid::new_v4(),
+                EventContent::Image("inline://image/b".into()),
+            ))
+            .await?;
+
+        assert!(worker.run_consolidation_cycle().await?);
+        assert!(llm.max_describes.load(Ordering::SeqCst) >= 2);
+
+        let l1s = engine.fetch_recent_l1_units(TEST_USER, 10).await?;
+        assert_eq!(l1s.len(), 2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_pack_events_for_consolidation_respects_token_budget() {
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        let temp_dir = tempdir().expect("tempdir");
+        let engine = rt
+            .block_on(MemoroseEngine::new_with_default_threshold(
+                temp_dir.path(),
+                1000,
+                true,
+                true,
+            ))
+            .expect("engine");
+
+        let mut worker = BackgroundWorker::new(engine);
+        worker.config.consolidation_target_tokens = 6;
+        worker.config.consolidation_max_events_per_pack = 32;
+
+        let stream_id = Uuid::new_v4();
+        let events = vec![
+            Event::new(
+                None,
+                TEST_USER.into(),
+                None,
+                stream_id,
+                EventContent::Text("alpha beta gamma delta".into()),
+            ),
+            Event::new(
+                None,
+                TEST_USER.into(),
+                None,
+                stream_id,
+                EventContent::Text("epsilon zeta eta theta".into()),
+            ),
+        ];
+
+        let packed = worker.pack_events_for_consolidation(events);
+        assert_eq!(packed.len(), 2);
+        assert_eq!(packed[0].events.len(), 1);
+        assert_eq!(packed[1].events.len(), 1);
+    }
+
+    #[test]
+    fn test_schedule_packed_groups_fairly_round_robins_keys_while_preserving_per_key_order() {
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        let temp_dir = tempdir().expect("tempdir");
+        let engine = rt
+            .block_on(MemoroseEngine::new_with_default_threshold(
+                temp_dir.path(),
+                1000,
+                true,
+                true,
+            ))
+            .expect("engine");
+        let worker = BackgroundWorker::new(engine);
+
+        let stream_a = Uuid::new_v4();
+        let stream_b = Uuid::new_v4();
+        let stream_c = Uuid::new_v4();
+
+        let scheduled = worker.schedule_packed_groups_fairly(vec![
+            PackedEventGroup {
+                key: (TEST_USER.into(), stream_a, None),
+                seq_no: 0,
+                events: Vec::new(),
+            },
+            PackedEventGroup {
+                key: (TEST_USER.into(), stream_a, None),
+                seq_no: 1,
+                events: Vec::new(),
+            },
+            PackedEventGroup {
+                key: (TEST_USER.into(), stream_a, None),
+                seq_no: 2,
+                events: Vec::new(),
+            },
+            PackedEventGroup {
+                key: (TEST_USER.into(), stream_b, None),
+                seq_no: 0,
+                events: Vec::new(),
+            },
+            PackedEventGroup {
+                key: (TEST_USER.into(), stream_b, None),
+                seq_no: 1,
+                events: Vec::new(),
+            },
+            PackedEventGroup {
+                key: (TEST_USER.into(), stream_c, None),
+                seq_no: 0,
+                events: Vec::new(),
+            },
+        ]);
+
+        let order: Vec<(Uuid, u64)> = scheduled
+            .into_iter()
+            .map(|group| (group.key.1, group.seq_no))
+            .collect();
+
+        assert_eq!(
+            order,
+            vec![
+                (stream_a, 0),
+                (stream_b, 0),
+                (stream_c, 0),
+                (stream_a, 1),
+                (stream_b, 1),
+                (stream_a, 2),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_limit_scheduled_groups_by_event_budget_keeps_prefix_without_splitting_groups() {
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        let temp_dir = tempdir().expect("tempdir");
+        let engine = rt
+            .block_on(MemoroseEngine::new_with_default_threshold(
+                temp_dir.path(),
+                1000,
+                true,
+                true,
+            ))
+            .expect("engine");
+        let worker = BackgroundWorker::new(engine);
+
+        let stream_a = Uuid::new_v4();
+        let stream_b = Uuid::new_v4();
+        let stream_c = Uuid::new_v4();
+        let mk_group = |stream_id: Uuid, seq_no: u64, count: usize| PackedEventGroup {
+            key: (TEST_USER.into(), stream_id, None),
+            seq_no,
+            events: (0..count)
+                .map(|_| {
+                    Event::new(
+                        None,
+                        TEST_USER.into(),
+                        None,
+                        stream_id,
+                        EventContent::Text("x".into()),
+                    )
+                })
+                .collect(),
+        };
+
+        let limited = worker.limit_scheduled_groups_by_event_budget(
+            vec![
+                mk_group(stream_a, 0, 1),
+                mk_group(stream_b, 0, 2),
+                mk_group(stream_c, 0, 1),
+            ],
+            3,
+        );
+
+        let summary: Vec<(Uuid, usize)> = limited
+            .into_iter()
+            .map(|group| (group.key.1, group.events.len()))
+            .collect();
+        assert_eq!(summary, vec![(stream_a, 1), (stream_b, 2)]);
+    }
+
+    #[tokio::test]
     async fn test_process_pipeline_batch_reconciles_before_store() -> Result<()> {
         let temp_dir = tempdir()?;
         let stream_id = Uuid::new_v4();
@@ -2620,6 +3376,110 @@ mod tests {
         let l1s = engine.fetch_recent_l1_units(TEST_USER, 10).await?;
         assert_eq!(l1s.len(), 1);
         assert_eq!(l1s[0].content, "I now live in Beijing");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_process_pipeline_batch_reconciles_french_staged_units_before_store() -> Result<()>
+    {
+        let temp_dir = tempdir()?;
+        let stream_id = Uuid::new_v4();
+
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true)
+            .await?
+            .with_arbitrator(crate::arbitrator::Arbitrator::with_client(Arc::new(
+                ContextAwareCorrectionLLM,
+            )));
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.llm_client = Some(Arc::new(MockLLM {
+            fail_compress: false,
+            generate_response: None,
+        }));
+
+        let processed = worker
+            .process_pipeline_batch(vec![
+                (
+                    vec![Uuid::new_v4()],
+                    TEST_USER.into(),
+                    stream_id,
+                    "J'habite à Paris".into(),
+                    None,
+                    Vec::new(),
+                    serde_json::json!({}),
+                    None,
+                ),
+                (
+                    vec![Uuid::new_v4()],
+                    TEST_USER.into(),
+                    stream_id,
+                    "Maintenant j'habite à Lyon".into(),
+                    None,
+                    Vec::new(),
+                    serde_json::json!({}),
+                    None,
+                ),
+            ])
+            .await?;
+
+        assert_eq!(processed.len(), 2);
+
+        let l1s = engine.fetch_recent_l1_units(TEST_USER, 10).await?;
+        assert_eq!(l1s.len(), 1);
+        assert_eq!(l1s[0].content, "Maintenant j'habite à Lyon");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_process_pipeline_batch_reconciles_noisy_staged_units_before_store() -> Result<()>
+    {
+        let temp_dir = tempdir()?;
+        let stream_id = Uuid::new_v4();
+
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true)
+            .await?
+            .with_arbitrator(crate::arbitrator::Arbitrator::with_client(Arc::new(
+                ContextAwareCorrectionLLM,
+            )));
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.llm_client = Some(Arc::new(MockLLM {
+            fail_compress: false,
+            generate_response: None,
+        }));
+
+        let processed = worker
+            .process_pipeline_batch(vec![
+                (
+                    vec![Uuid::new_v4()],
+                    TEST_USER.into(),
+                    stream_id,
+                    "I live in Shanghai".into(),
+                    None,
+                    Vec::new(),
+                    serde_json::json!({}),
+                    None,
+                ),
+                (
+                    vec![Uuid::new_v4()],
+                    TEST_USER.into(),
+                    stream_id,
+                    "btw, I moved from Shanghai to Beijing lol".into(),
+                    None,
+                    Vec::new(),
+                    serde_json::json!({}),
+                    None,
+                ),
+            ])
+            .await?;
+
+        assert_eq!(processed.len(), 2);
+
+        let l1s = engine.fetch_recent_l1_units(TEST_USER, 10).await?;
+        assert_eq!(l1s.len(), 1);
+        assert_eq!(l1s[0].content, "btw, I moved from Shanghai to Beijing lol");
 
         Ok(())
     }
@@ -2751,11 +3611,20 @@ mod tests {
         let l1s = engine.fetch_recent_l1_units(TEST_USER, 10).await?;
         assert_eq!(l1s.len(), 1);
         assert_eq!(l1s[0].embedding.as_deref(), Some(&[0.25, 0.5, 0.75][..]));
-        assert_eq!(l1s[0].valid_time.map(|dt| dt.to_rfc3339()), Some("2026-04-06T10:20:30+00:00".into()));
-        assert!(l1s[0].references.contains(&parent_id));
-        assert_eq!(l1s[0].task_metadata.as_ref().map(|meta| meta.progress), Some(0.6));
         assert_eq!(
-            l1s[0].task_metadata.as_ref().map(|meta| meta.status.clone()),
+            l1s[0].valid_time.map(|dt| dt.to_rfc3339()),
+            Some("2026-04-06T10:20:30+00:00".into())
+        );
+        assert!(l1s[0].references.contains(&parent_id));
+        assert_eq!(
+            l1s[0].task_metadata.as_ref().map(|meta| meta.progress),
+            Some(0.6)
+        );
+        assert_eq!(
+            l1s[0]
+                .task_metadata
+                .as_ref()
+                .map(|meta| meta.status.clone()),
             Some(TaskStatus::Completed)
         );
 
@@ -2763,7 +3632,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_process_pipeline_batch_falls_back_to_individual_embed_content_calls() -> Result<()> {
+    async fn test_process_pipeline_batch_falls_back_to_individual_embed_content_calls() -> Result<()>
+    {
         let temp_dir = tempdir()?;
         let engine =
             MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
@@ -2804,8 +3674,12 @@ mod tests {
         assert_eq!(llm.single_embed_calls.load(Ordering::SeqCst), 2);
         let l1s = engine.fetch_recent_l1_units(TEST_USER, 10).await?;
         assert_eq!(l1s.len(), 2);
-        assert!(l1s.iter().any(|unit| unit.content == "alpha" && unit.embedding.as_deref() == Some(&[5.0][..])));
-        assert!(l1s.iter().any(|unit| unit.content == "beta beta" && unit.embedding.as_deref() == Some(&[9.0][..])));
+        assert!(l1s
+            .iter()
+            .any(|unit| unit.content == "alpha" && unit.embedding.as_deref() == Some(&[5.0][..])));
+        assert!(l1s.iter().any(
+            |unit| unit.content == "beta beta" && unit.embedding.as_deref() == Some(&[9.0][..])
+        ));
 
         Ok(())
     }
@@ -2834,8 +3708,14 @@ mod tests {
             .await?;
 
         assert_eq!(processed.len(), 1);
-        assert_eq!(engine.get_pending_reflections()?, vec![TEST_USER.to_string()]);
-        assert_eq!(engine.get_pending_communities()?, vec![TEST_USER.to_string()]);
+        assert_eq!(
+            engine.get_pending_reflections()?,
+            vec![TEST_USER.to_string()]
+        );
+        assert_eq!(
+            engine.get_pending_communities()?,
+            vec![TEST_USER.to_string()]
+        );
         Ok(())
     }
 
@@ -2893,14 +3773,20 @@ mod tests {
             .find(|unit| unit.content == "I now live in Beijing")
             .expect("new unit should exist");
 
-        let outgoing = engine.graph().get_outgoing_edges(TEST_USER, beijing.id).await?;
+        let outgoing = engine
+            .graph()
+            .get_outgoing_edges(TEST_USER, beijing.id)
+            .await?;
         assert!(outgoing.iter().any(|edge| edge.target_id == shanghai.id));
         let recent = engine
             .list_recent_rac_decisions(8)?
             .into_iter()
             .find(|record| record.stage == "staged_pre_store")
             .expect("expected staged relation-only decision");
-        assert_eq!(recent.effect, crate::engine::RacDecisionEffect::RelationOnly);
+        assert_eq!(
+            recent.effect,
+            crate::engine::RacDecisionEffect::RelationOnly
+        );
 
         Ok(())
     }
@@ -2956,19 +3842,26 @@ mod tests {
             .find(|unit| unit.content == "I now live in Beijing")
             .expect("new unit should exist");
 
-        let outgoing = engine.graph().get_outgoing_edges(TEST_USER, beijing.id).await?;
-        assert!(outgoing
-            .iter()
-            .all(|edge| edge.target_id != shanghai.id
-                || !matches!(edge.relation, memorose_common::RelationType::EvolvedTo)));
+        let outgoing = engine
+            .graph()
+            .get_outgoing_edges(TEST_USER, beijing.id)
+            .await?;
+        assert!(outgoing.iter().all(|edge| edge.target_id != shanghai.id
+            || !matches!(edge.relation, memorose_common::RelationType::EvolvedTo)));
         let recent = engine
             .list_recent_rac_decisions(8)?
             .into_iter()
             .find(|record| record.stage == "staged_pre_store")
             .expect("expected staged skip decision");
         assert_ne!(recent.effect, crate::engine::RacDecisionEffect::Tombstone);
-        assert_ne!(recent.effect, crate::engine::RacDecisionEffect::RelationOnly);
-        assert_eq!(recent.guard_reason.as_deref(), Some("obsolete_low_confidence"));
+        assert_ne!(
+            recent.effect,
+            crate::engine::RacDecisionEffect::RelationOnly
+        );
+        assert_eq!(
+            recent.guard_reason.as_deref(),
+            Some("obsolete_low_confidence")
+        );
 
         Ok(())
     }
@@ -2981,7 +3874,8 @@ mod tests {
 
         let mut worker = BackgroundWorker::new(engine.clone());
         worker.config.consolidation_interval_ms = 1;
-        *worker.last_consolidation.lock().await = std::time::Instant::now() - Duration::from_secs(1);
+        *worker.last_consolidation.lock().await =
+            std::time::Instant::now() - Duration::from_secs(1);
 
         let stream_id = Uuid::new_v4();
         let event_1 = Event::new(
@@ -3025,7 +3919,8 @@ mod tests {
 
         let mut worker = BackgroundWorker::new(engine.clone());
         worker.config.consolidation_interval_ms = 1;
-        *worker.last_consolidation.lock().await = std::time::Instant::now() - Duration::from_secs(1);
+        *worker.last_consolidation.lock().await =
+            std::time::Instant::now() - Duration::from_secs(1);
 
         let mut event = Event::new(
             None,
@@ -3142,7 +4037,10 @@ mod tests {
         engine.set_needs_reflect(TEST_USER)?;
         worker.run_insight_cycle().await?;
 
-        assert_eq!(engine.get_pending_reflections()?, vec![TEST_USER.to_string()]);
+        assert_eq!(
+            engine.get_pending_reflections()?,
+            vec![TEST_USER.to_string()]
+        );
         Ok(())
     }
 

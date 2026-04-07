@@ -53,13 +53,44 @@ class MemoroseClient:
         *,
         limit: int = 10,
         org_id: Optional[str] = None,
+        token_budget: Optional[int] = None,
     ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {"query": query, "limit": limit}
         if org_id or self.org_id:
             payload["org_id"] = org_id or self.org_id
+        if token_budget is not None:
+            payload["token_budget"] = token_budget
         response = self._request(
             "POST",
             f"/v1/users/{self.user_id}/streams/{self.stream_id}/retrieve",
+            json=payload,
+        )
+        return response.json()
+
+    def build_context(
+        self,
+        query: str,
+        *,
+        token_budget: int = 800,
+        limit: int = 12,
+        org_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        format: str = "text",
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "user_id": self.user_id,
+            "query": query,
+            "limit": limit,
+            "token_budget": token_budget,
+            "format": format,
+        }
+        if org_id or self.org_id:
+            payload["org_id"] = org_id or self.org_id
+        if agent_id:
+            payload["agent_id"] = agent_id
+        response = self._request(
+            "POST",
+            "/v1/memory/context",
             json=payload,
         )
         return response.json()
@@ -187,7 +218,14 @@ def main() -> None:
     print("\n--- 2. Retrieving Memory ---")
     print(client.retrieve_memory("Where do I live now?"))
 
-    print("\n--- 3. Semantic Update Preview/Execute ---")
+    print("\n--- 3. Building Sidecar Context ---")
+    context = client.build_context(
+        "What should I keep in mind before helping this user?",
+        token_budget=240,
+    )
+    print(context)
+
+    print("\n--- 4. Semantic Update Preview/Execute ---")
     print(
         client.semantic_update(
             "I now live in Beijing and changed my email from old@example.com to new@example.com",
@@ -195,7 +233,7 @@ def main() -> None:
         )
     )
 
-    print("\n--- 4. Pending Review Queue ---")
+    print("\n--- 5. Pending Review Queue ---")
     print(client.list_pending_reviews(dashboard_token="replace-with-dashboard-jwt-if-needed"))
 
 

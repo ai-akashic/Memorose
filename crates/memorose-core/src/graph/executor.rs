@@ -86,7 +86,6 @@ impl BatchExecutor {
 
                     // Avoid redundant visits
                     if !all_visited.contains(&edge.target_id) {
-                        all_visited.insert(edge.target_id);
                         next_frontier.push(edge.target_id);
                     }
                 }
@@ -101,6 +100,10 @@ impl BatchExecutor {
                     MAX_FRONTIER_SIZE
                 );
                 next_frontier.truncate(MAX_FRONTIER_SIZE);
+            }
+
+            for node in &next_frontier {
+                all_visited.insert(*node);
             }
 
             current_frontier = next_frontier;
@@ -258,7 +261,9 @@ mod tests {
         .await?;
         let executor = BatchExecutor::new(graph_store.clone());
 
-        let cache = executor.prefetch_neighborhoods("user1", &[node_a, node_b]).await?;
+        let cache = executor
+            .prefetch_neighborhoods("user1", &[node_a, node_b])
+            .await?;
 
         assert_eq!(executor.graph_store().scan_all_edges().await?.len(), 2);
         assert_eq!(cache.get_degree(&node_a), 2);
@@ -266,5 +271,52 @@ mod tests {
         assert!(neighbors.contains(&node_b));
         assert!(neighbors.contains(&node_c));
         Ok(())
+    }
+}
+#[cfg(test)]
+mod additional_tests {
+    use super::*;
+    use crate::storage::graph::GraphStore;
+    use crate::RelationType;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn test_max_frontier_truncation() {
+        use std::sync::Arc;
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test_db");
+        let db = Arc::new(
+            lancedb::connect(db_path.to_str().unwrap())
+                .execute()
+                .await
+                .unwrap(),
+        );
+        let store = GraphStore::new(db).await.unwrap();
+        let executor = BatchExecutor::new(store);
+
+        let root = Uuid::new_v4();
+        // Create 10,005 children to exceed MAX_FRONTIER_SIZE (10,000)
+        for _ in 0..10005 {
+            executor
+                .graph_store()
+                .add_edge(&memorose_common::GraphEdge::new(
+                    "user1".to_string(),
+                    root,
+                    Uuid::new_v4(),
+                    RelationType::RelatedTo,
+                    1.0,
+                ))
+                .await
+                .unwrap();
+        }
+        executor.graph_store().flush().await.unwrap();
+
+        let result = executor
+            .batch_multi_hop_traverse("user1", vec![root], 1, None)
+            .await
+            .unwrap();
+
+        // Root + 10,000 max truncated children = 10001 total visited
+        assert_eq!(result.len(), 10001);
     }
 }

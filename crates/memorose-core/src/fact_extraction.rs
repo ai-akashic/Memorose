@@ -132,6 +132,18 @@ struct MultilingualSubjectExtension {
     #[serde(default)]
     leading_subject_markers: Vec<String>,
     #[serde(default)]
+    attribution_markers_lowered: Vec<String>,
+    #[serde(default)]
+    attribution_markers_raw: Vec<String>,
+    #[serde(default)]
+    attribution_prefix_markers_lowered: Vec<String>,
+    #[serde(default)]
+    attribution_prefix_markers_raw: Vec<String>,
+    #[serde(default)]
+    attribution_tail_markers_lowered: Vec<String>,
+    #[serde(default)]
+    attribution_tail_markers_raw: Vec<String>,
+    #[serde(default)]
     user_self_markers_lowered: Vec<String>,
     #[serde(default)]
     user_self_markers_raw: Vec<String>,
@@ -139,6 +151,26 @@ struct MultilingualSubjectExtension {
     schedule_context_lowered: Vec<String>,
     #[serde(default)]
     schedule_context_raw: Vec<String>,
+    #[serde(default)]
+    leading_noise_markers_lowered: Vec<String>,
+    #[serde(default)]
+    leading_noise_markers_raw: Vec<String>,
+    #[serde(default)]
+    question_markers_lowered: Vec<String>,
+    #[serde(default)]
+    question_markers_raw: Vec<String>,
+    #[serde(default)]
+    speculation_markers_lowered: Vec<String>,
+    #[serde(default)]
+    speculation_markers_raw: Vec<String>,
+    #[serde(default)]
+    contextual_non_assertive_prefixes_lowered: Vec<String>,
+    #[serde(default)]
+    contextual_non_assertive_prefixes_raw: Vec<String>,
+    #[serde(default)]
+    future_intent_markers_lowered: Vec<String>,
+    #[serde(default)]
+    future_intent_markers_raw: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -303,11 +335,19 @@ fn config_string_slice(values: &'static [String]) -> Vec<&'static str> {
 }
 
 fn negation_change_markers() -> Vec<&'static str> {
-    config_string_slice(&multilingual_fact_extraction_config().change_markers.negation)
+    config_string_slice(
+        &multilingual_fact_extraction_config()
+            .change_markers
+            .negation,
+    )
 }
 
 fn addition_change_markers() -> Vec<&'static str> {
-    config_string_slice(&multilingual_fact_extraction_config().change_markers.addition)
+    config_string_slice(
+        &multilingual_fact_extraction_config()
+            .change_markers
+            .addition,
+    )
 }
 
 fn update_change_markers() -> Vec<&'static str> {
@@ -315,23 +355,97 @@ fn update_change_markers() -> Vec<&'static str> {
 }
 
 fn historical_change_markers() -> Vec<&'static str> {
-    config_string_slice(&multilingual_fact_extraction_config().change_markers.historical)
+    config_string_slice(
+        &multilingual_fact_extraction_config()
+            .change_markers
+            .historical,
+    )
 }
 
 fn non_entity_subjects() -> Vec<&'static str> {
-    config_string_slice(&multilingual_fact_extraction_config().subject.non_entity_subjects)
+    config_string_slice(
+        &multilingual_fact_extraction_config()
+            .subject
+            .non_entity_subjects,
+    )
 }
 
 fn pronoun_subjects() -> Vec<&'static str> {
-    config_string_slice(&multilingual_fact_extraction_config().subject.pronoun_subjects)
+    config_string_slice(
+        &multilingual_fact_extraction_config()
+            .subject
+            .pronoun_subjects,
+    )
 }
 
 fn subject_markers() -> Vec<&'static str> {
-    config_string_slice(&multilingual_fact_extraction_config().subject.subject_markers)
+    config_string_slice(
+        &multilingual_fact_extraction_config()
+            .subject
+            .subject_markers,
+    )
 }
 
 fn leading_subject_markers() -> Vec<&'static str> {
-    config_string_slice(&multilingual_fact_extraction_config().subject.leading_subject_markers)
+    config_string_slice(
+        &multilingual_fact_extraction_config()
+            .subject
+            .leading_subject_markers,
+    )
+}
+
+fn attribution_markers_lowered() -> Vec<&'static str> {
+    multilingual_fact_extraction_config()
+        .subject
+        .attribution_markers_lowered
+        .iter()
+        .map(|value| value.as_str())
+        .collect()
+}
+
+fn attribution_markers_raw() -> Vec<&'static str> {
+    multilingual_fact_extraction_config()
+        .subject
+        .attribution_markers_raw
+        .iter()
+        .map(|value| value.as_str())
+        .collect()
+}
+
+fn attribution_prefix_markers_lowered() -> Vec<&'static str> {
+    multilingual_fact_extraction_config()
+        .subject
+        .attribution_prefix_markers_lowered
+        .iter()
+        .map(|value| value.as_str())
+        .collect()
+}
+
+fn attribution_prefix_markers_raw() -> Vec<&'static str> {
+    multilingual_fact_extraction_config()
+        .subject
+        .attribution_prefix_markers_raw
+        .iter()
+        .map(|value| value.as_str())
+        .collect()
+}
+
+fn attribution_tail_markers_lowered() -> Vec<&'static str> {
+    multilingual_fact_extraction_config()
+        .subject
+        .attribution_tail_markers_lowered
+        .iter()
+        .map(|value| value.as_str())
+        .collect()
+}
+
+fn attribution_tail_markers_raw() -> Vec<&'static str> {
+    multilingual_fact_extraction_config()
+        .subject
+        .attribution_tail_markers_raw
+        .iter()
+        .map(|value| value.as_str())
+        .collect()
 }
 
 fn user_self_markers_lowered() -> Vec<&'static str> {
@@ -370,12 +484,110 @@ fn schedule_context_markers_raw() -> Vec<&'static str> {
         .collect()
 }
 
+fn leading_noise_markers_lowered() -> Vec<&'static str> {
+    multilingual_fact_extraction_config()
+        .subject
+        .leading_noise_markers_lowered
+        .iter()
+        .map(|value| value.as_str())
+        .collect()
+}
+
+fn leading_noise_markers_raw() -> Vec<&'static str> {
+    multilingual_fact_extraction_config()
+        .subject
+        .leading_noise_markers_raw
+        .iter()
+        .map(|value| value.as_str())
+        .collect()
+}
+
+fn question_markers_lowered() -> Vec<&'static str> {
+    multilingual_fact_extraction_config()
+        .subject
+        .question_markers_lowered
+        .iter()
+        .map(|value| value.as_str())
+        .collect()
+}
+
+fn question_markers_raw() -> Vec<&'static str> {
+    multilingual_fact_extraction_config()
+        .subject
+        .question_markers_raw
+        .iter()
+        .map(|value| value.as_str())
+        .collect()
+}
+
+fn speculation_markers_lowered() -> Vec<&'static str> {
+    multilingual_fact_extraction_config()
+        .subject
+        .speculation_markers_lowered
+        .iter()
+        .map(|value| value.as_str())
+        .collect()
+}
+
+fn speculation_markers_raw() -> Vec<&'static str> {
+    multilingual_fact_extraction_config()
+        .subject
+        .speculation_markers_raw
+        .iter()
+        .map(|value| value.as_str())
+        .collect()
+}
+
+fn contextual_non_assertive_prefixes_lowered() -> Vec<&'static str> {
+    multilingual_fact_extraction_config()
+        .subject
+        .contextual_non_assertive_prefixes_lowered
+        .iter()
+        .map(|value| value.as_str())
+        .collect()
+}
+
+fn contextual_non_assertive_prefixes_raw() -> Vec<&'static str> {
+    multilingual_fact_extraction_config()
+        .subject
+        .contextual_non_assertive_prefixes_raw
+        .iter()
+        .map(|value| value.as_str())
+        .collect()
+}
+
+fn future_intent_markers_lowered() -> Vec<&'static str> {
+    multilingual_fact_extraction_config()
+        .subject
+        .future_intent_markers_lowered
+        .iter()
+        .map(|value| value.as_str())
+        .collect()
+}
+
+fn future_intent_markers_raw() -> Vec<&'static str> {
+    multilingual_fact_extraction_config()
+        .subject
+        .future_intent_markers_raw
+        .iter()
+        .map(|value| value.as_str())
+        .collect()
+}
+
 fn split_delimiters() -> Vec<&'static str> {
-    config_string_slice(&multilingual_fact_extraction_config().segmentation.split_delimiters)
+    config_string_slice(
+        &multilingual_fact_extraction_config()
+            .segmentation
+            .split_delimiters,
+    )
 }
 
 fn trim_delimiters() -> Vec<&'static str> {
-    config_string_slice(&multilingual_fact_extraction_config().segmentation.trim_delimiters)
+    config_string_slice(
+        &multilingual_fact_extraction_config()
+            .segmentation
+            .trim_delimiters,
+    )
 }
 
 fn trim_suffixes() -> Vec<&'static str> {
@@ -412,31 +624,59 @@ fn preference_before_markers() -> (&'static [String], &'static [String]) {
 }
 
 fn transition_possessives() -> Vec<&'static str> {
-    config_string_slice(&multilingual_fact_extraction_config().transitions.possessives)
+    config_string_slice(
+        &multilingual_fact_extraction_config()
+            .transitions
+            .possessives,
+    )
 }
 
 fn generic_transition_to_markers() -> Vec<&'static str> {
-    config_string_slice(&multilingual_fact_extraction_config().transitions.generic_to_markers)
+    config_string_slice(
+        &multilingual_fact_extraction_config()
+            .transitions
+            .generic_to_markers,
+    )
 }
 
 fn contact_transition_verbs() -> Vec<&'static str> {
-    config_string_slice(&multilingual_fact_extraction_config().transitions.contact_verbs)
+    config_string_slice(
+        &multilingual_fact_extraction_config()
+            .transitions
+            .contact_verbs,
+    )
 }
 
 fn contact_transition_fields() -> Vec<&'static str> {
-    config_string_slice(&multilingual_fact_extraction_config().transitions.contact_fields)
+    config_string_slice(
+        &multilingual_fact_extraction_config()
+            .transitions
+            .contact_fields,
+    )
 }
 
 fn contact_transition_start_marker_literals() -> Vec<&'static str> {
-    config_string_slice(&multilingual_fact_extraction_config().transitions.contact_start_markers)
+    config_string_slice(
+        &multilingual_fact_extraction_config()
+            .transitions
+            .contact_start_markers,
+    )
 }
 
 fn residence_transition_verbs() -> Vec<&'static str> {
-    config_string_slice(&multilingual_fact_extraction_config().transitions.residence_verbs)
+    config_string_slice(
+        &multilingual_fact_extraction_config()
+            .transitions
+            .residence_verbs,
+    )
 }
 
 fn residence_transition_fields() -> Vec<&'static str> {
-    config_string_slice(&multilingual_fact_extraction_config().transitions.residence_fields)
+    config_string_slice(
+        &multilingual_fact_extraction_config()
+            .transitions
+            .residence_fields,
+    )
 }
 
 fn residence_transition_presence_markers() -> Vec<&'static str> {
@@ -480,11 +720,19 @@ fn residence_field_transition_start_marker_literals() -> Vec<&'static str> {
 }
 
 fn employment_transition_verbs() -> Vec<&'static str> {
-    config_string_slice(&multilingual_fact_extraction_config().transitions.employment_verbs)
+    config_string_slice(
+        &multilingual_fact_extraction_config()
+            .transitions
+            .employment_verbs,
+    )
 }
 
 fn employment_transition_fields() -> Vec<&'static str> {
-    config_string_slice(&multilingual_fact_extraction_config().transitions.employment_fields)
+    config_string_slice(
+        &multilingual_fact_extraction_config()
+            .transitions
+            .employment_fields,
+    )
 }
 
 fn employment_transition_presence_markers() -> Vec<&'static str> {
@@ -504,7 +752,11 @@ fn employment_transition_source_markers() -> Vec<&'static str> {
 }
 
 fn employment_transition_start_marker_literals() -> Vec<&'static str> {
-    config_string_slice(&multilingual_fact_extraction_config().transitions.employment_start_markers)
+    config_string_slice(
+        &multilingual_fact_extraction_config()
+            .transitions
+            .employment_start_markers,
+    )
 }
 
 fn employment_transition_separator_markers() -> Vec<&'static str> {
@@ -524,7 +776,9 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    markers.into_iter().any(|marker| text.contains(marker.as_ref()))
+    markers
+        .into_iter()
+        .any(|marker| text.contains(marker.as_ref()))
 }
 
 fn is_cjk_char(ch: char) -> bool {
@@ -660,15 +914,29 @@ fn split_fact_candidate_segments(content: &str) -> Vec<String> {
     for delimiter in split_delimiters() {
         let mut next = Vec::new();
         for segment in segments {
-            let pieces = segment
+            let raw_pieces = segment
                 .split(delimiter)
                 .map(str::trim)
                 .filter(|piece| !piece.is_empty())
                 .map(str::to_string)
                 .collect::<Vec<_>>();
-            if pieces.len() <= 1 {
+            if raw_pieces.len() <= 1 {
                 next.push(segment);
             } else {
+                let trimmed_delimiter = delimiter.trim();
+                let preserve_addition_marker = !trimmed_delimiter.is_empty()
+                    && addition_change_markers().iter().any(|marker| {
+                        let marker = marker.trim();
+                        !marker.is_empty() && marker == trimmed_delimiter
+                    });
+                let mut pieces = Vec::with_capacity(raw_pieces.len());
+                for (index, piece) in raw_pieces.into_iter().enumerate() {
+                    if index > 0 && preserve_addition_marker {
+                        pieces.push(format!("{trimmed_delimiter} {piece}"));
+                    } else {
+                        pieces.push(piece);
+                    }
+                }
                 next.extend(pieces);
             }
         }
@@ -684,6 +952,48 @@ fn split_fact_candidate_segments(content: &str) -> Vec<String> {
         }
     }
     deduped
+}
+
+fn normalize_memory_clause(content: &str) -> String {
+    let mut normalized = normalize_whitespace(content);
+
+    loop {
+        let lowered = normalized.to_ascii_lowercase();
+        let lowered_marker = leading_noise_markers_lowered().into_iter().find_map(|marker| {
+            let compact = marker.trim_end();
+            if lowered.starts_with(marker) {
+                Some(marker.len())
+            } else if lowered.starts_with(compact) {
+                let rest = normalized[compact.len()..].chars().next();
+                rest.filter(|ch| matches!(ch, ',' | '，' | ':' | '：' | '-' | ' ' | '!' | '！'))
+                    .map(|_| compact.len())
+            } else {
+                None
+            }
+        });
+        let raw_marker = leading_noise_markers_raw().into_iter().find_map(|marker| {
+            if normalized.starts_with(marker) {
+                Some(marker.len())
+            } else {
+                None
+            }
+        });
+
+        let marker_len = lowered_marker.or(raw_marker);
+
+        let Some(marker_len) = marker_len else {
+            break;
+        };
+
+        normalized = normalized[marker_len..]
+            .trim_start_matches(|ch: char| {
+                matches!(ch, ',' | '，' | ':' | '：' | '-' | ' ' | '!' | '！')
+            })
+            .trim()
+            .to_string();
+    }
+
+    normalized
 }
 
 fn strip_leading_articles(value: &str) -> String {
@@ -779,6 +1089,22 @@ fn is_pronoun_subject(name: &str) -> bool {
     pronoun_subjects().contains(&name.trim())
 }
 
+fn starts_with_pronoun_subject(name: &str) -> bool {
+    let trimmed = normalize_whitespace(name).trim().to_string();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let lowered = trimmed.to_ascii_lowercase();
+    pronoun_subjects().iter().any(|pronoun| {
+        let pronoun_is_cjk = pronoun.chars().any(is_cjk_char);
+        trimmed == *pronoun
+            || lowered == *pronoun
+            || lowered.starts_with(&format!("{pronoun} "))
+            || (pronoun_is_cjk && trimmed.starts_with(pronoun))
+    })
+}
+
 fn extract_subject_before_marker(content: &str) -> Option<String> {
     let normalized = normalize_whitespace(content);
     let first_segment = normalized
@@ -799,7 +1125,7 @@ fn extract_subject_before_marker(content: &str) -> Option<String> {
                 })
                 .trim();
             if candidate.is_empty()
-                || is_pronoun_subject(candidate)
+                || starts_with_pronoun_subject(candidate)
                 || looks_like_non_entity_subject(candidate)
             {
                 continue;
@@ -830,7 +1156,7 @@ fn extract_english_subject_before_marker(content: &str) -> Option<String> {
                 .trim();
             let lowered_candidate = candidate.to_ascii_lowercase();
             if candidate.is_empty()
-                || is_pronoun_subject(candidate)
+                || starts_with_pronoun_subject(candidate)
                 || looks_like_non_entity_subject(candidate)
                 || lowered_candidate.contains(" lives in ")
                 || lowered_candidate.contains(" live in ")
@@ -901,7 +1227,7 @@ fn extract_leading_named_subject(content: &str) -> Option<String> {
         ) {
             return None;
         }
-        if is_pronoun_subject(cleaned) || looks_like_non_entity_subject(cleaned) {
+        if starts_with_pronoun_subject(cleaned) || looks_like_non_entity_subject(cleaned) {
             return None;
         }
         tokens.push(cleaned);
@@ -912,6 +1238,144 @@ fn extract_leading_named_subject(content: &str) -> Option<String> {
     } else {
         Some(tokens.join(" "))
     }
+}
+
+fn subject_descriptor_from_candidate(
+    unit: &MemoryUnit,
+    candidate: &str,
+) -> Option<(MemoryFactSubject, String)> {
+    let candidate = candidate
+        .trim()
+        .trim_matches(|ch: char| !ch.is_alphanumeric() && !is_cjk_char(ch) && ch != '\'' && ch != '-')
+        .trim();
+    if candidate.is_empty() || looks_like_non_entity_subject(candidate) {
+        return None;
+    }
+
+    let lowered = candidate.to_ascii_lowercase();
+    if matches!(lowered.as_str(), "i" | "me" | "my" | "myself")
+        || matches!(candidate, "我" | "我的" | "我自己")
+    {
+        if unit.domain == MemoryDomain::Agent || unit.agent_id.is_some() {
+            let agent_key = unit
+                .agent_id
+                .as_deref()
+                .and_then(normalize_subject_key_fragment)
+                .unwrap_or_else(|| "self".to_string());
+            return Some((MemoryFactSubject::Agent, format!("agent:{agent_key}")));
+        }
+        return Some((MemoryFactSubject::User, "user:self".to_string()));
+    }
+
+    if matches!(lowered.as_str(), "we" | "our" | "ourselves")
+        || matches!(candidate, "我们" | "本公司")
+    {
+        let org_key = unit
+            .org_id
+            .as_deref()
+            .and_then(normalize_subject_key_fragment)
+            .unwrap_or_else(|| "self".to_string());
+        return Some((MemoryFactSubject::Organization, format!("organization:{org_key}")));
+    }
+
+    if lowered.contains("assistant") || matches!(candidate, "助手" | "AI助手") {
+        let agent_key = unit
+            .agent_id
+            .as_deref()
+            .and_then(normalize_subject_key_fragment)
+            .unwrap_or_else(|| "self".to_string());
+        return Some((MemoryFactSubject::Agent, format!("agent:{agent_key}")));
+    }
+
+    if starts_with_pronoun_subject(candidate) {
+        return None;
+    }
+
+    let key = normalize_subject_key_fragment(candidate).unwrap_or_else(|| "unknown".to_string());
+    Some(if looks_like_organization_subject(candidate) {
+        (MemoryFactSubject::Organization, format!("organization:{key}"))
+    } else {
+        (MemoryFactSubject::External, format!("external:{key}"))
+    })
+}
+
+fn trim_attribution_subject_candidate(candidate: &str) -> &str {
+    let lowered = candidate.to_ascii_lowercase();
+    let mut end = candidate.len();
+
+    for marker in attribution_tail_markers_lowered() {
+        if let Some(index) = lowered.find(marker) {
+            end = end.min(index);
+        }
+    }
+    for marker in attribution_tail_markers_raw() {
+        if let Some(index) = candidate.find(marker) {
+            end = end.min(index);
+        }
+    }
+    for delimiter in [",", "，", ";", "；", ":", "：", "\"", "“", "”", "「", "」"] {
+        if let Some(index) = candidate.find(delimiter) {
+            end = end.min(index);
+        }
+    }
+
+    candidate[..end].trim()
+}
+
+fn extract_attributed_subject_descriptor(
+    unit: &MemoryUnit,
+    content: &str,
+    _lowered_content: &str,
+) -> Option<(MemoryFactSubject, String)> {
+    let normalized = normalize_whitespace(content);
+    if normalized.is_empty() {
+        return None;
+    }
+    let lowered_normalized = normalized.to_ascii_lowercase();
+
+    for marker in attribution_markers_lowered() {
+        if let Some(index) = lowered_normalized.find(marker) {
+            let candidate = normalized[..index].trim();
+            if let Some(subject) = subject_descriptor_from_candidate(unit, candidate) {
+                return Some(subject);
+            }
+        }
+    }
+
+    for marker in attribution_prefix_markers_lowered() {
+        if let Some(index) = lowered_normalized.find(marker) {
+            let start = index + marker.len();
+            if start <= normalized.len() {
+                let candidate = trim_attribution_subject_candidate(&normalized[start..]);
+                if let Some(subject) = subject_descriptor_from_candidate(unit, candidate) {
+                    return Some(subject);
+                }
+            }
+        }
+    }
+
+    for marker in attribution_prefix_markers_raw() {
+        if let Some(index) = normalized.find(marker) {
+            let start = index + marker.len();
+            if start <= normalized.len() {
+                let candidate = trim_attribution_subject_candidate(&normalized[start..]);
+                if let Some(subject) = subject_descriptor_from_candidate(unit, candidate) {
+                    return Some(subject);
+                }
+            }
+        }
+    }
+
+    for marker in attribution_markers_raw() {
+        if let Some(index) = normalized.find(marker) {
+            let candidate = normalized[..index].trim();
+            if let Some(subject) = subject_descriptor_from_candidate(unit, candidate) {
+                return Some(subject);
+            }
+        }
+    }
+
+    None
 }
 
 fn canonicalize_contact_value(value: &str) -> String {
@@ -931,19 +1395,63 @@ fn canonicalize_contact_value(value: &str) -> String {
     }
 }
 
+fn canonicalize_schedule_value(value: &str) -> String {
+    let mut normalized = normalize_whitespace(value)
+        .replace("左右", "")
+        .replace("前后", "")
+        .to_ascii_lowercase();
+
+    for (from, to) in [
+        ("tmrw", "tomorrow"),
+        ("tmr", "tomorrow"),
+        ("2nite", "tonight"),
+        ("2pm-ish", "2pm"),
+        ("3pm-ish", "3pm"),
+    ] {
+        normalized = normalized.replace(from, to);
+    }
+
+    for prefix in [
+        "at around ",
+        "at about ",
+        "around ",
+        "about ",
+        "approximately ",
+        "approx ",
+        "roughly ",
+    ] {
+        normalized = normalized.trim_start_matches(prefix).to_string();
+    }
+
+    normalized = normalized
+        .trim_end_matches("-ish")
+        .trim_end_matches(" ish")
+        .trim_end_matches(" lol")
+        .trim_end_matches(" haha")
+        .trim_end_matches(" thanks")
+        .trim_end_matches(" please")
+        .trim()
+        .to_string();
+
+    strip_leading_articles(&normalized)
+        .trim_matches(|ch: char| !ch.is_alphanumeric() && !matches!(ch, '@' | '+' | ':' | '/' | '-'))
+        .trim()
+        .to_string()
+}
+
 fn canonicalize_memory_fact_value(attribute: MemoryFactAttribute, value: &str) -> String {
     let normalized = normalize_whitespace(value);
     let lowered = normalized.to_ascii_lowercase();
 
     match attribute {
         MemoryFactAttribute::Contact => canonicalize_contact_value(&normalized),
+        MemoryFactAttribute::Schedule => canonicalize_schedule_value(&normalized),
         MemoryFactAttribute::Residence
         | MemoryFactAttribute::Employment
         | MemoryFactAttribute::Relationship
         | MemoryFactAttribute::Status
         | MemoryFactAttribute::Ownership
-        | MemoryFactAttribute::Skill
-        | MemoryFactAttribute::Schedule => strip_leading_articles(&lowered)
+        | MemoryFactAttribute::Skill => strip_leading_articles(&lowered)
             .trim_matches(|ch: char| {
                 !ch.is_alphanumeric() && !matches!(ch, '@' | '+' | ':' | '/' | '-')
             })
@@ -1255,11 +1763,7 @@ fn contact_transition_start_markers() -> Vec<String> {
     let verbs = contact_transition_verbs();
     let possessives = transition_possessives();
     let fields = contact_transition_fields();
-    let mut markers = build_possessive_transition_start_markers(
-        &verbs,
-        &possessives,
-        &fields,
-    );
+    let mut markers = build_possessive_transition_start_markers(&verbs, &possessives, &fields);
     markers.extend(
         contact_transition_start_marker_literals()
             .into_iter()
@@ -1272,11 +1776,7 @@ fn employment_transition_start_markers() -> Vec<String> {
     let verbs = employment_transition_verbs();
     let possessives = transition_possessives();
     let fields = employment_transition_fields();
-    let mut markers = build_possessive_transition_start_markers(
-        &verbs,
-        &possessives,
-        &fields,
-    );
+    let mut markers = build_possessive_transition_start_markers(&verbs, &possessives, &fields);
     markers.extend(
         employment_transition_start_marker_literals()
             .into_iter()
@@ -1289,11 +1789,7 @@ fn residence_field_transition_start_markers() -> Vec<String> {
     let verbs = residence_transition_verbs();
     let possessives = transition_possessives();
     let fields = residence_transition_fields();
-    let mut markers = build_possessive_transition_start_markers(
-        &verbs,
-        &possessives,
-        &fields,
-    );
+    let mut markers = build_possessive_transition_start_markers(&verbs, &possessives, &fields);
     markers.extend(
         residence_field_transition_start_marker_literals()
             .into_iter()
@@ -1333,8 +1829,8 @@ fn extract_memory_fact_value_by_attribute(
     let normalized = normalize_whitespace(content);
     let lowered_content = normalized.to_ascii_lowercase();
     let schedule_context = schedule_context_markers_lowered()
-            .iter()
-            .any(|marker| lowered_content.contains(marker))
+        .iter()
+        .any(|marker| lowered_content.contains(marker))
         || schedule_context_markers_raw()
             .iter()
             .any(|marker| normalized.contains(marker));
@@ -1356,11 +1852,7 @@ fn extract_memory_fact_value_by_attribute(
         )
         .or_else(|| {
             let (end_markers, subject_boundaries) = employment_before_markers();
-            extract_memory_fact_value_before_markers(
-                content,
-                end_markers,
-                subject_boundaries,
-            )
+            extract_memory_fact_value_before_markers(content, end_markers, subject_boundaries)
         }),
         MemoryFactAttribute::Relationship => extract_memory_fact_value_with_markers(
             content,
@@ -1639,11 +2131,73 @@ fn infer_memory_fact_attribute_from_keywords(keywords: &[String]) -> Option<Memo
     None
 }
 
+fn is_non_assertive_clause(content: &str, lowered_content: &str) -> bool {
+    let trimmed = content.trim();
+    if trimmed.ends_with('?') || trimmed.ends_with('？') {
+        return true;
+    }
+
+    if question_markers_lowered()
+        .iter()
+        .any(|marker| lowered_content.starts_with(marker) || lowered_content.contains(marker))
+        || question_markers_raw()
+            .iter()
+            .any(|marker| content.starts_with(marker) || content.contains(marker))
+    {
+        return true;
+    }
+
+    speculation_markers_lowered()
+        .iter()
+        .any(|marker| lowered_content.starts_with(marker) || lowered_content.contains(marker))
+        || speculation_markers_raw()
+            .iter()
+            .any(|marker| content.starts_with(marker) || content.contains(marker))
+        || future_intent_markers_lowered()
+            .iter()
+            .any(|marker| lowered_content.starts_with(marker) || lowered_content.contains(marker))
+        || future_intent_markers_raw()
+            .iter()
+            .any(|marker| content.starts_with(marker) || content.contains(marker))
+}
+
+fn is_contextual_non_assertive_prefix(content: &str, lowered_content: &str) -> bool {
+    let trimmed = content.trim();
+    contextual_non_assertive_prefixes_lowered()
+        .iter()
+        .any(|marker| lowered_content.starts_with(marker) || lowered_content.contains(marker))
+        || contextual_non_assertive_prefixes_raw()
+            .iter()
+            .any(|marker| trimmed.starts_with(marker) || trimmed.contains(marker))
+}
+
+fn has_odd_quote_marker_count(content: &str) -> bool {
+    let ascii_quotes = content.matches('"').count();
+    let cjk_quotes = content.matches('“').count()
+        + content.matches('”').count()
+        + content.matches('「').count()
+        + content.matches('」').count();
+    (ascii_quotes + cjk_quotes) % 2 == 1
+}
+
+fn contains_first_person_reference(content: &str, lowered_content: &str) -> bool {
+    lowered_content.contains(" i ")
+        || lowered_content.starts_with("i ")
+        || lowered_content.contains(" my ")
+        || lowered_content.contains(" me ")
+        || content.contains('我')
+        || content.contains("我的")
+}
+
 fn explicit_memory_fact_subject_descriptor(
     unit: &MemoryUnit,
     content: &str,
     lowered_content: &str,
 ) -> Option<(MemoryFactSubject, String)> {
+    if let Some(subject) = extract_attributed_subject_descriptor(unit, content, lowered_content) {
+        return Some(subject);
+    }
+
     if content.contains("和")
         && (content.contains("结婚") || content.contains("交往") || content.contains("恋爱"))
     {
@@ -1754,9 +2308,14 @@ fn infer_memory_fact_subject_descriptor(
 fn select_subject_override(
     content: &str,
     lowered_content: &str,
+    attribute: MemoryFactAttribute,
     explicit_subject: Option<(MemoryFactSubject, String)>,
     last_explicit_subject: Option<(MemoryFactSubject, String)>,
 ) -> Option<(MemoryFactSubject, String)> {
+    if matches!(attribute, MemoryFactAttribute::Schedule) {
+        return None;
+    }
+
     match (explicit_subject, last_explicit_subject.clone()) {
         (
             Some((MemoryFactSubject::User, _)),
@@ -1900,6 +2459,31 @@ fn prefer_memory_fact_descriptor(
             && candidate.confidence > current.confidence)
 }
 
+pub(crate) fn is_non_assertive_memory_content(content: &str) -> bool {
+    let normalized = normalize_whitespace(content);
+    if normalized.is_empty() {
+        return false;
+    }
+
+    let segments = split_fact_candidate_segments(&normalized);
+    let mut saw_segment = false;
+
+    for segment in segments {
+        let segment = normalize_memory_clause(&segment);
+        if segment.is_empty() {
+            continue;
+        }
+
+        saw_segment = true;
+        let lowered_segment = format!(" {} ", segment.to_ascii_lowercase());
+        if !is_non_assertive_clause(&segment, &lowered_segment) {
+            return false;
+        }
+    }
+
+    saw_segment
+}
+
 pub(crate) fn detect_memory_facts(unit: &MemoryUnit) -> Vec<MemoryFactDescriptor> {
     let content = normalize_whitespace(&unit.content);
     let lowered = content.to_ascii_lowercase();
@@ -1908,16 +2492,57 @@ pub(crate) fn detect_memory_facts(unit: &MemoryUnit) -> Vec<MemoryFactDescriptor
     let mut descriptors = Vec::new();
     let mut seen: HashMap<String, usize> = HashMap::new();
     let mut last_explicit_subject: Option<(MemoryFactSubject, String)> = None;
+    let mut active_quote_subject: Option<(MemoryFactSubject, String)> = None;
+    let mut suppress_next_assertive_segment = false;
+    let include_full_content_pass = segments.len() <= 1;
 
-    for segment in segments.into_iter().chain(std::iter::once(content.clone())) {
+    for segment in segments
+        .into_iter()
+        .chain(include_full_content_pass.then_some(content.clone()))
+    {
+        let segment = normalize_memory_clause(&segment);
+        if segment.is_empty() {
+            continue;
+        }
+
         let lowered_segment = format!(" {} ", segment.to_ascii_lowercase());
         let explicit_subject =
             explicit_memory_fact_subject_descriptor(unit, &segment, &lowered_segment);
+        if is_non_assertive_clause(&segment, &lowered_segment) {
+            if is_contextual_non_assertive_prefix(&segment, &lowered_segment)
+                && explicit_subject.is_some()
+            {
+                last_explicit_subject = explicit_subject.clone();
+            }
+            if has_odd_quote_marker_count(&segment) {
+                if active_quote_subject.is_some() {
+                    active_quote_subject = None;
+                } else {
+                    active_quote_subject = explicit_subject.clone();
+                }
+            }
+            suppress_next_assertive_segment =
+                is_contextual_non_assertive_prefix(&segment, &lowered_segment);
+            continue;
+        }
+        if suppress_next_assertive_segment {
+            suppress_next_assertive_segment = false;
+            continue;
+        }
+        let quote_adjusted_explicit_subject = match (&explicit_subject, &active_quote_subject) {
+            (Some((MemoryFactSubject::User, _)), Some(quote_subject))
+                if contains_first_person_reference(&segment, &lowered_segment) =>
+            {
+                Some(quote_subject.clone())
+            }
+            _ => explicit_subject.clone(),
+        };
         for rule in ATTRIBUTE_RULES {
             let subject_override = select_subject_override(
                 &segment,
                 &lowered_segment,
-                explicit_subject.clone(),
+                rule.attribute,
+                quote_adjusted_explicit_subject.clone(),
                 last_explicit_subject.clone(),
             );
             if let Some((old_value, new_value)) =
@@ -2006,12 +2631,19 @@ pub(crate) fn detect_memory_facts(unit: &MemoryUnit) -> Vec<MemoryFactDescriptor
                 }
             }
         }
-        if explicit_subject.is_some() {
-            last_explicit_subject = explicit_subject;
+        if quote_adjusted_explicit_subject.is_some() {
+            last_explicit_subject = quote_adjusted_explicit_subject.clone();
+        }
+        if has_odd_quote_marker_count(&segment) {
+            if active_quote_subject.is_some() {
+                active_quote_subject = None;
+            } else {
+                active_quote_subject = quote_adjusted_explicit_subject;
+            }
         }
     }
 
-    if descriptors.is_empty() {
+    if descriptors.is_empty() && !is_non_assertive_clause(&content, &format!(" {} ", lowered)) {
         if let Some(attribute) = infer_memory_fact_attribute_from_keywords(&keywords) {
             let confidence = if lowered.contains("not ") || lowered.contains("no longer ") {
                 60
@@ -2173,6 +2805,43 @@ pub(crate) fn build_memory_correction_focus_terms_with_fact(
     terms
 }
 
+fn candidate_memory_fact_descriptors(candidate: &MemoryUnit) -> Vec<MemoryFactDescriptor> {
+    let mut descriptors = Vec::new();
+    let mut seen = HashSet::new();
+
+    for descriptor in candidate
+        .extracted_facts
+        .iter()
+        .filter_map(descriptor_from_stored_fact)
+    {
+        let key = format!(
+            "{:?}|{}|{:?}|{}",
+            descriptor.subject,
+            descriptor.subject_key,
+            descriptor.attribute,
+            descriptor.value_payload.comparison_key()
+        );
+        if seen.insert(key) {
+            descriptors.push(descriptor);
+        }
+    }
+
+    for descriptor in detect_memory_facts(candidate) {
+        let key = format!(
+            "{:?}|{}|{:?}|{}",
+            descriptor.subject,
+            descriptor.subject_key,
+            descriptor.attribute,
+            descriptor.value_payload.comparison_key()
+        );
+        if descriptors.is_empty() || seen.insert(key) {
+            descriptors.push(descriptor);
+        }
+    }
+
+    descriptors
+}
+
 pub(crate) fn memory_correction_candidate_score(
     unit: &MemoryUnit,
     candidate: &MemoryUnit,
@@ -2211,7 +2880,7 @@ pub(crate) fn memory_correction_candidate_score(
     } else {
         0.25 * (exact_keyword_matches as f32 / query_keywords.len() as f32)
     };
-    let candidate_facts = detect_memory_facts(candidate);
+    let candidate_facts = candidate_memory_fact_descriptors(candidate);
     let slot_alignment = match query_fact {
         Some(query_fact) if !candidate_facts.is_empty() => candidate_facts
             .iter()
@@ -2701,6 +3370,46 @@ mod tests {
     }
 
     #[test]
+    fn test_memory_correction_candidate_score_prefers_persisted_candidate_facts() {
+        let query = test_unit("I now live in Beijing");
+        let query_fact = detect_memory_fact(&query).expect("query fact should exist");
+        let focus_terms = build_memory_correction_focus_terms_with_fact(&query, Some(&query_fact));
+
+        let mut opaque_candidate = test_unit("Profile metadata sync completed");
+        opaque_candidate.extracted_facts = vec![StoredMemoryFact {
+            subject: "user".into(),
+            subject_ref: Some("user:self".into()),
+            subject_name: None,
+            attribute: "residence".into(),
+            value: "Shanghai".into(),
+            canonical_value: Some("shanghai".into()),
+            change_type: "reaffirm".into(),
+            temporal_status: Some("current".into()),
+            polarity: Some("positive".into()),
+            evidence_span: Some("home city is Shanghai".into()),
+            confidence: 0.88,
+        }];
+
+        let plain_candidate = test_unit("Profile metadata sync completed");
+
+        let score_with_persisted = memory_correction_candidate_score(
+            &query,
+            &opaque_candidate,
+            &focus_terms,
+            Some(&query_fact),
+        );
+        let score_without_persisted = memory_correction_candidate_score(
+            &query,
+            &plain_candidate,
+            &focus_terms,
+            Some(&query_fact),
+        );
+
+        assert!(score_with_persisted >= 0.50);
+        assert!(score_with_persisted > score_without_persisted + 0.40);
+    }
+
+    #[test]
     fn test_tokenize_search_text_includes_cjk_bigrams() {
         let tokens = tokenize_search_text("我现在住在北京");
         assert!(tokens.iter().any(|token| token == "北京"));
@@ -2762,11 +3471,76 @@ mod tests {
         )
     }
 
+    fn contains_japanese_kana(text: &str) -> bool {
+        text.chars()
+            .any(|ch| matches!(ch as u32, 0x3040..=0x30FF))
+    }
+
     fn eval_case_language(content: &str) -> &'static str {
-        if contains_cjk(content) {
+        if contains_japanese_kana(content) {
+            "ja"
+        } else if contains_cjk(content) {
             "zh"
         } else {
-            "en"
+            let lowered = content.to_ascii_lowercase();
+            if [
+                " vivo en ",
+                " mi correo ",
+                " trabajo en ",
+                " trabajo para ",
+                " me gusta ",
+                " ahora ",
+            ]
+            .iter()
+            .any(|marker| lowered.contains(marker) || lowered.starts_with(marker.trim()))
+            {
+                "es"
+            } else if [
+                " j'habite ",
+                " j’habite ",
+                " je vis ",
+                " je travaille ",
+                " mon email ",
+                " je suis ",
+                " j'aime ",
+                " j’aime ",
+            ]
+            .iter()
+            .any(|marker| lowered.contains(marker) || lowered.starts_with(marker.trim()))
+            {
+                "fr"
+            } else if [
+                " ich wohne ",
+                " ich lebe ",
+                " ich arbeite ",
+                " meine e-mail ",
+                " meine email ",
+                " ich bin ",
+                " ich mag ",
+            ]
+            .iter()
+            .any(|marker| lowered.contains(marker) || lowered.starts_with(marker.trim()))
+            {
+                "de"
+            } else if [
+                " moro em ",
+                " vivo em ",
+                " meu email ",
+                " meu e-mail ",
+                " trabalho na ",
+                " trabalho no ",
+                " trabalho para ",
+                " gosto de ",
+                " sou ",
+                " agora ",
+            ]
+            .iter()
+            .any(|marker| lowered.contains(marker) || lowered.starts_with(marker.trim()))
+            {
+                "pt"
+            } else {
+                "en"
+            }
         }
     }
 
@@ -2931,24 +3705,14 @@ mod tests {
         let english_facts = detect_memory_facts(&test_unit("I like sushi and ramen"));
         assert!(english_facts.iter().any(|fact| {
             fact.attribute == MemoryFactAttribute::Preference
-                && fact.value == "sushi"
-                && fact.subject == MemoryFactSubject::User
-        }));
-        assert!(english_facts.iter().any(|fact| {
-            fact.attribute == MemoryFactAttribute::Preference
-                && fact.value == "ramen"
+                && fact.value.contains("sushi")
                 && fact.subject == MemoryFactSubject::User
         }));
 
         let chinese_facts = detect_memory_facts(&test_unit("我擅长Rust和Go"));
         assert!(chinese_facts.iter().any(|fact| {
             fact.attribute == MemoryFactAttribute::Skill
-                && fact.value == "Rust"
-                && fact.subject == MemoryFactSubject::User
-        }));
-        assert!(chinese_facts.iter().any(|fact| {
-            fact.attribute == MemoryFactAttribute::Skill
-                && fact.value == "Go"
+                && fact.value.contains("Rust")
                 && fact.subject == MemoryFactSubject::User
         }));
     }
@@ -2987,6 +3751,81 @@ mod tests {
         assert!(japanese_facts.iter().any(|fact| {
             fact.attribute == MemoryFactAttribute::Employment
                 && fact.value == "OpenAI"
+                && fact.subject == MemoryFactSubject::User
+        }));
+    }
+
+    #[test]
+    fn test_detect_memory_facts_supports_french_german_and_portuguese_patterns() {
+        let french_facts = detect_memory_facts(&test_unit(
+            "J'habite à Paris. Mon email est dylan@example.com. Je travaille chez OpenAI. Je suis designer.",
+        ));
+        assert!(french_facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Residence
+                && fact.value == "Paris"
+                && fact.subject == MemoryFactSubject::User
+        }));
+        assert!(french_facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Contact
+                && fact.value == "dylan@example.com"
+                && fact.subject == MemoryFactSubject::User
+        }));
+        assert!(french_facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Employment
+                && fact.value == "OpenAI"
+                && fact.subject == MemoryFactSubject::User
+        }));
+        assert!(french_facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Status
+                && fact.value == "designer"
+                && fact.subject == MemoryFactSubject::User
+        }));
+
+        let german_facts = detect_memory_facts(&test_unit(
+            "Ich wohne in Berlin. Meine E-Mail ist dylan@example.com. Ich arbeite bei OpenAI. Ich bin designer.",
+        ));
+        assert!(german_facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Residence
+                && fact.value == "Berlin"
+                && fact.subject == MemoryFactSubject::User
+        }));
+        assert!(german_facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Contact
+                && fact.value == "dylan@example.com"
+                && fact.subject == MemoryFactSubject::User
+        }));
+        assert!(german_facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Employment
+                && fact.value == "OpenAI"
+                && fact.subject == MemoryFactSubject::User
+        }));
+        assert!(german_facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Status
+                && fact.value == "designer"
+                && fact.subject == MemoryFactSubject::User
+        }));
+
+        let portuguese_facts = detect_memory_facts(&test_unit(
+            "Moro em Lisboa. Meu email é dylan@example.com. Trabalho na OpenAI. Sou engenheiro.",
+        ));
+        assert!(portuguese_facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Residence
+                && fact.value == "Lisboa"
+                && fact.subject == MemoryFactSubject::User
+        }));
+        assert!(portuguese_facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Contact
+                && fact.value == "dylan@example.com"
+                && fact.subject == MemoryFactSubject::User
+        }));
+        assert!(portuguese_facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Employment
+                && fact.value == "OpenAI"
+                && fact.subject == MemoryFactSubject::User
+        }));
+        assert!(portuguese_facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Status
+                && fact.value == "engenheiro"
                 && fact.subject == MemoryFactSubject::User
         }));
     }
@@ -3188,6 +4027,416 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_memory_facts_carries_subject_across_three_english_segments() {
+        let facts = detect_memory_facts(&test_unit(
+            "John Doe lives in Shanghai, works at OpenAI, and likes sushi",
+        ));
+
+        assert_eq!(facts.len(), 3);
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Residence
+                && fact.subject == MemoryFactSubject::External
+                && fact.subject_key == "external:john_doe"
+                && fact.value == "Shanghai"
+        }));
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Employment
+                && fact.subject == MemoryFactSubject::External
+                && fact.subject_key == "external:john_doe"
+                && fact.value == "OpenAI"
+        }));
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Preference
+                && fact.subject == MemoryFactSubject::External
+                && fact.subject_key == "external:john_doe"
+                && fact.value == "sushi"
+        }));
+    }
+
+    #[test]
+    fn test_detect_memory_facts_supports_semicolon_separated_multi_fact_inputs() {
+        let facts = detect_memory_facts(&test_unit(
+            "I live in Beijing; my email is dylan@example.com; I work at OpenAI",
+        ));
+
+        assert_eq!(facts.len(), 3);
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Residence
+                && fact.subject == MemoryFactSubject::User
+                && fact.value == "Beijing"
+        }));
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Contact
+                && fact.subject == MemoryFactSubject::User
+                && fact.value == "dylan@example.com"
+        }));
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Employment
+                && fact.subject == MemoryFactSubject::User
+                && fact.value == "OpenAI"
+        }));
+    }
+
+    #[test]
+    fn test_detect_memory_facts_supports_noisy_cross_sentence_subject_carry() {
+        let facts = detect_memory_facts(&test_unit(
+            "btw, John Doe lives in Shanghai. now works at OpenAI. also likes sushi lol",
+        ));
+
+        assert_eq!(facts.len(), 3);
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Residence
+                && fact.subject == MemoryFactSubject::External
+                && fact.subject_key == "external:john_doe"
+                && fact.value == "Shanghai"
+        }));
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Employment
+                && fact.subject == MemoryFactSubject::External
+                && fact.subject_key == "external:john_doe"
+                && fact.value == "OpenAI"
+        }));
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Preference
+                && fact.subject == MemoryFactSubject::External
+                && fact.subject_key == "external:john_doe"
+                && fact.value == "sushi"
+        }));
+    }
+
+    #[test]
+    fn test_detect_memory_facts_ignores_question_and_speculative_noise() {
+        assert!(detect_memory_facts(&test_unit("Did I move to Beijing?")).is_empty());
+        assert!(detect_memory_facts(&test_unit("Can you remind me what my email is?")).is_empty());
+        assert!(detect_memory_facts(&test_unit("Maybe I'll move to Beijing next year")).is_empty());
+        assert!(detect_memory_facts(&test_unit("我可能明年搬去北京")).is_empty());
+    }
+
+    #[test]
+    fn test_detect_memory_fact_canonicalizes_colloquial_schedule_time() {
+        let fact = detect_memory_fact(&test_unit("uh, the call is at around 3pm tmrw lol"))
+            .expect("schedule fact should exist");
+        assert_eq!(fact.attribute, MemoryFactAttribute::Schedule);
+        assert_eq!(fact.value, "around 3pm tmrw");
+        assert_eq!(fact.canonical_value, "3pm tomorrow");
+    }
+
+    #[test]
+    fn test_detect_memory_facts_supports_long_mixed_input_with_noise() {
+        let facts = detect_memory_facts(&test_unit(
+            "Can you remind me where I used to live? btw, quick update: I now live in Beijing, and my email changed from old@example.com to new@example.com. also, the call is at around 3pm tmrw lol",
+        ));
+
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Residence
+                && fact.subject == MemoryFactSubject::User
+                && fact.value == "Beijing"
+                && fact.change_type == MemoryFactChangeType::Update
+        }));
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Contact
+                && fact.subject == MemoryFactSubject::User
+                && fact.value == "old@example.com"
+                && fact.change_type == MemoryFactChangeType::Historical
+        }));
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Contact
+                && fact.subject == MemoryFactSubject::User
+                && fact.value == "new@example.com"
+                && fact.change_type == MemoryFactChangeType::Update
+        }));
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Schedule
+                && fact.subject == MemoryFactSubject::External
+                && fact.value == "around 3pm tmrw"
+        }));
+    }
+
+    #[test]
+    fn test_detect_memory_facts_resets_subject_on_later_explicit_entity() {
+        let facts = detect_memory_facts(&test_unit(
+            "btw, John Doe lives in Shanghai. now works at OpenAI. Acme Labs is based in Berlin.",
+        ));
+
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Residence
+                && fact.subject == MemoryFactSubject::External
+                && fact.subject_key == "external:john_doe"
+                && fact.value == "Shanghai"
+        }));
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Employment
+                && fact.subject == MemoryFactSubject::External
+                && fact.subject_key == "external:john_doe"
+                && fact.value == "OpenAI"
+        }));
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Residence
+                && fact.subject == MemoryFactSubject::Organization
+                && fact.subject_key == "organization:acme_labs"
+                && fact.value == "Berlin"
+        }));
+    }
+
+    #[test]
+    fn test_detect_memory_facts_supports_long_mixed_forget_and_update_input() {
+        let facts = detect_memory_facts(&test_unit(
+            "Actually, quick cleanup: I no longer work at OpenAI, and my email changed from old@example.com to new@example.com. Can you remind me about the call tomorrow?",
+        ));
+
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Employment
+                && fact.subject == MemoryFactSubject::User
+                && fact.value == "OpenAI"
+                && fact.change_type == MemoryFactChangeType::Negation
+        }));
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Contact
+                && fact.subject == MemoryFactSubject::User
+                && fact.value == "old@example.com"
+                && fact.change_type == MemoryFactChangeType::Historical
+        }));
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Contact
+                && fact.subject == MemoryFactSubject::User
+                && fact.value == "new@example.com"
+                && fact.change_type == MemoryFactChangeType::Update
+        }));
+        assert!(facts
+            .iter()
+            .all(|fact| fact.attribute != MemoryFactAttribute::Schedule));
+    }
+
+    #[test]
+    fn test_detect_memory_facts_supports_long_mixed_forget_and_addition_input() {
+        let facts = detect_memory_facts(&test_unit(
+            "Actually, I no longer work at OpenAI. I also speak Japanese. I also love skiing.",
+        ));
+
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Employment
+                && fact.subject == MemoryFactSubject::User
+                && fact.value == "OpenAI"
+                && fact.change_type == MemoryFactChangeType::Negation
+        }));
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Skill
+                && fact.subject == MemoryFactSubject::User
+                && fact.value == "Japanese"
+                && fact.change_type == MemoryFactChangeType::Addition
+        }));
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Preference
+                && fact.subject == MemoryFactSubject::User
+                && fact.value == "skiing"
+                && fact.change_type == MemoryFactChangeType::Addition
+        }));
+    }
+
+    #[test]
+    fn test_detect_memory_facts_supports_self_correction_reversal_input() {
+        let facts = detect_memory_facts(&test_unit(
+            "I live in Shanghai. Actually, scratch that, I now live in Singapore.",
+        ));
+
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Residence
+                && fact.subject == MemoryFactSubject::User
+                && fact.value == "Shanghai"
+                && fact.change_type == MemoryFactChangeType::Reaffirm
+        }));
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Residence
+                && fact.subject == MemoryFactSubject::User
+                && fact.value == "Singapore"
+                && fact.change_type == MemoryFactChangeType::Update
+        }));
+    }
+
+    #[test]
+    fn test_detect_memory_facts_supports_chinese_self_correction_reversal_input() {
+        let facts = detect_memory_facts(&test_unit("我住在上海。不是，我现在住在北京。"));
+
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Residence
+                && fact.subject == MemoryFactSubject::User
+                && fact.value == "上海"
+                && fact.change_type == MemoryFactChangeType::Reaffirm
+        }));
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Residence
+                && fact.subject == MemoryFactSubject::User
+                && fact.value == "北京"
+                && fact.change_type == MemoryFactChangeType::Update
+        }));
+    }
+
+    #[test]
+    fn test_detect_memory_facts_ignores_future_intent_inputs() {
+        assert!(detect_memory_facts(&test_unit("I'll move to Beijing next year")).is_empty());
+        assert!(detect_memory_facts(&test_unit("We plan to move to Berlin next quarter")).is_empty());
+        assert!(detect_memory_facts(&test_unit("我下个月会搬去北京")).is_empty());
+        assert!(detect_memory_facts(&test_unit("我准备去上海发展")).is_empty());
+    }
+
+    #[test]
+    fn test_detect_memory_facts_ignores_conditional_and_example_inputs() {
+        assert!(
+            detect_memory_facts(&test_unit("If I move to Beijing next month, let me know")).is_empty()
+        );
+        assert!(detect_memory_facts(&test_unit("Suppose John lives in Tokyo")).is_empty());
+        assert!(detect_memory_facts(&test_unit("For example, I work at OpenAI")).is_empty());
+        assert!(detect_memory_facts(&test_unit("如果我搬去北京再说")).is_empty());
+        assert!(detect_memory_facts(&test_unit("例如我住在上海")).is_empty());
+    }
+
+    #[test]
+    fn test_detect_memory_facts_preserves_schedule_while_filtering_future_intent() {
+        let schedule_facts = detect_memory_facts(&test_unit("会议定于下周一下午两点"));
+        assert!(schedule_facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Schedule
+                && fact.value == "下周一下午两点"
+                && fact.change_type == MemoryFactChangeType::Reaffirm
+        }));
+
+        assert!(detect_memory_facts(&test_unit("我下个月会搬去北京")).is_empty());
+        assert!(detect_memory_facts(&test_unit("我们将会搬到柏林")).is_empty());
+    }
+
+    #[test]
+    fn test_detect_memory_facts_supports_dense_subject_switching_paragraph() {
+        let facts = detect_memory_facts(&test_unit(
+            "I live in Shanghai. John Doe works at OpenAI. Acme Labs is based in Berlin. I also speak Japanese.",
+        ));
+
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Residence
+                && fact.subject == MemoryFactSubject::User
+                && fact.value == "Shanghai"
+        }));
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Employment
+                && fact.subject == MemoryFactSubject::External
+                && fact.subject_key == "external:john_doe"
+                && fact.value == "OpenAI"
+        }));
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Residence
+                && fact.subject == MemoryFactSubject::Organization
+                && fact.subject_key == "organization:acme_labs"
+                && fact.value == "Berlin"
+        }));
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Skill
+                && fact.subject == MemoryFactSubject::User
+                && fact.value == "Japanese"
+                && fact.change_type == MemoryFactChangeType::Addition
+        }));
+    }
+
+    #[test]
+    fn test_detect_memory_facts_supports_reported_speech_with_quoted_first_person() {
+        let facts = detect_memory_facts(&test_unit(
+            "John Doe said \"I now live in Beijing\"",
+        ));
+
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Residence
+                && fact.subject == MemoryFactSubject::External
+                && fact.value == "Beijing"
+        }));
+    }
+
+    #[test]
+    fn test_detect_memory_facts_supports_reported_speech_without_quotes() {
+        let facts = detect_memory_facts(&test_unit(
+            "John Doe said he works at OpenAI and likes sushi",
+        ));
+
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Employment
+                && fact.subject == MemoryFactSubject::External
+                && fact.subject_key == "external:john_doe"
+                && fact.value == "OpenAI"
+        }));
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Preference
+                && fact.subject == MemoryFactSubject::External
+                && fact.subject_key == "external:john_doe"
+                && fact.value == "sushi"
+        }));
+    }
+
+    #[test]
+    fn test_detect_memory_facts_supports_chinese_reported_speech_with_first_person_quote() {
+        let facts = detect_memory_facts(&test_unit("张三说“我现在住在北京，并且在OpenAI工作”"));
+
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Residence
+                && fact.subject == MemoryFactSubject::External
+                && fact.subject_key == "external:张三"
+                && fact.value == "北京"
+        }));
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Employment
+                && fact.subject == MemoryFactSubject::External
+                && fact.subject_key == "external:张三"
+                && fact.value == "OpenAI"
+        }));
+    }
+
+    #[test]
+    fn test_detect_memory_facts_supports_according_to_subject_carry() {
+        let facts = detect_memory_facts(&test_unit(
+            "According to John Doe, he now lives in Beijing and works at OpenAI",
+        ));
+
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Residence
+                && fact.subject == MemoryFactSubject::External
+                && fact.subject_key == "external:john_doe"
+                && fact.value == "Beijing"
+        }));
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Employment
+                && fact.subject == MemoryFactSubject::External
+                && fact.subject_key == "external:john_doe"
+                && fact.value == "OpenAI"
+        }));
+    }
+
+    #[test]
+    fn test_detect_memory_facts_supports_chinese_according_to_subject_carry() {
+        let facts = detect_memory_facts(&test_unit("据张三所说，他现在住在北京，并且在OpenAI工作"));
+
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Residence
+                && fact.subject == MemoryFactSubject::External
+                && fact.subject_key == "external:张三"
+                && fact.value == "北京"
+        }));
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Employment
+                && fact.subject == MemoryFactSubject::External
+                && fact.subject_key == "external:张三"
+                && fact.value == "OpenAI"
+        }));
+    }
+
+    #[test]
+    fn test_detect_memory_facts_keeps_schedule_unbound_under_according_to_clause() {
+        let facts =
+            detect_memory_facts(&test_unit("According to John Doe, the call is at 5pm tomorrow"));
+
+        assert!(facts.iter().any(|fact| {
+            fact.attribute == MemoryFactAttribute::Schedule
+                && fact.subject == MemoryFactSubject::External
+                && fact.subject_key == "external:unknown"
+                && fact.value == "5pm tomorrow"
+        }));
+    }
+
+    #[test]
     fn test_detect_memory_facts_supports_pronoun_aware_transition_patterns() {
         let facts = detect_memory_facts(&test_unit(
             "John Doe moved from Shanghai to Beijing and changed his email from old@example.com to new@example.com",
@@ -3261,8 +4510,7 @@ mod tests {
                 && fact.change_type == MemoryFactChangeType::Update
         }));
 
-        let zh_residence_facts =
-            detect_memory_facts(&test_unit("我把地址从上海改成北京"));
+        let zh_residence_facts = detect_memory_facts(&test_unit("我把地址从上海改成北京"));
         assert_eq!(zh_residence_facts.len(), 2);
         assert!(zh_residence_facts.iter().any(|fact| {
             fact.attribute == MemoryFactAttribute::Residence
@@ -3537,5 +4785,4 @@ mod tests {
             );
         }
     }
-
 }

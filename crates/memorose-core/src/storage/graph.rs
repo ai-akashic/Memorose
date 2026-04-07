@@ -794,8 +794,22 @@ mod tests {
         let node_c = Uuid::new_v4();
         let node_d = Uuid::new_v4();
 
-        let edge_ab = scoped_edge("user1", node_a, node_b, RelationType::RelatedTo, 0.4, "ns:u1");
-        let edge_ac = scoped_edge("user1", node_a, node_c, RelationType::Supports, 0.6, "ns:u1");
+        let edge_ab = scoped_edge(
+            "user1",
+            node_a,
+            node_b,
+            RelationType::RelatedTo,
+            0.4,
+            "ns:u1",
+        );
+        let edge_ac = scoped_edge(
+            "user1",
+            node_a,
+            node_c,
+            RelationType::Supports,
+            0.6,
+            "ns:u1",
+        );
         let edge_db = scoped_edge("user1", node_d, node_b, RelationType::Blocks, 0.9, "ns:u1");
 
         store.add_edge(&edge_ab).await?;
@@ -837,7 +851,14 @@ mod tests {
         let node_b = Uuid::new_v4();
         let node_c = Uuid::new_v4();
 
-        let existing = scoped_edge("user1", node_a, node_b, RelationType::RelatedTo, 0.3, "ns:u1");
+        let existing = scoped_edge(
+            "user1",
+            node_a,
+            node_b,
+            RelationType::RelatedTo,
+            0.3,
+            "ns:u1",
+        );
         store.add_edge(&existing).await?;
         store.flush().await?;
 
@@ -848,7 +869,14 @@ mod tests {
         assert_eq!(outgoing.len(), 1);
         assert!((outgoing[0].weight - 0.8).abs() < f32::EPSILON);
 
-        let buffered = scoped_edge("user1", node_b, node_c, RelationType::Supports, 0.2, "ns:u1");
+        let buffered = scoped_edge(
+            "user1",
+            node_b,
+            node_c,
+            RelationType::Supports,
+            0.2,
+            "ns:u1",
+        );
         store.add_edge(&buffered).await?;
 
         let deleted = store.delete_edges_for_node("user1", node_b).await?;

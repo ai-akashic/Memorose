@@ -146,6 +146,45 @@ curl -s -X POST http://localhost:3000/v1/users/dylan/streams/$STREAM/retrieve \
 }
 ```
 
+### Step 4: Build prompt-ready sidecar context
+If your SDK or agent runtime wants deterministic prompt control, call the sidecar endpoint first and prepend the returned `context` yourself.
+
+```bash
+curl -s -X POST http://localhost:3000/v1/memory/context \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "dylan",
+    "query": "What should I keep in mind before helping Dylan?",
+    "token_budget": 240,
+    "limit": 8,
+    "format": "text"
+  }'
+```
+
+**Response shape:**
+```json
+{
+  "query": "What should I keep in mind before helping Dylan?",
+  "format": "text",
+  "strategy": "adaptive_compact",
+  "token_budget": 240,
+  "used_token_estimate": 126,
+  "matched_count": 5,
+  "included_count": 3,
+  "truncated": false,
+  "context": "- [L1 factual user] Dylan prefers Rust over Python\n- [L1 factual user] Dylan hates unnecessary meetings",
+  "hits": [
+    {
+      "id": "7c9d6d54-45e8-4a89-9080-d4f50c2e0fe8",
+      "level": 1,
+      "memory_type": "factual",
+      "domain": "user",
+      "score": 0.94
+    }
+  ]
+}
+```
+
 ---
 
 ## 🏗️ How It Works
@@ -334,7 +373,29 @@ Memorose includes a modern, glassmorphic Next.js dashboard that runs as a separa
 
 ### Semantic orchestration via SDK / control plane
 
-Natural-language forget / update flows are designed to be called from your SDK or agent runtime, while the dashboard acts as the observability and review surface.
+Natural-language forget / update flows and sidecar context injection are designed to be called from your SDK or agent runtime, while the dashboard acts as the observability and review surface.
+
+```python
+from examples.python.http_client import MemoroseClient
+
+client = MemoroseClient(
+    base_url="http://localhost:3000",
+    user_id="dylan",
+    stream_id="chat-session",
+)
+
+context = client.build_context(
+    "What should I keep in mind before helping Dylan?",
+    token_budget=240,
+)
+
+prompt = f"""You are a helpful assistant.
+
+Relevant memory:
+{context["context"]}
+
+User: Help Dylan plan the next sprint."""
+```
 
 ```bash
 curl -X POST http://localhost:3000/v1/users/dylan/memories/semantic/preview \
@@ -353,6 +414,7 @@ curl -X POST http://localhost:3000/v1/users/dylan/memories/semantic/preview \
 |--------|----------|-------------|
 | `POST` | `/v1/users/:uid/streams/:sid/events` | Ingest event (text, image, audio, video, json) |
 | `POST` | `/v1/users/:uid/streams/:sid/retrieve` | Hybrid search with optional cross-modal query |
+| `POST` | `/v1/memory/context` | Return prompt-ready condensed context for SDK sidecar injection |
 | `POST` | `/v1/users/:uid/memories/semantic/preview` | Preview semantic forget/update plan |
 | `POST` | `/v1/users/:uid/memories/semantic/execute` | Execute semantic forget/update plan |
 | `GET` | `/v1/dashboard/corrections/reviews` | Observe pending / approved / rejected correction reviews (dashboard auth) |
@@ -363,6 +425,16 @@ curl -X POST http://localhost:3000/v1/users/dylan/memories/semantic/preview \
 | `GET` | `/v1/status/pending` | Pending event count |
 
 ---
+
+## 🔌 Sidecar Pattern
+
+Use `/v1/memory/context` when you want Memorose to do retrieval + compression, but keep final prompt assembly in your own orchestrator.
+
+- **Gateway pattern**: call `/retrieve` directly from your application and consume ranked memory hits.
+- **Sidecar pattern**: call `/v1/memory/context`, receive a pre-compressed `context` block, then prepend it to your LLM prompt.
+- **Budget control**: set `token_budget` in the JSON body or send `X-Memory-Budget`.
+- **Adaptive compression**: large budgets prefer detailed L1 memory; tiny budgets prioritize denser L2/L3 summaries.
+- **Output formats**: `format: "text"` or `format: "xml"`.
 
 ## 🛣️ Roadmap
 

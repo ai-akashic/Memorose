@@ -158,12 +158,37 @@ mod tests {
             })
         }
 
-        async fn generate(&self, _prompt: &str) -> anyhow::Result<LLMResponse<String>> { unimplemented!() }
-        async fn compress(&self, _text: &str, _is_agent: bool) -> anyhow::Result<LLMResponse<CompressionOutput>> { unimplemented!() }
-        async fn summarize_group(&self, _texts: Vec<String>) -> anyhow::Result<LLMResponse<String>> { unimplemented!() }
-        async fn describe_image(&self, _image_url_or_base64: &str) -> anyhow::Result<LLMResponse<String>> { unimplemented!() }
-        async fn transcribe(&self, _audio_url_or_base64: &str) -> anyhow::Result<LLMResponse<String>> { unimplemented!() }
-        async fn describe_video(&self, _video_url: &str) -> anyhow::Result<LLMResponse<String>> { unimplemented!() }
+        async fn generate(&self, _prompt: &str) -> anyhow::Result<LLMResponse<String>> {
+            unimplemented!()
+        }
+        async fn compress(
+            &self,
+            _text: &str,
+            _is_agent: bool,
+        ) -> anyhow::Result<LLMResponse<CompressionOutput>> {
+            unimplemented!()
+        }
+        async fn summarize_group(
+            &self,
+            _texts: Vec<String>,
+        ) -> anyhow::Result<LLMResponse<String>> {
+            unimplemented!()
+        }
+        async fn describe_image(
+            &self,
+            _image_url_or_base64: &str,
+        ) -> anyhow::Result<LLMResponse<String>> {
+            unimplemented!()
+        }
+        async fn transcribe(
+            &self,
+            _audio_url_or_base64: &str,
+        ) -> anyhow::Result<LLMResponse<String>> {
+            unimplemented!()
+        }
+        async fn describe_video(&self, _video_url: &str) -> anyhow::Result<LLMResponse<String>> {
+            unimplemented!()
+        }
     }
 
     #[tokio::test]
@@ -186,7 +211,10 @@ mod tests {
     #[tokio::test]
     async fn test_default_embed_content_batch_calls_embed_batch() {
         let llm = DummyLLM;
-        let inputs = vec![EmbedInput::Text("test1".into()), EmbedInput::Text("test2".into())];
+        let inputs = vec![
+            EmbedInput::Text("test1".into()),
+            EmbedInput::Text("test2".into()),
+        ];
         let res = llm.embed_content_batch(inputs).await.unwrap();
         assert_eq!(res.data.len(), 2);
         assert_eq!(res.usage.total_tokens, 2);

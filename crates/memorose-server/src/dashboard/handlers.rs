@@ -9,11 +9,10 @@ use memorose_common::{
 };
 use memorose_core::arbitrator::MemoryCorrectionKind;
 use memorose_core::engine::{
-    RacDecisionEffect, RacReviewRecord, RacReviewStatus,
     OrganizationAutomationCounterSnapshot, OrganizationKnowledgeContributionRecord,
     OrganizationKnowledgeContributionStatus, OrganizationKnowledgeDetailRecord,
-    OrganizationKnowledgeMembershipEntry, RacDecisionRecord, RacMetricHistoryPoint,
-    RacMetricSnapshot,
+    OrganizationKnowledgeMembershipEntry, RacDecisionEffect, RacDecisionRecord,
+    RacMetricHistoryPoint, RacMetricSnapshot, RacReviewRecord, RacReviewStatus,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -121,6 +120,14 @@ impl MemoryAggregate {
 
 fn is_local_domain(domain: &MemoryDomain) -> bool {
     matches!(domain, MemoryDomain::Agent | MemoryDomain::User)
+}
+
+fn matches_dashboard_org_scope(record_org_id: Option<&str>, requested_org_id: Option<&str>) -> bool {
+    match requested_org_id.map(str::trim).filter(|value| !value.is_empty()) {
+        None => true,
+        Some("default") => record_org_id.is_none() || record_org_id == Some("default"),
+        Some(expected) => record_org_id == Some(expected),
+    }
 }
 
 fn update_last_activity(last_activity: &mut Option<i64>, timestamp: i64) {
@@ -1297,7 +1304,10 @@ pub async fn stats(
                     .into_iter()
                     .filter(|(_, val)| {
                         if let Ok(event) = serde_json::from_slice::<MemoryEvent>(val) {
-                            org_filter.is_none() || event.org_id == org_filter
+                            matches_dashboard_org_scope(
+                                event.org_id.as_deref(),
+                                org_filter.as_deref(),
+                            )
                         } else {
                             false
                         }
@@ -1310,7 +1320,10 @@ pub async fn stats(
                 for (_, val) in &unit_pairs {
                     if let Ok(unit) = serde_json::from_slice::<MemoryUnit>(val) {
                         if unit.domain != MemoryDomain::Organization
-                            && (org_filter.is_none() || unit.org_id == org_filter)
+                            && matches_dashboard_org_scope(
+                                unit.org_id.as_deref(),
+                                org_filter.as_deref(),
+                            )
                         {
                             memory.record_unit(&unit);
                         }
@@ -1328,14 +1341,20 @@ pub async fn stats(
                 for (k, val) in &all_pairs {
                     if k.windows(7).any(|w| w == b":event:") {
                         if let Ok(event) = serde_json::from_slice::<MemoryEvent>(val) {
-                            if org_filter.is_none() || event.org_id == org_filter {
+                            if matches_dashboard_org_scope(
+                                event.org_id.as_deref(),
+                                org_filter.as_deref(),
+                            ) {
                                 event_count += 1;
                             }
                         }
                     } else if k.windows(6).any(|w| w == b":unit:") {
                         if let Ok(unit) = serde_json::from_slice::<MemoryUnit>(val) {
                             if unit.domain != MemoryDomain::Organization
-                                && (org_filter.is_none() || unit.org_id == org_filter)
+                                && matches_dashboard_org_scope(
+                                    unit.org_id.as_deref(),
+                                    org_filter.as_deref(),
+                                )
                             {
                                 memory.record_unit(&unit);
                             }
@@ -1377,10 +1396,10 @@ pub async fn stats(
                     user_id_filter
                         .as_ref()
                         .is_none_or(|uid| decision.user_id == *uid)
-                        && params
-                            .org_id
-                            .as_ref()
-                            .is_none_or(|org_id| decision.org_id.as_ref() == Some(org_id))
+                        && matches_dashboard_org_scope(
+                            decision.org_id.as_deref(),
+                            params.org_id.as_deref(),
+                        )
                 });
                 rac_recent_decisions.append(&mut decisions);
             }
@@ -1974,18 +1993,8 @@ fn parse_semantic_plan_kind(value: Option<&str>, instruction: &str) -> SemanticM
         _ => {
             let lowered = instruction.to_ascii_lowercase();
             let forget_keywords = [
-                "forget ",
-                "delete ",
-                "remove ",
-                "erase ",
-                "clear ",
-                "drop ",
-                "忘掉",
-                "忘记",
-                "删除",
-                "移除",
-                "清掉",
-                "清除",
+                "forget ", "delete ", "remove ", "erase ", "clear ", "drop ", "忘掉", "忘记",
+                "删除", "移除", "清掉", "清除",
             ];
             if forget_keywords
                 .iter()
@@ -2007,9 +2016,10 @@ fn store_semantic_plan(
     engine: &memorose_core::MemoroseEngine,
     plan: &SemanticMemoryPlanRecord,
 ) -> anyhow::Result<()> {
-    engine
-        .system_kv()
-        .put(semantic_plan_key(&plan.plan_id).as_bytes(), &serde_json::to_vec(plan)?)?;
+    engine.system_kv().put(
+        semantic_plan_key(&plan.plan_id).as_bytes(),
+        &serde_json::to_vec(plan)?,
+    )?;
     Ok(())
 }
 
@@ -2033,7 +2043,9 @@ fn delete_semantic_plan(
     engine: &memorose_core::MemoroseEngine,
     plan_id: &str,
 ) -> anyhow::Result<()> {
-    engine.system_kv().delete(semantic_plan_key(plan_id).as_bytes())?;
+    engine
+        .system_kv()
+        .delete(semantic_plan_key(plan_id).as_bytes())?;
     Ok(())
 }
 
@@ -2043,10 +2055,16 @@ fn build_semantic_update_event_metadata(
     note: Option<&str>,
 ) -> serde_json::Value {
     let mut metadata = serde_json::Map::new();
-    metadata.insert("source".to_string(), serde_json::json!("semantic_orchestrator"));
+    metadata.insert(
+        "source".to_string(),
+        serde_json::json!("semantic_orchestrator"),
+    );
     metadata.insert("semantic_orchestrator".to_string(), serde_json::json!(true));
     metadata.insert("semantic_kind".to_string(), serde_json::json!("update"));
-    metadata.insert("semantic_plan_id".to_string(), serde_json::json!(plan.plan_id));
+    metadata.insert(
+        "semantic_plan_id".to_string(),
+        serde_json::json!(plan.plan_id),
+    );
     metadata.insert(
         "semantic_instruction".to_string(),
         serde_json::json!(plan.instruction),
@@ -2257,7 +2275,11 @@ async fn build_forget_preview_artifacts(
             if !seen_events.insert(*reference) {
                 continue;
             }
-            match shard.engine.get_event(user_id, &reference.to_string()).await {
+            match shard
+                .engine
+                .get_event(user_id, &reference.to_string())
+                .await
+            {
                 Ok(Some(event)) => {
                     if org_id_owned.as_ref().map_or(false, |expected_org| {
                         event.org_id.as_deref() != Some(expected_org.as_str())
@@ -2382,7 +2404,9 @@ async fn execute_forget_preview_record(
             }
 
             for unit_id in &preview.memory_unit_ids {
-                engine.delete_memory_unit_hard(&preview.user_id, *unit_id).await?;
+                engine
+                    .delete_memory_unit_hard(&preview.user_id, *unit_id)
+                    .await?;
             }
         }
     }
@@ -2804,11 +2828,10 @@ pub async fn list_memories(
                             }
                         })
                         .filter(|u| {
-                            if let Some(ref oid) = org_filter {
-                                u.org_id.as_deref() == Some(oid.as_str())
-                            } else {
-                                true
-                            }
+                            matches_dashboard_org_scope(
+                                u.org_id.as_deref(),
+                                org_filter.as_deref(),
+                            )
                         })
                         .map(|u| {
                             let memory_type_str = match u.memory_type {
@@ -2873,11 +2896,10 @@ pub async fn list_memories(
                                 .unwrap_or(false)
                         })
                         .filter(|e| {
-                            if let Some(ref oid) = org_filter {
-                                e.org_id.as_deref() == Some(oid.as_str())
-                            } else {
-                                true
-                            }
+                            matches_dashboard_org_scope(
+                                e.org_id.as_deref(),
+                                org_filter.as_deref(),
+                            )
                         })
                         .map(|event| {
                             let (content, _) = event_content_preview(&event.content);
@@ -3073,10 +3095,11 @@ pub async fn graph_data(
             for unit_id in node_ids_vec {
                 if let Some(hit) = engine.get_shared_search_hit_by_index(unit_id).await? {
                     let unit = hit.memory_unit();
-                    if let Some(ref oid) = org_filter {
-                        if unit.org_id.as_deref() != Some(oid.as_str()) {
-                            continue;
-                        }
+                    if !matches_dashboard_org_scope(
+                        unit.org_id.as_deref(),
+                        org_filter.as_deref(),
+                    ) {
+                        continue;
                     }
                     let label = if unit.content.chars().count() > 80 {
                         let end = unit
@@ -3563,25 +3586,26 @@ async fn semantic_memory_preview_internal(
     match kind {
         SemanticMemoryPlanKind::Forget => {
             let limit = payload.limit.clamp(1, 25);
-            let (forget_preview, matched_units, matched_events) = match build_forget_preview_artifacts(
-                &state,
-                &user_id,
-                org_id.as_deref(),
-                payload.instruction.trim(),
-                payload.forget_mode.clone(),
-                limit,
-            )
-            .await
-            {
-                Ok(data) => data,
-                Err(error) => {
-                    return (
+            let (forget_preview, matched_units, matched_events) =
+                match build_forget_preview_artifacts(
+                    &state,
+                    &user_id,
+                    org_id.as_deref(),
+                    payload.instruction.trim(),
+                    payload.forget_mode.clone(),
+                    limit,
+                )
+                .await
+                {
+                    Ok(data) => data,
+                    Err(error) => {
+                        return (
                         axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                         Json(serde_json::json!({ "error": format!("Failed to build semantic forget preview: {}", error) })),
                     )
                         .into_response();
-                }
-            };
+                    }
+                };
 
             if let Err(error) = store_forget_preview(&shard.engine, &forget_preview) {
                 return (
@@ -3678,7 +3702,9 @@ async fn semantic_memory_preview_internal(
                     confidence: action.confidence,
                     reason: action.reason,
                     effect: action.effect,
-                    relation: action.relation.map(|relation| relation.as_str().to_ascii_lowercase()),
+                    relation: action
+                        .relation
+                        .map(|relation| relation.as_str().to_ascii_lowercase()),
                     guard_reason: action.guard_reason,
                 })
                 .collect::<Vec<_>>();
@@ -3830,7 +3856,8 @@ async fn semantic_memory_execute_internal(
                 }
             };
 
-            if let Err(error) = execute_forget_preview_record(&shard.engine, &forget_preview).await {
+            if let Err(error) = execute_forget_preview_record(&shard.engine, &forget_preview).await
+            {
                 return (
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                     Json(serde_json::json!({ "error": error.to_string() })),
@@ -3856,7 +3883,11 @@ async fn semantic_memory_execute_internal(
                 .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty());
-            let note = payload.note.as_deref().map(str::trim).filter(|value| !value.is_empty());
+            let note = payload
+                .note
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
             let source_content = match plan.source_content.as_deref() {
                 Some(content) => content,
                 None => {
@@ -4049,7 +4080,10 @@ mod tests {
 
         assert_eq!(stored_unit.stream_id, source_event.stream_id);
         assert_eq!(stored_unit.transaction_time, source_event.transaction_time);
-        assert_eq!(source_event.metadata["source"], serde_json::json!("semantic_orchestrator"));
+        assert_eq!(
+            source_event.metadata["source"],
+            serde_json::json!("semantic_orchestrator")
+        );
         assert_eq!(
             source_event.metadata["semantic_plan_id"],
             serde_json::json!(plan.plan_id)
@@ -4062,7 +4096,10 @@ mod tests {
             source_event.metadata["reviewer"],
             serde_json::json!("reviewer-1")
         );
-        assert_eq!(source_event.metadata["note"], serde_json::json!("semantic execute"));
+        assert_eq!(
+            source_event.metadata["note"],
+            serde_json::json!("semantic execute")
+        );
 
         let pending = engine.fetch_pending_events_limited(10).await?;
         assert!(pending.is_empty());
@@ -4113,11 +4150,9 @@ pub async fn apply_manual_correction(
                 .into_response();
         }
     };
-    if payload
-        .org_id
-        .as_deref()
-        .map_or(false, |org_id| source_unit.org_id.as_deref() != Some(org_id.trim()))
-    {
+    if payload.org_id.as_deref().map_or(false, |org_id| {
+        source_unit.org_id.as_deref() != Some(org_id.trim())
+    }) {
         return (
             axum::http::StatusCode::FORBIDDEN,
             Json(serde_json::json!({ "error": "source memory scope mismatch" })),
@@ -4288,10 +4323,9 @@ async fn resolve_rac_review_internal(
         }
     };
     if existing.user_id != user_id
-        || payload
-            .org_id
-            .as_deref()
-            .map_or(false, |org_id| existing.org_id.as_deref() != Some(org_id.trim()))
+        || payload.org_id.as_deref().map_or(false, |org_id| {
+            existing.org_id.as_deref() != Some(org_id.trim())
+        })
     {
         return (
             axum::http::StatusCode::FORBIDDEN,
@@ -4622,4 +4656,91 @@ pub async fn list_agents(State(state): State<Arc<crate::AppState>>) -> axum::res
         .await;
 
     Json(result).into_response()
+}
+#[cfg(test)]
+mod test_aggregates {
+    use super::*;
+    use uuid::Uuid;
+
+    #[test]
+    fn test_domain_breakdown_record_and_totals() {
+        let mut breakdown = DomainBreakdown::default();
+        breakdown.record(&MemoryDomain::Agent);
+        breakdown.record(&MemoryDomain::Agent);
+        breakdown.record(&MemoryDomain::User);
+        breakdown.record(&MemoryDomain::Organization);
+
+        assert_eq!(breakdown.agent, 2);
+        assert_eq!(breakdown.user, 1);
+        assert_eq!(breakdown.organization, 1);
+
+        assert_eq!(breakdown.total(), 4);
+        assert_eq!(breakdown.local_total(), 3);
+        assert_eq!(breakdown.shared_total(), 1);
+    }
+
+    #[test]
+    fn test_memory_aggregate_record_and_merge() {
+        let mut agg1 = MemoryAggregate::default();
+        let u1 = MemoryUnit::new(
+            None,
+            "user1".into(),
+            Some("agent1".into()),
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Procedural,
+            "test".into(),
+            None,
+        );
+        agg1.record_unit(&u1);
+
+        let mut u2 = MemoryUnit::new(
+            Some("org1".into()),
+            "user1".into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "test2".into(),
+            None,
+        );
+        u2.domain = MemoryDomain::Organization;
+        u2.level = 2;
+        agg1.record_unit(&u2);
+
+        let mut agg2 = MemoryAggregate::default();
+        let mut u3 = MemoryUnit::new(
+            None,
+            "user1".into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "test3".into(),
+            None,
+        );
+        u3.level = 3;
+        agg2.record_unit(&u3);
+
+        agg1.merge(&agg2);
+
+        assert_eq!(agg1.by_domain.agent, 1);
+        assert_eq!(agg1.by_domain.organization, 1);
+        assert_eq!(agg1.by_domain.user, 1);
+
+        assert_eq!(agg1.total_memories(), 3);
+        assert_eq!(agg1.local_memories(), 2);
+        assert_eq!(agg1.shared_memories(), 1);
+
+        assert_eq!(agg1.total_l1(), 1);
+        assert_eq!(agg1.total_l2(), 1);
+        assert_eq!(agg1.total_l3(), 1);
+    }
+
+    #[test]
+    fn test_matches_dashboard_org_scope_treats_default_as_null_or_default() {
+        assert!(matches_dashboard_org_scope(None, None));
+        assert!(matches_dashboard_org_scope(None, Some("default")));
+        assert!(matches_dashboard_org_scope(Some("default"), Some("default")));
+        assert!(!matches_dashboard_org_scope(Some("org-a"), Some("default")));
+        assert!(matches_dashboard_org_scope(Some("org-a"), Some("org-a")));
+        assert!(!matches_dashboard_org_scope(None, Some("org-a")));
+    }
 }

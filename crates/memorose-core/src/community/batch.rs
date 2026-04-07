@@ -296,10 +296,8 @@ mod tests {
             edge(node_c, node_d, 0.7),
         ];
 
-        let detector = BatchCommunityDetector::new(
-            test_graph_store(&edges).await?,
-            relaxed_config(),
-        );
+        let detector =
+            BatchCommunityDetector::new(test_graph_store(&edges).await?, relaxed_config());
 
         let result = detector
             .detect_communities_for_user("user1", &[node_a, node_b, node_c, node_d])
@@ -316,10 +314,8 @@ mod tests {
         let node_b = Uuid::new_v4();
         let node_c = Uuid::new_v4();
         let edges = vec![edge(node_a, node_b, 1.0), edge(node_b, node_c, 0.9)];
-        let detector = BatchCommunityDetector::new(
-            test_graph_store(&edges).await?,
-            relaxed_config(),
-        );
+        let detector =
+            BatchCommunityDetector::new(test_graph_store(&edges).await?, relaxed_config());
 
         let mut all_node_ids = vec![node_a, node_b, node_c];
         while all_node_ids.len() < 1000 {
@@ -371,7 +367,8 @@ mod tests {
         }
         edges.push(edge(nodes[0], *nodes.last().unwrap(), 0.9));
 
-        let detector = BatchCommunityDetector::new(test_graph_store(&edges).await?, relaxed_config());
+        let detector =
+            BatchCommunityDetector::new(test_graph_store(&edges).await?, relaxed_config());
 
         let result = detector.two_phase_detection("user1", &nodes).await?;
 

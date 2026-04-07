@@ -59,3 +59,39 @@ impl ObjectStore for LocalFileSystemStore {
         Ok(format!("{}/{}", self.base_url, filename))
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn test_local_file_system_store_put_and_get() {
+        let dir = tempdir().unwrap();
+        let store = LocalFileSystemStore::new(
+            dir.path().to_path_buf(),
+            "http://localhost/assets".to_string(),
+        );
+
+        let data = b"fake image data";
+        let key = store.put(data, "image/png").await.unwrap();
+
+        assert!(key.starts_with("local://"));
+        assert!(key.ends_with(".png"));
+
+        let url = store.get_access_url(&key).await.unwrap();
+        assert!(url.starts_with("http://localhost/assets/"));
+        assert!(url.ends_with(".png"));
+
+        let invalid_key = "s3://foo.png";
+        assert!(store.get_access_url(invalid_key).await.is_err());
+
+        let jpeg_key = store.put(data, "image/jpeg").await.unwrap();
+        assert!(jpeg_key.ends_with(".jpg"));
+
+        let webp_key = store.put(data, "image/webp").await.unwrap();
+        assert!(webp_key.ends_with(".webp"));
+
+        let bin_key = store.put(data, "application/octet-stream").await.unwrap();
+        assert!(bin_key.ends_with(".bin"));
+    }
+}

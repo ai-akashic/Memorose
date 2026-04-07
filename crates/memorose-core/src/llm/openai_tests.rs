@@ -181,12 +181,18 @@ mod tests {
         assert_eq!(usage.total_tokens, 12);
 
         let default_usage = map_usage(None);
-        assert_eq!(default_usage.prompt_tokens, TokenUsage::default().prompt_tokens);
+        assert_eq!(
+            default_usage.prompt_tokens,
+            TokenUsage::default().prompt_tokens
+        );
         assert_eq!(
             default_usage.completion_tokens,
             TokenUsage::default().completion_tokens
         );
-        assert_eq!(default_usage.total_tokens, TokenUsage::default().total_tokens);
+        assert_eq!(
+            default_usage.total_tokens,
+            TokenUsage::default().total_tokens
+        );
     }
 
     #[test]
@@ -268,12 +274,10 @@ mod tests {
             Some("not-a-valid-url".to_string()),
         );
 
-        assert!(
-            client
-                .call_chat_completion(Some("system"), "hello", true)
-                .await
-                .is_err()
-        );
+        assert!(client
+            .call_chat_completion(Some("system"), "hello", true)
+            .await
+            .is_err());
     }
 
     #[tokio::test]

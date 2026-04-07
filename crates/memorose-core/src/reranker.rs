@@ -233,7 +233,10 @@ mod tests {
             .rerank(
                 "query",
                 &store,
-                vec![(old_high_similarity.clone(), 0.9), (fresh_important.clone(), 0.6)],
+                vec![
+                    (old_high_similarity.clone(), 0.9),
+                    (fresh_important.clone(), 0.6),
+                ],
             )
             .await?;
 
@@ -251,11 +254,7 @@ mod tests {
 
         for idx in 0..300 {
             reranker
-                .apply_feedback(
-                    &store,
-                    Vec::new(),
-                    vec![format!("uncited-{idx}")],
-                )
+                .apply_feedback(&store, Vec::new(), vec![format!("uncited-{idx}")])
                 .await?;
         }
 

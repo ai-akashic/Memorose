@@ -289,3 +289,71 @@ fn hash_api_key(raw_key: &str) -> String {
     hasher.update(raw_key.as_bytes());
     format!("{:x}", hasher.finalize())
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn test_registry_initialization_and_orgs() {
+        let dir = tempdir().unwrap();
+        let registry = ManagementRegistry::new(dir.path()).unwrap();
+
+        let orgs = registry.list_organizations().await.unwrap();
+        assert_eq!(orgs.len(), 1);
+        assert_eq!(orgs[0].org_id, "default");
+
+        let new_org = registry
+            .create_organization("acme", Some("Acme Corp".to_string()))
+            .await
+            .unwrap();
+        assert_eq!(new_org.org_id, "acme");
+
+        let orgs = registry.list_organizations().await.unwrap();
+        assert_eq!(orgs.len(), 2);
+
+        // Cannot create duplicate
+        assert!(registry.create_organization("acme", None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_registry_api_keys() {
+        let dir = tempdir().unwrap();
+        let registry = ManagementRegistry::new(dir.path()).unwrap();
+
+        let created = registry
+            .create_api_key("default", Some("My Key".to_string()))
+            .await
+            .unwrap();
+        assert_eq!(created.org_id, "default");
+        assert!(created.key.starts_with("mrk_"));
+
+        let keys = registry.list_api_keys().await.unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].name, "My Key");
+        assert!(keys[0].active);
+
+        // Verify key
+        let auth = registry.authenticate_api_key(&created.key).await.unwrap();
+        assert!(auth.is_some());
+
+        // Invalid key
+        assert!(registry
+            .authenticate_api_key("invalid_key")
+            .await
+            .unwrap()
+            .is_none());
+
+        // Revoke key
+        registry.revoke_api_key(&created.key_id).await.unwrap();
+        let keys = registry.list_api_keys().await.unwrap();
+        assert!(!keys[0].active);
+
+        // Revoked key cannot authenticate
+        assert!(registry
+            .authenticate_api_key(&created.key)
+            .await
+            .unwrap()
+            .is_none());
+    }
+}

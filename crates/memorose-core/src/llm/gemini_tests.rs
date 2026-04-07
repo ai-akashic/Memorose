@@ -1,9 +1,8 @@
 #[cfg(test)]
 mod tests {
     use super::super::{
-        embed_input_to_parts, map_usage_metadata, parse_batch_embed_response,
-        parse_embed_response, parse_generate_response, trim_json_fence, GeminiClient,
-        GeminiUsageMetadata, Part,
+        embed_input_to_parts, map_usage_metadata, parse_batch_embed_response, parse_embed_response,
+        parse_generate_response, trim_json_fence, GeminiClient, GeminiUsageMetadata, Part,
     };
     use crate::llm::{EmbedInput, EmbedPart, LLMClient};
     use serde_json::json;
@@ -336,11 +335,8 @@ mod tests {
 
     #[test]
     fn test_parse_embed_response_normalizes_when_output_dimensionality_present() {
-        let response = parse_embed_response(
-            r#"{"embedding":{"values":[3.0,4.0]}}"#,
-            Some(2),
-        )
-        .expect("embed response should parse");
+        let response = parse_embed_response(r#"{"embedding":{"values":[3.0,4.0]}}"#, Some(2))
+            .expect("embed response should parse");
 
         assert!((response.data[0] - 0.6).abs() < 1e-6);
         assert!((response.data[1] - 0.8).abs() < 1e-6);
@@ -348,12 +344,9 @@ mod tests {
 
     #[test]
     fn test_parse_embed_response_surfaces_api_error() {
-        let err = parse_embed_response(
-            r#"{"error":{"message":"bad request"}}"#,
-            None,
-        )
-        .unwrap_err()
-        .to_string();
+        let err = parse_embed_response(r#"{"error":{"message":"bad request"}}"#, None)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("Gemini Embedding API error: bad request"));
     }
 
@@ -380,13 +373,9 @@ mod tests {
 
     #[test]
     fn test_parse_batch_embed_response_rejects_count_mismatch() {
-        let err = parse_batch_embed_response(
-            r#"{"embeddings":[{"values":[1.0,2.0]}]}"#,
-            2,
-            None,
-        )
-        .unwrap_err()
-        .to_string();
+        let err = parse_batch_embed_response(r#"{"embeddings":[{"values":[1.0,2.0]}]}"#, 2, None)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("count mismatch"));
     }
 
@@ -412,7 +401,9 @@ mod tests {
         });
 
         assert!(matches!(&parts[0], Part::Text { text } if text == "caption"));
-        assert!(matches!(&parts[1], Part::Inline { inline_data } if inline_data.mime_type == "image/png" && inline_data.data == "abc"));
+        assert!(
+            matches!(&parts[1], Part::Inline { inline_data } if inline_data.mime_type == "image/png" && inline_data.data == "abc")
+        );
     }
 
     #[test]

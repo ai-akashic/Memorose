@@ -1,5 +1,6 @@
 use axum::{
     extract::{OriginalUri, Path, State},
+    http::HeaderMap,
     middleware as axum_middleware,
     response::{IntoResponse, Redirect},
     routing::{delete, get, post, put},
@@ -8,12 +9,13 @@ use axum::{
 use chrono::{DateTime, Utc};
 use memorose_common::sharding::decode_raft_node_id;
 use memorose_common::{
-    config::AppConfig, Asset, Event, EventContent, GraphEdge, MemoryType, MemoryUnit, RelationType,
-    TimeRange,
+    config::AppConfig, tokenizer::count_tokens, Asset, Event, EventContent, GraphEdge, MemoryType,
+    MemoryUnit, RelationType, TimeRange,
 };
-use memorose_core::{LLMClient, MemoroseEngine};
+use memorose_core::{LLMClient, MemoroseEngine, SharedSearchHit};
 use moka::future::Cache;
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -236,7 +238,10 @@ async fn main() {
             "/corrections/manual",
             post(dashboard::handlers::apply_manual_correction),
         )
-        .route("/corrections/reviews", get(dashboard::handlers::list_rac_reviews))
+        .route(
+            "/corrections/reviews",
+            get(dashboard::handlers::list_rac_reviews),
+        )
         .route(
             "/corrections/reviews/:review_id/approve",
             post(dashboard::handlers::approve_rac_review),
@@ -295,6 +300,7 @@ async fn main() {
             "/v1/users/:user_id/streams/:stream_id/retrieve",
             post(retrieve_memory),
         )
+        .route("/v1/memory/context", post(build_memory_context))
         .route(
             "/v1/users/:user_id/memories/:id",
             delete(delete_memory_unit_hard),
@@ -850,6 +856,8 @@ struct RetrieveRequest {
     enable_arbitration: bool,
     #[serde(default)]
     min_score: Option<f32>,
+    #[serde(default)]
+    token_budget: Option<usize>,
     #[serde(default = "default_graph_depth")]
     graph_depth: usize,
     #[serde(default)]
@@ -873,6 +881,113 @@ struct RetrieveRequest {
     video: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct MemoryContextRequest {
+    user_id: String,
+    query: String,
+    #[serde(default = "default_context_limit")]
+    limit: usize,
+    #[serde(default)]
+    enable_arbitration: bool,
+    #[serde(default)]
+    min_score: Option<f32>,
+    #[serde(default)]
+    token_budget: Option<usize>,
+    #[serde(default = "default_graph_depth")]
+    graph_depth: usize,
+    #[serde(default)]
+    start_time: Option<DateTime<Utc>>,
+    #[serde(default)]
+    end_time: Option<DateTime<Utc>>,
+    #[serde(default)]
+    as_of: Option<DateTime<Utc>>,
+    #[serde(default)]
+    org_id: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
+    #[serde(default)]
+    format: Option<String>,
+    #[serde(default)]
+    image: Option<String>,
+    #[serde(default)]
+    audio: Option<String>,
+    #[serde(default)]
+    video: Option<String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ContextFormat {
+    Text,
+    Xml,
+}
+
+impl ContextFormat {
+    fn from_raw(raw: Option<&str>) -> Self {
+        match raw.map(str::trim) {
+            Some(value) if value.eq_ignore_ascii_case("xml") => Self::Xml,
+            _ => Self::Text,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Xml => "xml",
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ContextCompressionTier {
+    Tiny,
+    Compact,
+    Detailed,
+}
+
+impl ContextCompressionTier {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Tiny => "dense_l2_l3",
+            Self::Compact => "adaptive_compact",
+            Self::Detailed => "detailed_l1_first",
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+struct MemoryContextHitView {
+    id: Uuid,
+    level: u8,
+    memory_type: MemoryType,
+    domain: String,
+    score: f32,
+}
+
+#[derive(Serialize)]
+struct MemoryContextResponse {
+    query: String,
+    format: String,
+    strategy: String,
+    token_budget: usize,
+    used_token_estimate: usize,
+    matched_count: usize,
+    included_count: usize,
+    truncated: bool,
+    context: String,
+    hits: Vec<MemoryContextHitView>,
+    query_time_ms: u128,
+}
+
+struct RenderedMemoryContext {
+    context: String,
+    used_token_estimate: usize,
+    matched_count: usize,
+    included_count: usize,
+    truncated: bool,
+    strategy: &'static str,
+    hits: Vec<MemoryContextHitView>,
+}
+
 fn default_graph_depth() -> usize {
     1
 }
@@ -881,9 +996,498 @@ fn default_retrieve_limit() -> usize {
     10
 }
 
+fn default_context_limit() -> usize {
+    12
+}
+
+fn default_context_token_budget() -> usize {
+    800
+}
+
+fn memory_budget_from_headers(
+    headers: &HeaderMap,
+) -> Result<Option<usize>, axum::response::Response> {
+    let Some(raw_budget) = headers.get("x-memory-budget") else {
+        return Ok(None);
+    };
+    let value = raw_budget.to_str().map_err(|_| {
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "X-Memory-Budget must be a valid UTF-8 integer" })),
+        )
+            .into_response()
+    })?;
+    let budget = value.trim().parse::<usize>().map_err(|_| {
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "X-Memory-Budget must be a positive integer" })),
+        )
+            .into_response()
+    })?;
+    if budget == 0 {
+        return Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(
+                serde_json::json!({ "error": "X-Memory-Budget must be a positive integer greater than zero" }),
+            ),
+        )
+            .into_response());
+    }
+    Ok(Some(budget))
+}
+
+fn validate_payload_token_budget(
+    budget: Option<usize>,
+) -> Result<Option<usize>, axum::response::Response> {
+    match budget {
+        Some(0) => Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(
+                serde_json::json!({ "error": "token_budget must be a positive integer greater than zero" }),
+            ),
+        )
+            .into_response()),
+        _ => Ok(budget),
+    }
+}
+
+async fn embed_query_with_optional_multimodal(
+    state: &Arc<AppState>,
+    query: &str,
+    image: Option<&str>,
+    audio: Option<&str>,
+    video: Option<&str>,
+) -> Result<Vec<f32>, String> {
+    let has_multimodal = image.is_some() || audio.is_some() || video.is_some();
+    let query_key = query.to_string();
+
+    if has_multimodal {
+        use memorose_core::llm::{EmbedInput, EmbedPart};
+        let mut parts = vec![EmbedPart::Text(query.to_string())];
+        if let Some(img) = image {
+            parts.push(EmbedPart::InlineData {
+                mime_type: "image/jpeg".to_string(),
+                data: img.to_string(),
+            });
+        }
+        if let Some(aud) = audio {
+            parts.push(EmbedPart::InlineData {
+                mime_type: "audio/mp3".to_string(),
+                data: aud.to_string(),
+            });
+        }
+        if let Some(vid) = video {
+            parts.push(EmbedPart::InlineData {
+                mime_type: "video/mp4".to_string(),
+                data: vid.to_string(),
+            });
+        }
+        let input = EmbedInput::Multimodal { parts };
+        return state
+            .llm_client
+            .embed_content(input)
+            .await
+            .map(|res| res.data)
+            .map_err(|e| e.to_string());
+    }
+
+    if let Some(cached) = state.embedding_cache.get(&query_key).await {
+        tracing::debug!("Embedding Cache Hit for: '{}'", query);
+        return Ok(cached);
+    }
+
+    tracing::debug!("Embedding Cache Miss. Calling LLM...");
+    state
+        .llm_client
+        .embed(query)
+        .await
+        .map(|res| {
+            let data = res.data;
+            let cache_data = data.clone();
+            let key = query_key.clone();
+            let cache = state.embedding_cache.clone();
+            tokio::spawn(async move {
+                cache.insert(key, cache_data).await;
+            });
+            data
+        })
+        .map_err(|e| e.to_string())
+}
+
+fn build_content_preview(text: &str, max_chars: usize) -> String {
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.chars().count() <= max_chars {
+        return normalized;
+    }
+    let truncated = normalized.chars().take(max_chars).collect::<String>();
+    format!("{}...", truncated.trim_end())
+}
+
+fn nth_char_boundary(text: &str, char_count: usize) -> usize {
+    if char_count == 0 {
+        return 0;
+    }
+    text.char_indices()
+        .nth(char_count)
+        .map(|(idx, _)| idx)
+        .unwrap_or(text.len())
+}
+
+fn truncate_to_token_budget(text: &str, token_budget: usize) -> String {
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() || token_budget == 0 {
+        return String::new();
+    }
+    if count_tokens(&normalized) <= token_budget {
+        return normalized;
+    }
+
+    let total_chars = normalized.chars().count();
+    let mut low = 0usize;
+    let mut high = total_chars;
+    while low < high {
+        let mid = (low + high).div_ceil(2);
+        let end = nth_char_boundary(&normalized, mid);
+        let candidate = format!("{}...", normalized[..end].trim_end());
+        if count_tokens(&candidate) <= token_budget {
+            low = mid;
+        } else {
+            high = mid.saturating_sub(1);
+        }
+    }
+
+    if low == 0 {
+        return String::new();
+    }
+
+    let end = nth_char_boundary(&normalized, low);
+    let truncated = normalized[..end].trim_end();
+    let candidate = format!("{}...", truncated);
+    if count_tokens(&candidate) <= token_budget {
+        candidate
+    } else if count_tokens(truncated) <= token_budget {
+        truncated.to_string()
+    } else {
+        String::new()
+    }
+}
+
+fn memory_type_label(memory_type: &MemoryType) -> &'static str {
+    match memory_type {
+        MemoryType::Factual => "factual",
+        MemoryType::Procedural => "procedural",
+    }
+}
+
+fn asset_kind_label(asset_type: &str) -> &'static str {
+    let normalized = asset_type.to_ascii_lowercase();
+    if normalized.starts_with("image") {
+        "Image"
+    } else if normalized.starts_with("audio") {
+        "Audio"
+    } else if normalized.starts_with("video") {
+        "Video"
+    } else {
+        "Asset"
+    }
+}
+
+fn asset_source_reference(asset: &Asset) -> String {
+    let key = public_asset_storage_key(asset);
+    let key = key.trim();
+    if key.starts_with("http://")
+        || key.starts_with("https://")
+        || key.starts_with("s3://")
+        || key.starts_with("local://")
+        || key.starts_with("inline://")
+    {
+        key.to_string()
+    } else if !asset.original_name.trim().is_empty() {
+        format!("inline://{}", asset.original_name)
+    } else {
+        "inline://asset".to_string()
+    }
+}
+
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+fn context_compression_tier(token_budget: usize) -> ContextCompressionTier {
+    match token_budget {
+        0..=160 => ContextCompressionTier::Tiny,
+        161..=480 => ContextCompressionTier::Compact,
+        _ => ContextCompressionTier::Detailed,
+    }
+}
+
+fn context_search_limit(limit: usize, tier: ContextCompressionTier) -> usize {
+    let base = limit.clamp(1, 24);
+    match tier {
+        ContextCompressionTier::Tiny => base.saturating_mul(4).min(64),
+        ContextCompressionTier::Compact => base.saturating_mul(3).min(48),
+        ContextCompressionTier::Detailed => base.saturating_mul(2).min(32),
+    }
+}
+
+fn context_priority(level: u8, tier: ContextCompressionTier) -> u8 {
+    match tier {
+        ContextCompressionTier::Tiny => match level {
+            2 => 0,
+            3 => 1,
+            1 => 2,
+            _ => 3,
+        },
+        ContextCompressionTier::Compact => match level {
+            2 => 0,
+            1 => 1,
+            3 => 2,
+            _ => 3,
+        },
+        ContextCompressionTier::Detailed => match level {
+            1 => 0,
+            2 => 1,
+            3 => 2,
+            _ => 3,
+        },
+    }
+}
+
+fn format_memory_text_block(unit: &MemoryUnit, tier: ContextCompressionTier) -> String {
+    let preview_chars = match tier {
+        ContextCompressionTier::Tiny => 88,
+        ContextCompressionTier::Compact => 160,
+        ContextCompressionTier::Detailed => 320,
+    };
+    let keyword_limit = match tier {
+        ContextCompressionTier::Tiny => 0,
+        ContextCompressionTier::Compact => 3,
+        ContextCompressionTier::Detailed => 6,
+    };
+    let asset_limit = match tier {
+        ContextCompressionTier::Tiny => 0,
+        ContextCompressionTier::Compact => 1,
+        ContextCompressionTier::Detailed => 3,
+    };
+
+    let mut lines = vec![format!(
+        "- [L{} {} {}] {}",
+        unit.level,
+        memory_type_label(&unit.memory_type),
+        unit.domain.as_str(),
+        build_content_preview(&unit.content, preview_chars)
+    )];
+
+    if keyword_limit > 0 && !unit.keywords.is_empty() {
+        lines.push(format!(
+            "  Keywords: {}",
+            unit.keywords
+                .iter()
+                .take(keyword_limit)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+
+    if asset_limit > 0 {
+        for asset in unit.assets.iter().take(asset_limit) {
+            let source = asset_source_reference(asset);
+            if let Some(description) = asset.description.as_deref().map(str::trim) {
+                if !description.is_empty() {
+                    lines.push(format!(
+                        "  [{}: {}] ({})",
+                        asset_kind_label(&asset.asset_type),
+                        build_content_preview(
+                            description,
+                            if tier == ContextCompressionTier::Compact {
+                                90
+                            } else {
+                                160
+                            }
+                        ),
+                        source
+                    ));
+                    continue;
+                }
+            }
+            lines.push(format!(
+                "  [{}] ({})",
+                asset_kind_label(&asset.asset_type),
+                source
+            ));
+        }
+    }
+
+    lines.join("\n")
+}
+
+fn format_memory_xml_block(unit: &MemoryUnit, tier: ContextCompressionTier) -> String {
+    let preview_chars = match tier {
+        ContextCompressionTier::Tiny => 88,
+        ContextCompressionTier::Compact => 160,
+        ContextCompressionTier::Detailed => 320,
+    };
+    let keyword_limit = match tier {
+        ContextCompressionTier::Tiny => 0,
+        ContextCompressionTier::Compact => 3,
+        ContextCompressionTier::Detailed => 6,
+    };
+    let asset_limit = match tier {
+        ContextCompressionTier::Tiny => 0,
+        ContextCompressionTier::Compact => 1,
+        ContextCompressionTier::Detailed => 3,
+    };
+
+    let mut xml = format!(
+        "<memory id=\"{}\" level=\"{}\" type=\"{}\" domain=\"{}\"><content>{}</content>",
+        unit.id,
+        unit.level,
+        memory_type_label(&unit.memory_type),
+        unit.domain.as_str(),
+        xml_escape(&build_content_preview(&unit.content, preview_chars))
+    );
+
+    if keyword_limit > 0 && !unit.keywords.is_empty() {
+        xml.push_str("<keywords>");
+        for keyword in unit.keywords.iter().take(keyword_limit) {
+            xml.push_str(&format!("<keyword>{}</keyword>", xml_escape(keyword)));
+        }
+        xml.push_str("</keywords>");
+    }
+
+    if asset_limit > 0 && !unit.assets.is_empty() {
+        xml.push_str("<assets>");
+        for asset in unit.assets.iter().take(asset_limit) {
+            xml.push_str(&format!(
+                "<asset kind=\"{}\" source=\"{}\">",
+                xml_escape(asset_kind_label(&asset.asset_type)),
+                xml_escape(&asset_source_reference(asset))
+            ));
+            if let Some(description) = asset.description.as_deref().map(str::trim) {
+                if !description.is_empty() {
+                    xml.push_str(&xml_escape(&build_content_preview(
+                        description,
+                        if tier == ContextCompressionTier::Compact {
+                            90
+                        } else {
+                            160
+                        },
+                    )));
+                }
+            }
+            xml.push_str("</asset>");
+        }
+        xml.push_str("</assets>");
+    }
+
+    xml.push_str("</memory>");
+    xml
+}
+
+fn render_memory_context(
+    results: &[(SharedSearchHit, f32)],
+    token_budget: usize,
+    format: ContextFormat,
+) -> RenderedMemoryContext {
+    let tier = context_compression_tier(token_budget);
+    let mut ordered = results.iter().collect::<Vec<_>>();
+    ordered.sort_by(|left, right| {
+        let left_priority = context_priority(left.0.memory_unit().level, tier);
+        let right_priority = context_priority(right.0.memory_unit().level, tier);
+        left_priority
+            .cmp(&right_priority)
+            .then_with(|| right.1.partial_cmp(&left.1).unwrap_or(Ordering::Equal))
+    });
+
+    let mut context = match format {
+        ContextFormat::Text => String::new(),
+        ContextFormat::Xml => "<memory_context>".to_string(),
+    };
+    let mut hits = Vec::new();
+    let mut truncated = false;
+
+    for (hit, score) in ordered {
+        let unit = hit.memory_unit();
+        let block = match format {
+            ContextFormat::Text => format_memory_text_block(unit, tier),
+            ContextFormat::Xml => format_memory_xml_block(unit, tier),
+        };
+
+        let separator = if context.is_empty() || context == "<memory_context>" {
+            ""
+        } else if format == ContextFormat::Text {
+            "\n"
+        } else {
+            ""
+        };
+        let candidate = format!("{context}{separator}{block}");
+        if count_tokens(&candidate) <= token_budget {
+            context = candidate;
+            hits.push(MemoryContextHitView {
+                id: unit.id,
+                level: unit.level,
+                memory_type: unit.memory_type.clone(),
+                domain: unit.domain.as_str().to_string(),
+                score: *score,
+            });
+            continue;
+        }
+
+        let remaining_budget = token_budget.saturating_sub(count_tokens(&context));
+        if format == ContextFormat::Text && remaining_budget > 12 {
+            let available = remaining_budget.saturating_sub(count_tokens(separator));
+            let truncated_block = truncate_to_token_budget(&block, available);
+            if !truncated_block.is_empty() {
+                context.push_str(separator);
+                context.push_str(&truncated_block);
+                hits.push(MemoryContextHitView {
+                    id: unit.id,
+                    level: unit.level,
+                    memory_type: unit.memory_type.clone(),
+                    domain: unit.domain.as_str().to_string(),
+                    score: *score,
+                });
+            }
+        }
+        truncated = true;
+        break;
+    }
+
+    if format == ContextFormat::Xml {
+        let closing = "</memory_context>";
+        if count_tokens(&(context.clone() + closing)) <= token_budget {
+            context.push_str(closing);
+        } else {
+            truncated = true;
+            let available = token_budget.saturating_sub(count_tokens(&context));
+            if available >= count_tokens(closing) {
+                context.push_str(closing);
+            }
+        }
+    }
+
+    let used = count_tokens(&context);
+    RenderedMemoryContext {
+        context,
+        used_token_estimate: used,
+        matched_count: results.len(),
+        included_count: hits.len(),
+        truncated: truncated || hits.len() < results.len(),
+        strategy: tier.as_str(),
+        hits,
+    }
+}
+
 async fn retrieve_memory(
     State(state): State<Arc<AppState>>,
     Path((user_id, stream_id)): Path<(String, Uuid)>,
+    headers: HeaderMap,
     Json(payload): Json<RetrieveRequest>,
 ) -> axum::response::Response {
     let start = std::time::Instant::now();
@@ -896,55 +1500,24 @@ async fn retrieve_memory(
         }
     }
     let shard = state.shard_manager.shard_for_user(&user_id);
-
-    let query_key = payload.query.clone();
-
-    // Build EmbedInput from request: multimodal if image/audio/video provided, otherwise text
-    let has_multimodal =
-        payload.image.is_some() || payload.audio.is_some() || payload.video.is_some();
-
-    let embedding_f32 = if has_multimodal {
-        use memorose_core::llm::{EmbedInput, EmbedPart};
-        let mut parts = vec![EmbedPart::Text(payload.query.clone())];
-        if let Some(ref img) = payload.image {
-            parts.push(EmbedPart::InlineData {
-                mime_type: "image/jpeg".to_string(),
-                data: img.clone(),
-            });
-        }
-        if let Some(ref aud) = payload.audio {
-            parts.push(EmbedPart::InlineData {
-                mime_type: "audio/mp3".to_string(),
-                data: aud.clone(),
-            });
-        }
-        if let Some(ref vid) = payload.video {
-            parts.push(EmbedPart::InlineData {
-                mime_type: "video/mp4".to_string(),
-                data: vid.clone(),
-            });
-        }
-        let input = EmbedInput::Multimodal { parts };
-        match state.llm_client.embed_content(input).await {
-            Ok(res) => Ok(res.data),
-            Err(e) => Err(e),
-        }
-    } else if let Some(cached) = state.embedding_cache.get(&query_key).await {
-        tracing::debug!("Embedding Cache Hit for: '{}'", query_key);
-        Ok(cached)
-    } else {
-        tracing::debug!("Embedding Cache Miss. Calling LLM...");
-        match state.llm_client.embed(&payload.query).await {
-            Ok(res) => {
-                state
-                    .embedding_cache
-                    .insert(query_key, res.data.clone())
-                    .await;
-                Ok(res.data)
-            }
-            Err(e) => Err(e),
-        }
+    let header_token_budget = match memory_budget_from_headers(&headers) {
+        Ok(budget) => budget,
+        Err(response) => return response,
     };
+    let payload_token_budget = match validate_payload_token_budget(payload.token_budget) {
+        Ok(budget) => budget,
+        Err(response) => return response,
+    };
+    let token_budget = payload_token_budget.or(header_token_budget);
+
+    let embedding_f32 = embed_query_with_optional_multimodal(
+        &state,
+        &payload.query,
+        payload.image.as_deref(),
+        payload.audio.as_deref(),
+        payload.video.as_deref(),
+    )
+    .await;
 
     match embedding_f32 {
         Ok(embedding_f32) => {
@@ -964,7 +1537,7 @@ async fn retrieve_memory(
 
             match shard
                 .engine
-                .search_hybrid_with_shared(
+                .search_hybrid_with_shared_and_token_budget(
                     &user_id,
                     payload.org_id.as_deref(),
                     payload.agent_id.as_deref(),
@@ -976,6 +1549,7 @@ async fn retrieve_memory(
                     payload.graph_depth,
                     valid_range,
                     tx_range,
+                    token_budget,
                 )
                 .await
             {
@@ -1024,8 +1598,125 @@ async fn retrieve_memory(
             tracing::error!("Embedding error: {:?}", e);
             (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": format!("Failed to generate embedding: {:?}", e) }))
-             ).into_response()
+                Json(
+                    serde_json::json!({ "error": format!("Failed to generate embedding: {}", e) }),
+                ),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn build_memory_context(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<MemoryContextRequest>,
+) -> axum::response::Response {
+    let start = std::time::Instant::now();
+    if let Err(r) = validate_id(&payload.user_id, "user_id") {
+        return r;
+    }
+    if let Some(org_id) = payload.org_id.as_deref() {
+        if let Err(r) = validate_id(org_id, "org_id") {
+            return r;
+        }
+    }
+
+    let header_token_budget = match memory_budget_from_headers(&headers) {
+        Ok(budget) => budget,
+        Err(response) => return response,
+    };
+    let payload_token_budget = match validate_payload_token_budget(payload.token_budget) {
+        Ok(budget) => budget,
+        Err(response) => return response,
+    };
+    let token_budget = payload_token_budget
+        .or(header_token_budget)
+        .unwrap_or(default_context_token_budget())
+        .clamp(64, 4096);
+    let format = ContextFormat::from_raw(payload.format.as_deref());
+    let compression_tier = context_compression_tier(token_budget);
+    let search_limit = context_search_limit(payload.limit, compression_tier);
+    let shard = state.shard_manager.shard_for_user(&payload.user_id);
+
+    let embedding_f32 = embed_query_with_optional_multimodal(
+        &state,
+        &payload.query,
+        payload.image.as_deref(),
+        payload.audio.as_deref(),
+        payload.video.as_deref(),
+    )
+    .await;
+
+    match embedding_f32 {
+        Ok(embedding_f32) => {
+            let valid_range = if payload.start_time.is_some() || payload.end_time.is_some() {
+                Some(TimeRange {
+                    start: payload.start_time,
+                    end: payload.end_time,
+                })
+            } else {
+                None
+            };
+            let tx_range = payload.as_of.map(|t| TimeRange {
+                start: None,
+                end: Some(t),
+            });
+
+            match shard
+                .engine
+                .search_hybrid_with_shared_and_token_budget(
+                    &payload.user_id,
+                    payload.org_id.as_deref(),
+                    payload.agent_id.as_deref(),
+                    &payload.query,
+                    &embedding_f32,
+                    search_limit,
+                    payload.enable_arbitration,
+                    payload.min_score,
+                    payload.graph_depth,
+                    valid_range,
+                    tx_range,
+                    None,
+                )
+                .await
+            {
+                Ok(results) => {
+                    let rendered = render_memory_context(&results, token_budget, format);
+                    Json(MemoryContextResponse {
+                        query: payload.query,
+                        format: format.as_str().to_string(),
+                        strategy: rendered.strategy.to_string(),
+                        token_budget,
+                        used_token_estimate: rendered.used_token_estimate,
+                        matched_count: rendered.matched_count,
+                        included_count: rendered.included_count,
+                        truncated: rendered.truncated,
+                        context: rendered.context,
+                        hits: rendered.hits,
+                        query_time_ms: start.elapsed().as_millis(),
+                    })
+                    .into_response()
+                }
+                Err(e) => {
+                    tracing::error!("Context search error: {:?}", e);
+                    (
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({ "error": e.to_string() })),
+                    )
+                        .into_response()
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!("Context embedding error: {:?}", e);
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                Json(
+                    serde_json::json!({ "error": format!("Failed to generate embedding: {}", e) }),
+                ),
+            )
+                .into_response()
         }
     }
 }
@@ -1509,5 +2200,110 @@ mod tests {
         ];
 
         assert!(bootstrap_initialize_errors(&results).is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_index_handler_returns_online() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let app = Router::new().route("/", axum::routing::get(root));
+        let response = app
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+    }
+
+    fn test_memory_unit(content: &str, level: u8, memory_type: MemoryType) -> MemoryUnit {
+        let mut unit = MemoryUnit::new(
+            None,
+            "test-user".into(),
+            None,
+            Uuid::new_v4(),
+            memory_type,
+            content.to_string(),
+            None,
+        );
+        unit.level = level;
+        unit
+    }
+
+    #[test]
+    fn test_render_memory_context_prefers_l2_when_budget_is_tiny() {
+        let mut l1 = test_memory_unit(
+            "User moved to Beijing and now works onsite.",
+            1,
+            MemoryType::Factual,
+        );
+        l1.keywords = vec!["beijing".into(), "work".into()];
+        let l2 = test_memory_unit(
+            "Insight: current residence and work arrangement both changed recently.",
+            2,
+            MemoryType::Factual,
+        );
+        let l3 = test_memory_unit(
+            "Goal: keep onboarding context current for future task execution.",
+            3,
+            MemoryType::Procedural,
+        );
+        let results = vec![
+            (SharedSearchHit::native(l1), 0.98),
+            (SharedSearchHit::native(l2), 0.91),
+            (SharedSearchHit::native(l3), 0.88),
+        ];
+
+        let rendered = render_memory_context(&results, 96, ContextFormat::Text);
+
+        assert!(!rendered.hits.is_empty());
+        assert_eq!(rendered.hits[0].level, 2);
+        assert!(count_tokens(&rendered.context) <= 96);
+    }
+
+    #[test]
+    fn test_render_memory_context_respects_text_budget() {
+        let unit = test_memory_unit(
+            "This is a deliberately long memory block about a user changing cities, jobs, email addresses, and project ownership all at once.",
+            1,
+            MemoryType::Factual,
+        );
+        let results = vec![(SharedSearchHit::native(unit), 0.95)];
+
+        let rendered = render_memory_context(&results, 24, ContextFormat::Text);
+
+        assert!(count_tokens(&rendered.context) <= 24);
+        assert!(rendered.truncated);
+    }
+
+    #[test]
+    fn test_render_memory_context_xml_wraps_output() {
+        let unit = test_memory_unit(
+            "Agent derived a compact org insight.",
+            2,
+            MemoryType::Procedural,
+        );
+        let results = vec![(SharedSearchHit::native(unit), 0.8)];
+
+        let rendered = render_memory_context(&results, 128, ContextFormat::Xml);
+
+        assert!(rendered.context.starts_with("<memory_context>"));
+        assert!(rendered.context.ends_with("</memory_context>"));
+        assert!(count_tokens(&rendered.context) <= 128);
+    }
+
+    #[test]
+    fn test_memory_budget_from_headers_rejects_zero() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-memory-budget", "0".parse().unwrap());
+
+        let response = memory_budget_from_headers(&headers).unwrap_err();
+        assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_validate_payload_token_budget_rejects_zero() {
+        let response = validate_payload_token_budget(Some(0)).unwrap_err();
+        assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
     }
 }

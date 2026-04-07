@@ -200,6 +200,47 @@ curl -s -X POST http://localhost:3000/v1/users/dylan/streams/$STREAM/events \
 - 面向 Agent 的结构化混合检索
 - 通向多模态回忆和共享记忆的基础能力
 
+### Step 4. 构建可直接注入 Prompt 的 Sidecar 上下文
+
+如果你的 SDK 或 agent runtime 希望自己掌控最终 Prompt，可以先调用 sidecar endpoint，让 Memorose 只负责检索、压缩和预算裁剪，然后你把返回的 `context` 自己拼进 LLM Prompt。
+
+```bash
+curl -s -X POST http://localhost:3000/v1/memory/context \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "dylan",
+    "query": "帮助 Dylan 之前我应该记住什么？",
+    "token_budget": 240,
+    "limit": 8,
+    "format": "text"
+  }'
+```
+
+返回结构示例：
+
+```json
+{
+  "query": "帮助 Dylan 之前我应该记住什么？",
+  "format": "text",
+  "strategy": "adaptive_compact",
+  "token_budget": 240,
+  "used_token_estimate": 126,
+  "matched_count": 5,
+  "included_count": 3,
+  "truncated": false,
+  "context": "- [L1 factual user] Dylan prefers Rust over Python\n- [L1 factual user] Dylan hates unnecessary meetings",
+  "hits": [
+    {
+      "id": "7c9d6d54-45e8-4a89-9080-d4f50c2e0fe8",
+      "level": 1,
+      "memory_type": "factual",
+      "domain": "user",
+      "score": 0.94
+    }
+  ]
+}
+```
+
 ## 你可以用它做什么
 
 - **Coding Copilot**：记住开发者偏好、历史修复、仓库约定、工具策略
@@ -579,7 +620,29 @@ docker compose up --build memorose-node-0 dashboard
 
 ### 通过 SDK / 控制面调用语义编排
 
-自然语言“遗忘 / 更新”建议由 SDK 或 agent runtime 发起，Dashboard 主要承担观测、审计和 review 面板角色。
+自然语言“遗忘 / 更新”和 sidecar 上下文注入建议由 SDK 或 agent runtime 发起，Dashboard 主要承担观测、审计和 review 面板角色。
+
+```python
+from examples.python.http_client import MemoroseClient
+
+client = MemoroseClient(
+    base_url="http://localhost:3000",
+    user_id="dylan",
+    stream_id="chat-session",
+)
+
+context = client.build_context(
+    "帮助 Dylan 之前我应该记住什么？",
+    token_budget=240,
+)
+
+prompt = f"""你是一个有帮助的助手。
+
+相关记忆：
+{context["context"]}
+
+用户：帮 Dylan 规划下个 sprint。"""
+```
 
 ```bash
 curl -X POST http://localhost:3000/v1/users/dylan/memories/semantic/preview \
@@ -629,6 +692,7 @@ raft_addr = "127.0.0.1:5001"
 |--------|----------|-------------|
 | `POST` | `/v1/users/:uid/streams/:sid/events` | 写入事件（text/image/audio/video/json） |
 | `POST` | `/v1/users/:uid/streams/:sid/retrieve` | 混合检索，可带跨模态查询输入 |
+| `POST` | `/v1/memory/context` | 返回可直接注入 Prompt 的压缩上下文，用于 SDK sidecar 编排 |
 | `POST` | `/v1/users/:uid/memories/semantic/preview` | 预览语义遗忘 / 更新计划 |
 | `POST` | `/v1/users/:uid/memories/semantic/execute` | 执行语义遗忘 / 更新计划 |
 | `GET` | `/v1/dashboard/corrections/reviews` | 观测待审核 / 已批准 / 已拒绝的纠错队列（需 dashboard 鉴权） |
@@ -663,6 +727,16 @@ raft_addr = "127.0.0.1:5001"
 </details>
 
 ---
+
+## Sidecar Pattern / 上下文注入模式
+
+当你希望 Memorose 负责“检索 + 压缩”，但最终 Prompt 由自己的业务编排器拼装时，使用 `/v1/memory/context`。
+
+- **Gateway pattern**：业务直接调用 `/retrieve`，自己消费 ranked memory hits。
+- **Sidecar pattern**：业务调用 `/v1/memory/context`，拿到预压缩的 `context`，再显式 prepend 到 LLM Prompt。
+- **预算控制**：可以在 JSON body 里设置 `token_budget`，也可以通过 `X-Memory-Budget` 请求头传入。
+- **自适应压缩**：预算充足时优先详细 L1 记忆；预算很小时优先高密度 L2/L3 摘要。
+- **输出格式**：支持 `format: "text"` 或 `format: "xml"`。
 
 ## Roadmap
 

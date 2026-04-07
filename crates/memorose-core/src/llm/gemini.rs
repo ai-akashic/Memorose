@@ -163,9 +163,7 @@ struct BatchEmbedResponse {
 
 const GEMINI_BATCH_EMBED_MAX_SIZE: usize = 100;
 
-fn map_usage_metadata(
-    usage_metadata: Option<GeminiUsageMetadata>,
-) -> memorose_common::TokenUsage {
+fn map_usage_metadata(usage_metadata: Option<GeminiUsageMetadata>) -> memorose_common::TokenUsage {
     usage_metadata
         .map(|metadata| memorose_common::TokenUsage {
             prompt_tokens: metadata.prompt_token_count.unwrap_or(0),
@@ -376,7 +374,8 @@ impl LLMClient for GeminiClient {
                 ));
             }
 
-            let parsed = parse_batch_embed_response(&body, chunk.len(), self.output_dimensionality)?;
+            let parsed =
+                parse_batch_embed_response(&body, chunk.len(), self.output_dimensionality)?;
             all_embeddings.extend(parsed.data);
         }
 
@@ -622,7 +621,8 @@ impl LLMClient for GeminiClient {
                 ));
             }
 
-            let parsed = parse_batch_embed_response(&body, chunk.len(), self.output_dimensionality)?;
+            let parsed =
+                parse_batch_embed_response(&body, chunk.len(), self.output_dimensionality)?;
             all_embeddings.extend(parsed.data);
         }
 

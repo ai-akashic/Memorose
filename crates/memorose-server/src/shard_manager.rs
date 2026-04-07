@@ -387,3 +387,89 @@ impl ShardManager {
         }
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::{matchers, Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn test_shard_manager_initialization_and_resolve() {
+        use tempfile::tempdir;
+        let dir = tempdir().unwrap();
+        let config = AppConfig {
+            storage: memorose_common::config::StorageConfig {
+                root_dir: dir.path().to_str().unwrap().to_string(),
+                index_commit_interval_ms: 100,
+            },
+            sharding: Some(memorose_common::config::ShardingConfig {
+                enabled: true,
+                shard_count: 2,
+                physical_node_id: 1,
+                nodes: vec![memorose_common::config::ShardNodeConfig {
+                    id: 1,
+                    http_addr: "127.0.0.1:3000".into(),
+                    raft_base_port: 5000,
+                }],
+            }),
+            ..AppConfig::default()
+        };
+
+        let manager = ShardManager::new(&config).await.unwrap();
+        assert_eq!(manager.shard_count(), 2);
+        assert_eq!(manager.physical_node_id(), 1);
+
+        let state = manager.shard_for_user("dylan");
+        // We just assert we got a valid ShardState struct with a proper engine clone.
+        let _ = state.engine.clone();
+    }
+
+    #[tokio::test]
+    async fn test_shard_manager_join_all_failures() {
+        use tempfile::tempdir;
+        let dir = tempdir().unwrap();
+        let server = MockServer::start().await;
+
+        // Mock the raft join endpoint to return 500
+        Mock::given(matchers::method("POST"))
+            .and(matchers::path("/v1/cluster/join"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let config = AppConfig {
+            storage: memorose_common::config::StorageConfig {
+                root_dir: dir.path().to_str().unwrap().to_string(),
+                index_commit_interval_ms: 100,
+            },
+            sharding: Some(memorose_common::config::ShardingConfig {
+                enabled: true,
+                shard_count: 1,
+                physical_node_id: 2,
+                nodes: vec![
+                    memorose_common::config::ShardNodeConfig {
+                        id: 1,
+                        http_addr: server.uri().replace("http://", ""),
+                        raft_base_port: 5000,
+                    },
+                    memorose_common::config::ShardNodeConfig {
+                        id: 2,
+                        http_addr: "127.0.0.1:3001".into(),
+                        raft_base_port: 5100,
+                    },
+                ],
+            }),
+            ..AppConfig::default()
+        };
+
+        let manager = ShardManager::new(&config).await.unwrap();
+        let results = manager.join_all(2, &config).await;
+
+        assert_eq!(results.len(), 1);
+        if let Some(err_val) = results[0].get("error") {
+            assert!(err_val.is_string());
+        } else {
+            let status = results[0].get("status").unwrap().as_str().unwrap();
+            assert_eq!(status, "failed");
+        }
+    }
+}

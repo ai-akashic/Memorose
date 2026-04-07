@@ -16,8 +16,8 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use lancedb::connect;
 use memorose_common::{
-    Event, ForgettingTombstone, GraphEdge, MemoryDomain, MemoryType, MemoryUnit, RelationType,
-    SharePolicy, ShareTarget, TimeRange,
+    tokenizer::count_tokens, Event, ForgettingTombstone, GraphEdge, MemoryDomain, MemoryType,
+    MemoryUnit, RelationType, SharePolicy, ShareTarget, TimeRange,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -1139,6 +1139,65 @@ impl MemoroseEngine {
         fact_extraction::subject_keys_compatible(left, right)
     }
 
+    fn memory_unit_token_cost(unit: &MemoryUnit) -> usize {
+        let mut total = count_tokens(&unit.content);
+        if !unit.keywords.is_empty() {
+            total += count_tokens(&unit.keywords.join(" "));
+        }
+        for asset in &unit.assets {
+            total += count_tokens(&asset.original_name);
+            total += count_tokens(&asset.asset_type);
+            if let Some(description) = asset.description.as_deref() {
+                total += count_tokens(description);
+            }
+            if asset.storage_key.starts_with("http://") || asset.storage_key.starts_with("https://")
+            {
+                total += count_tokens(&asset.storage_key);
+            }
+        }
+        total.max(1)
+    }
+
+    fn truncate_scored_results_to_token_budget<T>(
+        results: Vec<(T, f32)>,
+        token_budget: Option<usize>,
+        mut token_cost: impl FnMut(&T) -> usize,
+    ) -> Vec<(T, f32)> {
+        let Some(token_budget) = token_budget.filter(|budget| *budget > 0) else {
+            return results;
+        };
+
+        let mut used = 0usize;
+        let mut budgeted = Vec::new();
+        for (item, score) in results {
+            let item_tokens = token_cost(&item);
+            if used.saturating_add(item_tokens) > token_budget {
+                continue;
+            }
+            used += item_tokens;
+            budgeted.push((item, score));
+        }
+        budgeted
+    }
+
+    fn apply_token_budget_to_scored_memory_units(
+        results: Vec<(MemoryUnit, f32)>,
+        token_budget: Option<usize>,
+    ) -> Vec<(MemoryUnit, f32)> {
+        Self::truncate_scored_results_to_token_budget(results, token_budget, |unit| {
+            Self::memory_unit_token_cost(unit)
+        })
+    }
+
+    fn apply_token_budget_to_scored_shared_hits(
+        results: Vec<(SharedSearchHit, f32)>,
+        token_budget: Option<usize>,
+    ) -> Vec<(SharedSearchHit, f32)> {
+        Self::truncate_scored_results_to_token_budget(results, token_budget, |hit| {
+            Self::memory_unit_token_cost(hit.memory_unit())
+        })
+    }
+
     fn descriptor_from_extracted_fact(fact: ExtractedMemoryFact) -> Option<MemoryFactDescriptor> {
         fact_extraction::descriptor_from_extracted_fact(fact)
     }
@@ -1429,7 +1488,9 @@ impl MemoroseEngine {
             return Ok(Vec::new());
         }
 
-        let actions = self.detect_memory_correction_actions(unit, &context).await?;
+        let actions = self
+            .detect_memory_correction_actions(unit, &context)
+            .await?;
         let mut planned = Vec::new();
 
         for action in actions {
@@ -4073,6 +4134,9 @@ impl MemoroseEngine {
     ) -> Result<Vec<MemoryUnit>> {
         let mut candidates = HashMap::new();
         let facts = self.resolve_memory_fact_descriptors(unit).await;
+        if facts.is_empty() && fact_extraction::is_non_assertive_memory_content(&unit.content) {
+            return Ok(Vec::new());
+        }
         let focus_terms = Self::build_memory_correction_focus_terms(unit, &facts);
         let search_queries =
             Self::build_memory_correction_search_queries(unit, &facts, &focus_terms);
@@ -4651,6 +4715,38 @@ impl MemoroseEngine {
         valid_time: Option<TimeRange>,
         transaction_time: Option<TimeRange>,
     ) -> Result<Vec<(MemoryUnit, f32)>> {
+        self.search_hybrid_with_token_budget(
+            user_id,
+            org_id,
+            agent_id,
+            query_text,
+            vector,
+            limit,
+            enable_arbitration,
+            min_score,
+            graph_depth,
+            valid_time,
+            transaction_time,
+            None,
+        )
+        .await
+    }
+
+    pub async fn search_hybrid_with_token_budget(
+        &self,
+        user_id: &str,
+        org_id: Option<&str>,
+        agent_id: Option<&str>,
+        query_text: &str,
+        vector: &[f32],
+        limit: usize,
+        enable_arbitration: bool,
+        min_score: Option<f32>,
+        graph_depth: usize,
+        valid_time: Option<TimeRange>,
+        transaction_time: Option<TimeRange>,
+        token_budget: Option<usize>,
+    ) -> Result<Vec<(MemoryUnit, f32)>> {
         let time_filter = self.build_time_filter(valid_time.clone());
         let agent_filter = agent_id.map(|aid| format!("agent_id = '{}'", aid.replace('\'', "''")));
         let org_filter = org_id.map(|oid| format!("org_id = '{}'", oid.replace('\'', "''")));
@@ -4849,9 +4945,15 @@ impl MemoroseEngine {
                     arbitrated_results.push((unit, *score));
                 }
             }
-            Ok(arbitrated_results)
+            Ok(Self::apply_token_budget_to_scored_memory_units(
+                arbitrated_results,
+                token_budget,
+            ))
         } else {
-            Ok(results_for_arbitration)
+            Ok(Self::apply_token_budget_to_scored_memory_units(
+                results_for_arbitration,
+                token_budget,
+            ))
         }
     }
 
@@ -4945,6 +5047,38 @@ impl MemoroseEngine {
         graph_depth: usize,
         valid_time: Option<TimeRange>,
         transaction_time: Option<TimeRange>,
+    ) -> Result<Vec<(SharedSearchHit, f32)>> {
+        self.search_hybrid_with_shared_and_token_budget(
+            user_id,
+            org_id,
+            agent_id,
+            query_text,
+            vector,
+            limit,
+            enable_arbitration,
+            min_score,
+            graph_depth,
+            valid_time,
+            transaction_time,
+            None,
+        )
+        .await
+    }
+
+    pub async fn search_hybrid_with_shared_and_token_budget(
+        &self,
+        user_id: &str,
+        org_id: Option<&str>,
+        agent_id: Option<&str>,
+        query_text: &str,
+        vector: &[f32],
+        limit: usize,
+        enable_arbitration: bool,
+        min_score: Option<f32>,
+        graph_depth: usize,
+        valid_time: Option<TimeRange>,
+        transaction_time: Option<TimeRange>,
+        token_budget: Option<usize>,
     ) -> Result<Vec<(SharedSearchHit, f32)>> {
         let mut combined = self
             .search_hybrid(
@@ -5053,10 +5187,16 @@ impl MemoroseEngine {
                     final_results.push((hit.clone(), *score));
                 }
             }
-            Ok(final_results)
+            Ok(Self::apply_token_budget_to_scored_shared_hits(
+                final_results,
+                token_budget,
+            ))
         } else {
             deduped.truncate(limit);
-            Ok(deduped)
+            Ok(Self::apply_token_budget_to_scored_shared_hits(
+                deduped,
+                token_budget,
+            ))
         }
     }
 
@@ -6161,7 +6301,11 @@ impl MemoroseEngine {
             .scan(b"rac_review:")?
             .into_iter()
             .filter_map(|(_, value)| serde_json::from_slice::<RacReviewRecord>(&value).ok())
-            .filter(|record| status_filter.as_ref().map_or(true, |status| &record.status == status))
+            .filter(|record| {
+                status_filter
+                    .as_ref()
+                    .map_or(true, |status| &record.status == status)
+            })
             .filter(|record| user_id_filter.map_or(true, |user_id| record.user_id == user_id))
             .filter(|record| {
                 org_id_filter.map_or(true, |org_id| record.org_id.as_deref() == Some(org_id))
@@ -6248,7 +6392,9 @@ impl MemoroseEngine {
                 review.source_unit_id,
                 review.target_unit_id,
                 kind,
-                reviewer_note.clone().unwrap_or_else(|| review.reason.clone()),
+                reviewer_note
+                    .clone()
+                    .unwrap_or_else(|| review.reason.clone()),
                 confidence,
                 "review_approve",
             )
@@ -7651,6 +7797,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_fetch_memory_correction_candidates_prefers_persisted_candidate_facts_when_content_is_opaque(
+    ) -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut old_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Profile metadata sync completed".into(),
+            None,
+        );
+        old_unit.transaction_time = Utc::now() - chrono::Duration::days(2);
+        old_unit.extracted_facts = vec![StoredMemoryFact {
+            subject: "user".into(),
+            subject_ref: Some("user:self".into()),
+            subject_name: None,
+            attribute: "residence".into(),
+            value: "Shanghai".into(),
+            canonical_value: Some("shanghai".into()),
+            change_type: "reaffirm".into(),
+            temporal_status: Some("current".into()),
+            polarity: Some("positive".into()),
+            evidence_span: Some("home city is Shanghai".into()),
+            confidence: 0.91,
+        }];
+        let old_id = old_unit.id;
+
+        let mut unrelated_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Favorite food is Beijing duck".into(),
+            None,
+        );
+        unrelated_unit.transaction_time = Utc::now() - chrono::Duration::days(1);
+
+        engine
+            .store_memory_units(vec![old_unit, unrelated_unit])
+            .await?;
+        engine.index.commit()?;
+        engine.index.reload()?;
+
+        let mut new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "I now live in Beijing".into(),
+            None,
+        );
+        new_unit.transaction_time = Utc::now();
+
+        let candidates = engine
+            .fetch_memory_correction_candidates(&new_unit, 4)
+            .await?;
+
+        assert_eq!(candidates.first().map(|unit| unit.id), Some(old_id));
+        assert!(candidates.iter().any(|unit| unit.id == old_id));
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_fetch_memory_correction_candidates_uses_llm_fact_fallback() -> Result<()> {
         let temp_dir = tempdir()?;
         let mut engine =
@@ -8045,6 +8262,513 @@ mod tests {
 
         assert!(candidates.iter().any(|unit| unit.id == old_residence_id));
         assert!(candidates.iter().any(|unit| unit.id == old_contact_id));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_fetch_memory_correction_candidates_supports_long_mixed_input_with_noise(
+    ) -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut old_residence = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "I live in Shanghai".into(),
+            None,
+        );
+        old_residence.transaction_time = Utc::now() - chrono::Duration::days(4);
+        let old_residence_id = old_residence.id;
+
+        let mut old_contact = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "My email is old@example.com".into(),
+            None,
+        );
+        old_contact.transaction_time = Utc::now() - chrono::Duration::days(3);
+        let old_contact_id = old_contact.id;
+
+        let mut unrelated_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "The call is at 4pm tomorrow".into(),
+            None,
+        );
+        unrelated_unit.transaction_time = Utc::now() - chrono::Duration::days(1);
+
+        engine
+            .store_memory_units(vec![old_residence, old_contact, unrelated_unit])
+            .await?;
+        engine.index.commit()?;
+        engine.index.reload()?;
+
+        let mut new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Can you remind me where I used to live? btw, quick update: I now live in Beijing, and my email changed from old@example.com to new@example.com. also, the call is at around 3pm tmrw lol".into(),
+            None,
+        );
+        new_unit.transaction_time = Utc::now();
+
+        let candidates = engine
+            .fetch_memory_correction_candidates(&new_unit, 4)
+            .await?;
+
+        assert!(candidates.iter().any(|unit| unit.id == old_residence_id));
+        assert!(candidates.iter().any(|unit| unit.id == old_contact_id));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_fetch_memory_correction_candidates_supports_long_mixed_forget_and_update_input(
+    ) -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut old_employment = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "I work at OpenAI".into(),
+            None,
+        );
+        old_employment.transaction_time = Utc::now() - chrono::Duration::days(4);
+        let old_employment_id = old_employment.id;
+
+        let mut old_contact = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "My email is old@example.com".into(),
+            None,
+        );
+        old_contact.transaction_time = Utc::now() - chrono::Duration::days(3);
+        let old_contact_id = old_contact.id;
+
+        let mut unrelated_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "The call is tomorrow at 3pm".into(),
+            None,
+        );
+        unrelated_unit.transaction_time = Utc::now() - chrono::Duration::days(1);
+
+        engine
+            .store_memory_units(vec![old_employment, old_contact, unrelated_unit])
+            .await?;
+        engine.index.commit()?;
+        engine.index.reload()?;
+
+        let mut new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Actually, quick cleanup: I no longer work at OpenAI, and my email changed from old@example.com to new@example.com. Can you remind me about the call tomorrow?".into(),
+            None,
+        );
+        new_unit.transaction_time = Utc::now();
+
+        let candidates = engine
+            .fetch_memory_correction_candidates(&new_unit, 4)
+            .await?;
+
+        assert!(candidates.iter().any(|unit| unit.id == old_employment_id));
+        assert!(candidates.iter().any(|unit| unit.id == old_contact_id));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_plan_memory_correction_actions_supports_long_mixed_forget_and_update_input(
+    ) -> Result<()> {
+        let temp_dir = tempdir()?;
+        let mut engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let mut old_employment = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I work at OpenAI".into(),
+            Some(vec![1.0; 768]),
+        );
+        old_employment.transaction_time = Utc::now() - chrono::Duration::days(2);
+        let old_employment_id = old_employment.id;
+
+        let mut old_contact = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "My email is old@example.com".into(),
+            Some(vec![1.0; 768]),
+        );
+        old_contact.transaction_time = Utc::now() - chrono::Duration::days(1);
+        let old_contact_id = old_contact.id;
+
+        engine
+            .store_memory_units(vec![old_employment, old_contact])
+            .await?;
+
+        engine.arbitrator = crate::arbitrator::Arbitrator::with_client(std::sync::Arc::new(
+            PromptMatchingCorrectionLLM {
+                responses: vec![(
+                    "memory correction engine".into(),
+                    format!(
+                        r#"[{{"target_id":"{}","action":"OBSOLETE","reason":"Employment removed","confidence":0.96}},{{"target_id":"{}","action":"OBSOLETE","reason":"Email updated","confidence":0.97}}]"#,
+                        old_employment_id, old_contact_id
+                    ),
+                )],
+            },
+        ));
+
+        let mut preview_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "Actually, quick cleanup: I no longer work at OpenAI, and my email changed from old@example.com to new@example.com. Can you remind me about the call tomorrow?".into(),
+            Some(vec![1.0; 768]),
+        );
+        preview_unit.transaction_time = Utc::now();
+
+        let actions = engine
+            .plan_memory_correction_actions(&preview_unit, 8)
+            .await?;
+
+        assert!(actions.iter().any(|action| {
+            action.target_id == old_employment_id
+                && action.kind == MemoryCorrectionKind::Obsolete
+                && action.effect == RacDecisionEffect::Tombstone
+                && action.relation == Some(RelationType::EvolvedTo)
+        }));
+        assert!(actions.iter().any(|action| {
+            action.target_id == old_contact_id
+                && action.kind == MemoryCorrectionKind::Obsolete
+                && action.effect == RacDecisionEffect::Tombstone
+                && action.relation == Some(RelationType::EvolvedTo)
+        }));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_fetch_memory_correction_candidates_supports_long_mixed_forget_and_addition_input(
+    ) -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut old_employment = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "I work at OpenAI".into(),
+            None,
+        );
+        old_employment.transaction_time = Utc::now() - chrono::Duration::days(4);
+        let old_employment_id = old_employment.id;
+
+        let mut unrelated_preference = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "I love ramen".into(),
+            None,
+        );
+        unrelated_preference.transaction_time = Utc::now() - chrono::Duration::days(1);
+
+        engine
+            .store_memory_units(vec![old_employment, unrelated_preference])
+            .await?;
+        engine.index.commit()?;
+        engine.index.reload()?;
+
+        let mut new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Actually, I no longer work at OpenAI. I also speak Japanese. I also love skiing."
+                .into(),
+            None,
+        );
+        new_unit.transaction_time = Utc::now();
+
+        let candidates = engine
+            .fetch_memory_correction_candidates(&new_unit, 4)
+            .await?;
+
+        assert!(candidates.iter().any(|unit| unit.id == old_employment_id));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_fetch_memory_correction_candidates_supports_self_correction_reversal_input(
+    ) -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut old_residence = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "I live in Shanghai".into(),
+            None,
+        );
+        old_residence.transaction_time = Utc::now() - chrono::Duration::days(3);
+        let old_residence_id = old_residence.id;
+
+        engine.store_memory_unit(old_residence).await?;
+        engine.index.commit()?;
+        engine.index.reload()?;
+
+        let mut new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "I live in Shanghai. Actually, scratch that, I now live in Singapore.".into(),
+            None,
+        );
+        new_unit.transaction_time = Utc::now();
+
+        let candidates = engine
+            .fetch_memory_correction_candidates(&new_unit, 4)
+            .await?;
+
+        assert!(candidates.iter().any(|unit| unit.id == old_residence_id));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_fetch_memory_correction_candidates_ignores_non_assertive_hypothetical_input(
+    ) -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut old_residence = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "I live in Beijing".into(),
+            None,
+        );
+        old_residence.transaction_time = Utc::now() - chrono::Duration::days(3);
+
+        engine.store_memory_unit(old_residence).await?;
+        engine.index.commit()?;
+        engine.index.reload()?;
+
+        let mut hypothetical_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "If I move to Beijing next month, remind me to update my profile.".into(),
+            None,
+        );
+        hypothetical_unit.transaction_time = Utc::now();
+
+        let candidates = engine
+            .fetch_memory_correction_candidates(&hypothetical_unit, 4)
+            .await?;
+
+        assert!(candidates.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_fetch_memory_correction_candidates_supports_reported_speech_subject_attribution(
+    ) -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut old_residence = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "John Doe lives in Shanghai".into(),
+            None,
+        );
+        old_residence.transaction_time = Utc::now() - chrono::Duration::days(5);
+        let old_residence_id = old_residence.id;
+
+        engine.store_memory_unit(old_residence).await?;
+        engine.index.commit()?;
+        engine.index.reload()?;
+
+        let mut new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "John Doe said \"I now live in Beijing\"".into(),
+            None,
+        );
+        new_unit.transaction_time = Utc::now();
+
+        let candidates = engine
+            .fetch_memory_correction_candidates(&new_unit, 4)
+            .await?;
+
+        assert!(candidates.iter().any(|unit| unit.id == old_residence_id));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_fetch_memory_correction_candidates_supports_according_to_subject_carry(
+    ) -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut old_employment = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "John Doe works at Anthropic".into(),
+            None,
+        );
+        old_employment.transaction_time = Utc::now() - chrono::Duration::days(6);
+        let old_employment_id = old_employment.id;
+
+        engine.store_memory_unit(old_employment).await?;
+        engine.index.commit()?;
+        engine.index.reload()?;
+
+        let mut new_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "According to John Doe, he now works at OpenAI".into(),
+            None,
+        );
+        new_unit.transaction_time = Utc::now();
+
+        let candidates = engine
+            .fetch_memory_correction_candidates(&new_unit, 4)
+            .await?;
+
+        assert!(candidates.iter().any(|unit| unit.id == old_employment_id));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_plan_memory_correction_actions_supports_long_mixed_forget_and_addition_input(
+    ) -> Result<()> {
+        let temp_dir = tempdir()?;
+        let mut engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let mut old_employment = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "I work at OpenAI".into(),
+            Some(vec![1.0; 768]),
+        );
+        old_employment.transaction_time = Utc::now() - chrono::Duration::days(2);
+        let old_employment_id = old_employment.id;
+
+        engine.store_memory_unit(old_employment).await?;
+        engine.arbitrator = crate::arbitrator::Arbitrator::with_client(std::sync::Arc::new(
+            PromptMatchingCorrectionLLM {
+                responses: vec![(
+                    "memory correction engine".into(),
+                    format!(
+                        r#"[{{"target_id":"{}","action":"OBSOLETE","reason":"Employment removed","confidence":0.96}}]"#,
+                        old_employment_id
+                    ),
+                )],
+            },
+        ));
+
+        let mut preview_unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "Actually, I no longer work at OpenAI. I also speak Japanese. I also love skiing."
+                .into(),
+            Some(vec![1.0; 768]),
+        );
+        preview_unit.transaction_time = Utc::now();
+
+        let actions = engine
+            .plan_memory_correction_actions(&preview_unit, 8)
+            .await?;
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].target_id, old_employment_id);
+        assert_eq!(actions[0].kind, MemoryCorrectionKind::Obsolete);
+        assert_eq!(actions[0].effect, RacDecisionEffect::Tombstone);
 
         Ok(())
     }
@@ -8448,7 +9172,9 @@ mod tests {
         );
         preview_unit.transaction_time = Utc::now();
 
-        let actions = engine.plan_memory_correction_actions(&preview_unit, 8).await?;
+        let actions = engine
+            .plan_memory_correction_actions(&preview_unit, 8)
+            .await?;
 
         let action = actions
             .into_iter()
@@ -8753,7 +9479,8 @@ mod tests {
             Some("obsolete_relation_only_due_to_confidence")
         );
 
-        let reviews = engine.list_rac_reviews(Some(RacReviewStatus::Pending), Some(TEST_USER), None, 8)?;
+        let reviews =
+            engine.list_rac_reviews(Some(RacReviewStatus::Pending), Some(TEST_USER), None, 8)?;
         let review = reviews
             .into_iter()
             .find(|review| {
@@ -9560,7 +10287,9 @@ mod tests {
                 .expect("failed marker should exist");
             let failed_json: serde_json::Value = serde_json::from_slice(&failed)?;
             let error = failed_json["error"].as_str().unwrap_or("");
-            assert!(error.contains("Pending metadata") || error.contains("Malformed pending metadata"));
+            assert!(
+                error.contains("Pending metadata") || error.contains("Malformed pending metadata")
+            );
             assert!(engine
                 .system_kv()
                 .get(format!("pending:{event_id}").as_bytes())?
@@ -9672,7 +10401,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_org_policy_and_backfill_status_default_invalid_and_valid_payloads() -> Result<()> {
+    async fn test_org_policy_and_backfill_status_default_invalid_and_valid_payloads() -> Result<()>
+    {
         let temp_dir = tempdir()?;
         let engine =
             MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
@@ -9701,7 +10431,10 @@ mod tests {
         engine
             .system_kv()
             .put(status_key.as_bytes(), &serde_json::to_vec(&status)?)?;
-        assert_eq!(engine.get_org_backfill_status(TEST_USER, org_id)?, Some(status));
+        assert_eq!(
+            engine.get_org_backfill_status(TEST_USER, org_id)?,
+            Some(status)
+        );
         Ok(())
     }
 
@@ -9742,7 +10475,9 @@ mod tests {
         );
         second.id = Uuid::from_u128(12);
 
-        engine.store_memory_units(vec![first.clone(), second.clone()]).await?;
+        engine
+            .store_memory_units(vec![first.clone(), second.clone()])
+            .await?;
         engine.reflect_on_session(TEST_USER, stream_id).await?;
 
         let prefix = format!("u:{}:unit:", TEST_USER);
@@ -9760,7 +10495,10 @@ mod tests {
         assert_eq!(l2s[0].content, "Residence topic");
         assert_eq!(l2s[0].embedding.as_deref(), Some(&[0.0, 0.0, 0.0][..]));
 
-        let outgoing = engine.graph().get_outgoing_edges(TEST_USER, l2s[0].id).await?;
+        let outgoing = engine
+            .graph()
+            .get_outgoing_edges(TEST_USER, l2s[0].id)
+            .await?;
         assert_eq!(outgoing.len(), 2);
         assert!(outgoing.iter().any(|edge| edge.target_id == first.id));
         assert!(outgoing.iter().any(|edge| edge.target_id == second.id));
@@ -9818,13 +10556,7 @@ mod tests {
 
         for content in variants {
             let err = engine
-                .ingest_event_directly(Event::new(
-                    None,
-                    TEST_USER.into(),
-                    None,
-                    stream_id,
-                    content,
-                ))
+                .ingest_event_directly(Event::new(None, TEST_USER.into(), None, stream_id, content))
                 .await
                 .unwrap_err()
                 .to_string();
@@ -11897,7 +12629,9 @@ mod tests {
         }
         engine.graph().flush().await?;
 
-        let neighbors = engine.batch_get_neighbors(TEST_USER, &[node_a, node_b]).await?;
+        let neighbors = engine
+            .batch_get_neighbors(TEST_USER, &[node_a, node_b])
+            .await?;
         assert_eq!(neighbors.get(&node_a).map(Vec::len), Some(1));
         assert_eq!(neighbors.get(&node_b).map(Vec::len), Some(2));
 
@@ -11936,7 +12670,10 @@ mod tests {
         let stats = engine.query_cache_stats().await;
         assert_eq!(stats.edge_cache_size, 1);
 
-        engine.graph().delete_edges_for_node(TEST_USER, node_a).await?;
+        engine
+            .graph()
+            .delete_edges_for_node(TEST_USER, node_a)
+            .await?;
         let cached = engine.get_neighbors_cached(TEST_USER, node_a).await?;
         assert_eq!(cached.len(), 1);
 
@@ -12016,7 +12753,10 @@ mod tests {
             ),
             Some("This fallback topic uses six words".into())
         );
-        assert_eq!(MemoroseEngine::fallback_organization_topic_label(" \n\t "), None);
+        assert_eq!(
+            MemoroseEngine::fallback_organization_topic_label(" \n\t "),
+            None
+        );
 
         assert_eq!(
             MemoroseEngine::organization_topic_candidates_from_keywords_and_content(
@@ -12072,8 +12812,11 @@ mod tests {
             "cleanup retry",
             &[1.0, 1.0],
         );
-        let semantic_only =
-            MemoroseEngine::organization_similarity_score(&base_record, "unrelated topic", &[1.0, 1.0]);
+        let semantic_only = MemoroseEngine::organization_similarity_score(
+            &base_record,
+            "unrelated topic",
+            &[1.0, 1.0],
+        );
         let lexical_only = MemoroseEngine::organization_similarity_score(
             &OrganizationKnowledgeRecord {
                 embedding: None,
@@ -12151,11 +12894,17 @@ mod tests {
         assert_eq!(execute.description, "Ship it");
         assert_eq!(execute.dependencies, vec![plan.task_id]);
         assert_eq!(
-            engine.get_l3_task(user_id, plan.task_id).await?.map(|task| task.title),
+            engine
+                .get_l3_task(user_id, plan.task_id)
+                .await?
+                .map(|task| task.title),
             Some("Plan".into())
         );
 
-        let outgoing = engine.graph().get_outgoing_edges(user_id, execute.task_id).await?;
+        let outgoing = engine
+            .graph()
+            .get_outgoing_edges(user_id, execute.task_id)
+            .await?;
         assert_eq!(outgoing.len(), 1);
         assert_eq!(outgoing[0].target_id, goal_id);
         assert_eq!(outgoing[0].relation, RelationType::IsSubTaskOf);
@@ -12195,13 +12944,8 @@ mod tests {
             MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
         let user_id = "task_user";
 
-        let mut completed = memorose_common::L3Task::new(
-            None,
-            user_id.into(),
-            None,
-            "Done".into(),
-            "done".into(),
-        );
+        let mut completed =
+            memorose_common::L3Task::new(None, user_id.into(), None, "Done".into(), "done".into());
         completed.status = memorose_common::TaskStatus::Completed;
 
         let ready = memorose_common::L3Task::new(
@@ -12268,7 +13012,10 @@ mod tests {
             .collect::<Vec<_>>();
         titles.sort();
 
-        assert_eq!(titles, vec!["DependentReady".to_string(), "Ready".to_string()]);
+        assert_eq!(
+            titles,
+            vec!["DependentReady".to_string(), "Ready".to_string()]
+        );
         Ok(())
     }
 
@@ -12386,19 +13133,21 @@ mod tests {
         };
 
         let detail = engine
-            .build_organization_knowledge_detail_record_from_snapshot(OrganizationKnowledgeSnapshot {
-                record: record.clone(),
-                read_view: read_view.clone(),
-                membership_sources: vec![
-                    (membership_b.clone(), source_b.clone()),
-                    (membership_a.clone(), source_a.clone()),
-                ],
-                contributions: vec![
-                    contribution_revoked.clone(),
-                    contribution_candidate.clone(),
-                    contribution_active.clone(),
-                ],
-            })
+            .build_organization_knowledge_detail_record_from_snapshot(
+                OrganizationKnowledgeSnapshot {
+                    record: record.clone(),
+                    read_view: read_view.clone(),
+                    membership_sources: vec![
+                        (membership_b.clone(), source_b.clone()),
+                        (membership_a.clone(), source_a.clone()),
+                    ],
+                    contributions: vec![
+                        contribution_revoked.clone(),
+                        contribution_candidate.clone(),
+                        contribution_active.clone(),
+                    ],
+                },
+            )
             .await;
 
         assert_eq!(detail.record.id, record.id);
@@ -12409,7 +13158,10 @@ mod tests {
         assert_eq!(detail.contributions.len(), 3);
         assert_eq!(detail.contributions[0].contribution.source_id, source_a.id);
         assert_eq!(detail.contributions[1].contribution.source_id, source_b.id);
-        assert_eq!(detail.contributions[2].contribution.source_id, fallback_source.id);
+        assert_eq!(
+            detail.contributions[2].contribution.source_id,
+            fallback_source.id
+        );
         assert_eq!(
             detail.contributions[2]
                 .source_unit
@@ -12520,7 +13272,10 @@ mod tests {
         let mut hit = SharedSearchHit::native(unit.clone());
         hit.keywords.push("tag".into());
         assert_eq!(hit.memory_unit().id, unit.id);
-        assert_eq!(hit.clone().into_memory_unit().keywords, vec!["tag".to_string()]);
+        assert_eq!(
+            hit.clone().into_memory_unit().keywords,
+            vec!["tag".to_string()]
+        );
 
         let mut metrics = RacMetricSnapshot {
             fact_extraction_attempt_total: 1,
@@ -12554,7 +13309,10 @@ mod tests {
         let org_snapshot = engine.get_organization_automation_counter_snapshot("org_metrics")?;
         assert_eq!(org_snapshot.auto_approved_total, 2);
         assert_eq!(org_snapshot.revoke_total, 1);
-        assert_eq!(engine.get_organization_metric_counter("org_metrics", "missing")?, 0);
+        assert_eq!(
+            engine.get_organization_metric_counter("org_metrics", "missing")?,
+            0
+        );
 
         engine.increment_rac_metric_counter("fact_extraction_attempt_total", 0)?;
         engine.increment_rac_metric_counter("fact_extraction_attempt_total", 3)?;
@@ -12564,5 +13322,103 @@ mod tests {
         assert_eq!(rac_snapshot.tombstone_total, 2);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_apply_token_budget_to_scored_memory_units_truncates_ranked_results() {
+        let first = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            MemoryType::Factual,
+            "alpha beta gamma delta".into(),
+            None,
+        );
+        let second = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            MemoryType::Factual,
+            "epsilon zeta eta theta iota kappa".into(),
+            None,
+        );
+
+        let first_cost = MemoroseEngine::memory_unit_token_cost(&first);
+        let second_cost = MemoroseEngine::memory_unit_token_cost(&second);
+        let results = vec![(first.clone(), 0.9), (second.clone(), 0.8)];
+
+        let budgeted =
+            MemoroseEngine::apply_token_budget_to_scored_memory_units(results, Some(first_cost));
+        assert_eq!(budgeted.len(), 1);
+        assert_eq!(budgeted[0].0.id, first.id);
+
+        let unbounded = MemoroseEngine::apply_token_budget_to_scored_memory_units(
+            vec![(first.clone(), 0.9), (second.clone(), 0.8)],
+            Some(first_cost + second_cost),
+        );
+        assert_eq!(unbounded.len(), 2);
+    }
+
+    #[test]
+    fn test_apply_token_budget_to_scored_shared_hits_truncates_ranked_results() {
+        let first = SharedSearchHit::native(MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            MemoryType::Factual,
+            "shared alpha beta gamma".into(),
+            None,
+        ));
+        let second = SharedSearchHit::native(MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            MemoryType::Factual,
+            "shared epsilon zeta eta theta".into(),
+            None,
+        ));
+
+        let first_cost = MemoroseEngine::memory_unit_token_cost(first.memory_unit());
+        let budgeted = MemoroseEngine::apply_token_budget_to_scored_shared_hits(
+            vec![(first.clone(), 0.9), (second, 0.8)],
+            Some(first_cost),
+        );
+        assert_eq!(budgeted.len(), 1);
+        assert_eq!(budgeted[0].0.id, first.id);
+    }
+
+    #[test]
+    fn test_apply_token_budget_skips_oversized_item_and_keeps_later_fit() {
+        let oversized = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            MemoryType::Factual,
+            "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu".into(),
+            None,
+        );
+        let small = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            MemoryType::Factual,
+            "tiny fit".into(),
+            None,
+        );
+
+        let budget = MemoroseEngine::memory_unit_token_cost(&small);
+        let budgeted = MemoroseEngine::apply_token_budget_to_scored_memory_units(
+            vec![(oversized, 0.95), (small.clone(), 0.80)],
+            Some(budget),
+        );
+
+        assert_eq!(budgeted.len(), 1);
+        assert_eq!(budgeted[0].0.id, small.id);
     }
 }

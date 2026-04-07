@@ -163,3 +163,28 @@ pub async fn auth_middleware(
             .into_response(),
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_auth_init_reads_default_password() {
+        let dir = tempdir().unwrap();
+        let auth = DashboardAuth::new(dir.path()).unwrap();
+
+        let file = std::fs::read_to_string(&auth.auth_path).unwrap();
+        assert!(file.contains("\"username\": \"admin\""));
+        assert!(file.contains("\"must_change_password\": true"));
+    }
+
+    #[test]
+    fn test_auth_tokens() {
+        let dir = tempdir().unwrap();
+        let auth = DashboardAuth::new(dir.path()).unwrap();
+
+        let token = auth.create_token("admin").unwrap();
+        let claims = auth.verify_token(&token).unwrap();
+        assert_eq!(claims.sub, "admin");
+    }
+}

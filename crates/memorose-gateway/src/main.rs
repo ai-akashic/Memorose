@@ -545,4 +545,47 @@ mod tests {
         let shard_b = user_id_to_shard(uid2, shard_count);
         assert_eq!(shard_a, shard_b, "Same user should route to same shard");
     }
+
+    #[test]
+    fn test_merge_sum_objects() {
+        use serde_json::json;
+        let a = json!({
+            "count": 10,
+            "nested": { "total": 5 }
+        });
+        let b = json!({
+            "count": 5,
+            "nested": { "total": 10 }
+        });
+        
+        let merged = merge_sum(a, b);
+        assert_eq!(merged["count"], json!(15));
+        assert_eq!(merged["nested"]["total"], json!(15));
+    }
+
+    #[test]
+    fn test_merge_sum_numbers() {
+        use serde_json::json;
+        assert_eq!(merge_sum(json!(10), json!(5)), json!(15));
+        assert_eq!(merge_sum(json!(10.5), json!(5.5)), json!(16.0));
+        assert_eq!(merge_sum(json!(-10), json!(-5)), json!(-15));
+    }
+
+    #[test]
+    fn test_merge_sum_arrays() {
+        use serde_json::json;
+        let a = json!(["a", "b"]);
+        let b = json!(["c", "d"]);
+        let merged = merge_sum(a, b);
+        assert_eq!(merged, json!(["a", "b"])); // Unsupported array merge fallback to A
+    }
+
+    #[test]
+    fn test_merge_sum_fallback() {
+        use serde_json::json;
+        // Fallback prefers A
+        assert_eq!(merge_sum(json!("a"), json!("b")), json!("a"));
+        // Null merging
+        assert_eq!(merge_sum(json!(null), json!("a")), json!("a"));
+    }
 }

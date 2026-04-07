@@ -16,6 +16,10 @@ pub const DEFAULT_WORKER_DECAY_FACTOR: f32 = 0.9;
 pub const DEFAULT_WORKER_PRUNE_THRESHOLD: f32 = 0.1;
 pub const DEFAULT_WORKER_CONSOLIDATION_INTERVAL_MS: u64 = 1000;
 pub const DEFAULT_WORKER_CONSOLIDATION_BATCH_SIZE: usize = 200;
+pub const DEFAULT_WORKER_CONSOLIDATION_FETCH_MULTIPLIER: usize = 4;
+pub const DEFAULT_WORKER_CONSOLIDATION_TARGET_TOKENS: usize = 4096;
+pub const DEFAULT_WORKER_CONSOLIDATION_MAX_EVENTS_PER_PACK: usize = 128;
+pub const DEFAULT_WORKER_CONSOLIDATION_STORE_BATCH_SIZE: usize = 32;
 pub const DEFAULT_WORKER_CONSOLIDATION_MAX_RETRIES: u32 = 3;
 pub const DEFAULT_WORKER_COMPACTION_INTERVAL_SECS: u64 = 3600;
 pub const DEFAULT_WORKER_COMMUNITY_INTERVAL_MS: u64 = 1000;
@@ -105,6 +109,10 @@ pub struct WorkerConfig {
     pub prune_threshold: f32,
     pub consolidation_interval_ms: u64,
     pub consolidation_batch_size: usize,
+    pub consolidation_fetch_multiplier: usize,
+    pub consolidation_target_tokens: usize,
+    pub consolidation_max_events_per_pack: usize,
+    pub consolidation_store_batch_size: usize,
     pub consolidation_max_retries: u32,
     pub compaction_interval_secs: u64,
     pub community_interval_ms: u64,
@@ -241,6 +249,10 @@ impl Default for WorkerConfig {
             prune_threshold: DEFAULT_WORKER_PRUNE_THRESHOLD,
             consolidation_interval_ms: DEFAULT_WORKER_CONSOLIDATION_INTERVAL_MS,
             consolidation_batch_size: DEFAULT_WORKER_CONSOLIDATION_BATCH_SIZE,
+            consolidation_fetch_multiplier: DEFAULT_WORKER_CONSOLIDATION_FETCH_MULTIPLIER,
+            consolidation_target_tokens: DEFAULT_WORKER_CONSOLIDATION_TARGET_TOKENS,
+            consolidation_max_events_per_pack: DEFAULT_WORKER_CONSOLIDATION_MAX_EVENTS_PER_PACK,
+            consolidation_store_batch_size: DEFAULT_WORKER_CONSOLIDATION_STORE_BATCH_SIZE,
             consolidation_max_retries: DEFAULT_WORKER_CONSOLIDATION_MAX_RETRIES,
             compaction_interval_secs: DEFAULT_WORKER_COMPACTION_INTERVAL_SECS,
             community_interval_ms: DEFAULT_WORKER_COMMUNITY_INTERVAL_MS,
@@ -321,6 +333,22 @@ impl AppConfig {
             .set_default(
                 "worker.consolidation_batch_size",
                 DEFAULT_WORKER_CONSOLIDATION_BATCH_SIZE as i64,
+            )?
+            .set_default(
+                "worker.consolidation_fetch_multiplier",
+                DEFAULT_WORKER_CONSOLIDATION_FETCH_MULTIPLIER as i64,
+            )?
+            .set_default(
+                "worker.consolidation_target_tokens",
+                DEFAULT_WORKER_CONSOLIDATION_TARGET_TOKENS as i64,
+            )?
+            .set_default(
+                "worker.consolidation_max_events_per_pack",
+                DEFAULT_WORKER_CONSOLIDATION_MAX_EVENTS_PER_PACK as i64,
+            )?
+            .set_default(
+                "worker.consolidation_store_batch_size",
+                DEFAULT_WORKER_CONSOLIDATION_STORE_BATCH_SIZE as i64,
             )?
             .set_default(
                 "worker.consolidation_max_retries",
@@ -557,5 +585,42 @@ mod tests {
         let mut config = AppConfig::default();
         config.raft.auto_initialize = false;
         assert!(!config.should_auto_initialize_raft());
+    }
+
+    #[test]
+    fn test_config_accessors() {
+        let mut config = AppConfig::default();
+        config.llm.provider = LLMProvider::Gemini;
+        config.llm.google_api_key = Some("gemini_key".to_string());
+        config.llm.model = "gemini-model".to_string();
+        config.llm.embedding_model = "gemini-embed".to_string();
+
+        assert_eq!(config.get_active_key(), Some("gemini_key".to_string()));
+        assert_eq!(config.get_model_name(), "gemini-model");
+        assert_eq!(config.get_embedding_model_name(), "gemini-embed");
+        assert_eq!(config.get_base_url(), Some("https://generativelanguage.googleapis.com/v1beta/openai/".to_string()));
+
+        config.llm.provider = LLMProvider::OpenAI;
+        config.llm.openai_api_key = Some("openai_key".to_string());
+        assert_eq!(config.get_active_key(), Some("openai_key".to_string()));
+        assert_eq!(config.get_base_url(), None);
+    }
+
+    #[test]
+    fn test_is_sharded() {
+        let mut config = AppConfig::default();
+        assert!(!config.is_sharded());
+
+        config.sharding = Some(ShardingConfig {
+            enabled: true,
+            shard_count: 1,
+            physical_node_id: 1,
+            nodes: vec![],
+        });
+        assert!(!config.is_sharded());
+
+        config.sharding.as_mut().unwrap().shard_count = 2;
+        assert!(config.is_sharded());
+        assert_eq!(config.shard_count(), 2);
     }
 }

@@ -1088,18 +1088,39 @@ mod tests {
     #[test]
     fn test_arbitrator_helper_mappings_and_budget() {
         assert_eq!(prompt_fact_subject(MemoryFactSubject::User), "user");
-        assert_eq!(prompt_fact_subject(MemoryFactSubject::Organization), "organization");
+        assert_eq!(
+            prompt_fact_subject(MemoryFactSubject::Organization),
+            "organization"
+        );
         assert_eq!(prompt_fact_subject(MemoryFactSubject::Agent), "agent");
         assert_eq!(prompt_fact_subject(MemoryFactSubject::External), "external");
 
-        assert_eq!(prompt_fact_attribute(MemoryFactAttribute::Residence), "residence");
-        assert_eq!(prompt_fact_attribute(MemoryFactAttribute::Employment), "employment");
-        assert_eq!(prompt_fact_attribute(MemoryFactAttribute::Relationship), "relationship");
+        assert_eq!(
+            prompt_fact_attribute(MemoryFactAttribute::Residence),
+            "residence"
+        );
+        assert_eq!(
+            prompt_fact_attribute(MemoryFactAttribute::Employment),
+            "employment"
+        );
+        assert_eq!(
+            prompt_fact_attribute(MemoryFactAttribute::Relationship),
+            "relationship"
+        );
         assert_eq!(prompt_fact_attribute(MemoryFactAttribute::Status), "status");
-        assert_eq!(prompt_fact_attribute(MemoryFactAttribute::Contact), "contact");
-        assert_eq!(prompt_fact_attribute(MemoryFactAttribute::Ownership), "ownership");
+        assert_eq!(
+            prompt_fact_attribute(MemoryFactAttribute::Contact),
+            "contact"
+        );
+        assert_eq!(
+            prompt_fact_attribute(MemoryFactAttribute::Ownership),
+            "ownership"
+        );
         assert_eq!(prompt_fact_attribute(MemoryFactAttribute::Skill), "skill");
-        assert_eq!(prompt_fact_attribute(MemoryFactAttribute::Schedule), "schedule");
+        assert_eq!(
+            prompt_fact_attribute(MemoryFactAttribute::Schedule),
+            "schedule"
+        );
 
         assert_eq!(prompt_fact_value_kind(MemoryFactValueKind::Email), "email");
         assert_eq!(prompt_fact_value_kind(MemoryFactValueKind::Phone), "phone");
@@ -1107,20 +1128,41 @@ mod tests {
             prompt_fact_value_kind(MemoryFactValueKind::OrganizationName),
             "organization_name"
         );
-        assert_eq!(prompt_fact_value_kind(MemoryFactValueKind::PersonName), "person_name");
+        assert_eq!(
+            prompt_fact_value_kind(MemoryFactValueKind::PersonName),
+            "person_name"
+        );
         assert_eq!(prompt_fact_value_kind(MemoryFactValueKind::Title), "title");
-        assert_eq!(prompt_fact_value_kind(MemoryFactValueKind::SkillName), "skill_name");
-        assert_eq!(prompt_fact_value_kind(MemoryFactValueKind::DateTimeLike), "datetime_like");
-        assert_eq!(prompt_fact_value_kind(MemoryFactValueKind::AssetName), "asset_name");
+        assert_eq!(
+            prompt_fact_value_kind(MemoryFactValueKind::SkillName),
+            "skill_name"
+        );
+        assert_eq!(
+            prompt_fact_value_kind(MemoryFactValueKind::DateTimeLike),
+            "datetime_like"
+        );
+        assert_eq!(
+            prompt_fact_value_kind(MemoryFactValueKind::AssetName),
+            "asset_name"
+        );
 
         assert_eq!(
             prompt_fact_change_type(MemoryFactChangeType::Contradiction),
             "contradiction"
         );
-        assert_eq!(prompt_fact_change_type(MemoryFactChangeType::Historical), "historical");
-        assert_eq!(prompt_fact_change_type(MemoryFactChangeType::Addition), "addition");
+        assert_eq!(
+            prompt_fact_change_type(MemoryFactChangeType::Historical),
+            "historical"
+        );
+        assert_eq!(
+            prompt_fact_change_type(MemoryFactChangeType::Addition),
+            "addition"
+        );
 
-        assert_eq!(MemoryCorrectionKind::Obsolete.relation(), Some(RelationType::EvolvedTo));
+        assert_eq!(
+            MemoryCorrectionKind::Obsolete.relation(),
+            Some(RelationType::EvolvedTo)
+        );
         assert_eq!(
             MemoryCorrectionKind::Contradicts.relation(),
             Some(RelationType::Contradicts)
@@ -1311,12 +1353,19 @@ mod tests {
         let null_arbitrator = Arbitrator::with_client(Arc::new(MockLLM {
             response: "null".into(),
         }));
-        assert!(null_arbitrator.extract_memory_facts(&memory).await.unwrap().is_empty());
+        assert!(null_arbitrator
+            .extract_memory_facts(&memory)
+            .await
+            .unwrap()
+            .is_empty());
 
         let fenced_arbitrator = Arbitrator::with_client(Arc::new(MockLLM {
             response: "```json\n[{\"subject\":\"user\",\"attribute\":\"status\",\"value\":\"active\",\"change_type\":\"reaffirm\"}]\n```".into(),
         }));
-        let fenced = fenced_arbitrator.extract_memory_facts(&memory).await.unwrap();
+        let fenced = fenced_arbitrator
+            .extract_memory_facts(&memory)
+            .await
+            .unwrap();
         assert_eq!(fenced.len(), 1);
         assert_eq!(fenced[0].confidence, 0.5);
 
@@ -1356,7 +1405,10 @@ mod tests {
             ),
         ];
 
-        let retained = arbitrator.arbitrate(memories.clone(), Some("latest")).await.unwrap();
+        let retained = arbitrator
+            .arbitrate(memories.clone(), Some("latest"))
+            .await
+            .unwrap();
         assert_eq!(retained.len(), 2);
 
         let consolidated = arbitrator.consolidate(memories.clone()).await.unwrap();
@@ -1567,7 +1619,11 @@ mod tests {
                 source_a.id, source_b.id
             ),
         }))
-        .extract_topics("test-user", stream_id, vec![source_a.clone(), source_b.clone()])
+        .extract_topics(
+            "test-user",
+            stream_id,
+            vec![source_a.clone(), source_b.clone()],
+        )
         .await
         .unwrap();
         assert_eq!(success.len(), 1);

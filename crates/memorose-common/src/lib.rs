@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 pub mod config;
 pub mod sharding;
+pub mod tokenizer;
 pub mod video;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -635,17 +636,32 @@ mod tests {
     #[test]
     fn test_relation_type_from_str() {
         assert_eq!(RelationType::from_str("Next"), RelationType::Next);
-        assert_eq!(RelationType::from_str("IsSubTaskOf"), RelationType::IsSubTaskOf);
-        assert_eq!(RelationType::from_str("Contradicts"), RelationType::Contradicts);
-        assert_eq!(RelationType::from_str("DerivedFrom"), RelationType::DerivedFrom);
+        assert_eq!(
+            RelationType::from_str("IsSubTaskOf"),
+            RelationType::IsSubTaskOf
+        );
+        assert_eq!(
+            RelationType::from_str("Contradicts"),
+            RelationType::Contradicts
+        );
+        assert_eq!(
+            RelationType::from_str("DerivedFrom"),
+            RelationType::DerivedFrom
+        );
         assert_eq!(RelationType::from_str("EvolvedTo"), RelationType::EvolvedTo);
         assert_eq!(RelationType::from_str("Supports"), RelationType::Supports);
         assert_eq!(RelationType::from_str("Abstracts"), RelationType::Abstracts);
         assert_eq!(RelationType::from_str("CausedBy"), RelationType::CausedBy);
         assert_eq!(RelationType::from_str("Blocks"), RelationType::Blocks);
-        assert_eq!(RelationType::from_str("Accomplishes"), RelationType::Accomplishes);
+        assert_eq!(
+            RelationType::from_str("Accomplishes"),
+            RelationType::Accomplishes
+        );
         assert_eq!(RelationType::from_str("RelatedTo"), RelationType::RelatedTo);
-        assert_eq!(RelationType::from_str("UnknownString"), RelationType::RelatedTo);
+        assert_eq!(
+            RelationType::from_str("UnknownString"),
+            RelationType::RelatedTo
+        );
     }
 
     #[test]
