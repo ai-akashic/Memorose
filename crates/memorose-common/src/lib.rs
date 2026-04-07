@@ -616,4 +616,40 @@ mod tests {
         assert_eq!(unit.domain, MemoryDomain::Agent);
         assert_eq!(unit.namespace_key, "agent:org1:agent1");
     }
+
+    #[test]
+    fn test_relation_type_to_str() {
+        assert_eq!(RelationType::Next.as_str(), "Next");
+        assert_eq!(RelationType::IsSubTaskOf.as_str(), "IsSubTaskOf");
+        assert_eq!(RelationType::Contradicts.as_str(), "Contradicts");
+        assert_eq!(RelationType::DerivedFrom.as_str(), "DerivedFrom");
+        assert_eq!(RelationType::EvolvedTo.as_str(), "EvolvedTo");
+        assert_eq!(RelationType::Supports.as_str(), "Supports");
+        assert_eq!(RelationType::Abstracts.as_str(), "Abstracts");
+        assert_eq!(RelationType::CausedBy.as_str(), "CausedBy");
+        assert_eq!(RelationType::Blocks.as_str(), "Blocks");
+        assert_eq!(RelationType::Accomplishes.as_str(), "Accomplishes");
+        assert_eq!(RelationType::RelatedTo.as_str(), "RelatedTo");
+    }
+
+    #[test]
+    fn test_relation_type_from_str() {
+        assert_eq!(RelationType::from_str("Next"), RelationType::Next);
+        assert_eq!(RelationType::from_str("IsSubTaskOf"), RelationType::IsSubTaskOf);
+        assert_eq!(RelationType::from_str("Contradicts"), RelationType::Contradicts);
+        assert_eq!(RelationType::from_str("DerivedFrom"), RelationType::DerivedFrom);
+        assert_eq!(RelationType::from_str("EvolvedTo"), RelationType::EvolvedTo);
+        assert_eq!(RelationType::from_str("Supports"), RelationType::Supports);
+        assert_eq!(RelationType::from_str("Abstracts"), RelationType::Abstracts);
+        assert_eq!(RelationType::from_str("CausedBy"), RelationType::CausedBy);
+        assert_eq!(RelationType::from_str("Blocks"), RelationType::Blocks);
+        assert_eq!(RelationType::from_str("Accomplishes"), RelationType::Accomplishes);
+        assert_eq!(RelationType::from_str("RelatedTo"), RelationType::RelatedTo);
+        assert_eq!(RelationType::from_str("UnknownString"), RelationType::RelatedTo);
+    }
+
+    #[test]
+    fn test_memory_type_default() {
+        assert_eq!(MemoryType::default(), MemoryType::Factual);
+    }
 }

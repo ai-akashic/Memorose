@@ -138,3 +138,57 @@ pub trait LLMClient: Send + Sync {
     async fn transcribe(&self, audio_url_or_base64: &str) -> Result<LLMResponse<String>>;
     async fn describe_video(&self, video_url: &str) -> Result<LLMResponse<String>>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct DummyLLM;
+
+    #[async_trait::async_trait]
+    impl LLMClient for DummyLLM {
+        async fn embed(&self, _text: &str) -> anyhow::Result<LLMResponse<Vec<f32>>> {
+            Ok(LLMResponse {
+                data: vec![1.0, 2.0, 3.0],
+                usage: memorose_common::TokenUsage {
+                    prompt_tokens: 1,
+                    completion_tokens: 0,
+                    total_tokens: 1,
+                },
+            })
+        }
+
+        async fn generate(&self, _prompt: &str) -> anyhow::Result<LLMResponse<String>> { unimplemented!() }
+        async fn compress(&self, _text: &str, _is_agent: bool) -> anyhow::Result<LLMResponse<CompressionOutput>> { unimplemented!() }
+        async fn summarize_group(&self, _texts: Vec<String>) -> anyhow::Result<LLMResponse<String>> { unimplemented!() }
+        async fn describe_image(&self, _image_url_or_base64: &str) -> anyhow::Result<LLMResponse<String>> { unimplemented!() }
+        async fn transcribe(&self, _audio_url_or_base64: &str) -> anyhow::Result<LLMResponse<String>> { unimplemented!() }
+        async fn describe_video(&self, _video_url: &str) -> anyhow::Result<LLMResponse<String>> { unimplemented!() }
+    }
+
+    #[tokio::test]
+    async fn test_default_embed_batch_calls_embed() {
+        let llm = DummyLLM;
+        let res = llm.embed_batch(vec!["a".into(), "b".into()]).await.unwrap();
+        assert_eq!(res.data.len(), 2);
+        assert_eq!(res.data[0], vec![1.0, 2.0, 3.0]);
+        assert_eq!(res.usage.total_tokens, 2);
+    }
+
+    #[tokio::test]
+    async fn test_default_embed_content_calls_embed() {
+        let llm = DummyLLM;
+        let input = EmbedInput::Text("test".into());
+        let res = llm.embed_content(input).await.unwrap();
+        assert_eq!(res.data, vec![1.0, 2.0, 3.0]);
+    }
+
+    #[tokio::test]
+    async fn test_default_embed_content_batch_calls_embed_batch() {
+        let llm = DummyLLM;
+        let inputs = vec![EmbedInput::Text("test1".into()), EmbedInput::Text("test2".into())];
+        let res = llm.embed_content_batch(inputs).await.unwrap();
+        assert_eq!(res.data.len(), 2);
+        assert_eq!(res.usage.total_tokens, 2);
+    }
+}

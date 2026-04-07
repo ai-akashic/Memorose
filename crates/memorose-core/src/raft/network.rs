@@ -318,4 +318,28 @@ mod tests {
 
         assert!(matches!(err, RPCError::Network(_)));
     }
+
+    #[tokio::test]
+    async fn test_memorose_raft_server_rejects_invalid_json() {
+        use openraft::{Config, Raft};
+        use std::sync::Arc;
+        
+        let config = Arc::new(Config::default().validate().unwrap());
+        let store = Arc::new(crate::raft::storage::MemoroseStorage::default());
+        let network = MemoroseNetworkFactory::default();
+        let raft = Raft::new(1, config.clone(), network, store).await.unwrap();
+        let server = MemoroseRaftServer::new(raft);
+
+        let req1 = tonic::Request::new(raft_proto::RaftRequest { data: b"invalid".to_vec() });
+        let err1 = server.append_entries(req1).await.unwrap_err();
+        assert_eq!(err1.code(), tonic::Code::InvalidArgument);
+
+        let req2 = tonic::Request::new(raft_proto::RaftRequest { data: b"invalid".to_vec() });
+        let err2 = server.install_snapshot(req2).await.unwrap_err();
+        assert_eq!(err2.code(), tonic::Code::InvalidArgument);
+
+        let req3 = tonic::Request::new(raft_proto::RaftRequest { data: b"invalid".to_vec() });
+        let err3 = server.vote(req3).await.unwrap_err();
+        assert_eq!(err3.code(), tonic::Code::InvalidArgument);
+    }
 }
