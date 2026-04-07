@@ -114,10 +114,13 @@
 
   <rect x="908" y="386" width="424" height="116" rx="20" fill="#FFFFFF" stroke="#CBD5E1"/>
   <text x="936" y="418" class="label">Core Runtime</text>
-  <text x="936" y="446" class="body">Workers, memory engine, hybrid search, graph ops, reflection, forgetting</text>
-  <rect x="936" y="460" width="88" height="10" rx="5" fill="#2563EB"/>
-  <rect x="1036" y="460" width="72" height="10" rx="5" fill="#60A5FA"/>
-  <rect x="1120" y="460" width="96" height="10" rx="5" fill="#93C5FD"/>
+  <text x="936" y="446" class="body">
+    <tspan x="936" dy="0">Workers, memory engine, hybrid search, graph ops</tspan>
+    <tspan x="936" dy="22">reflection, forgetting, and semantic updates</tspan>
+  </text>
+  <rect x="936" y="482" width="88" height="10" rx="5" fill="#2563EB"/>
+  <rect x="1036" y="482" width="72" height="10" rx="5" fill="#60A5FA"/>
+  <rect x="1120" y="482" width="96" height="10" rx="5" fill="#93C5FD"/>
 
   <rect x="908" y="530" width="128" height="112" rx="20" fill="#FFFFFF" stroke="#CBD5E1"/>
   <text x="934" y="564" class="label">RocksDB</text>

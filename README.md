@@ -23,6 +23,11 @@
     <img src="https://img.shields.io/badge/language-Rust-orange?style=flat&logo=rust" alt="Rust" />
     <a href="https://github.com/ai-akashic/Memorose/commits/main"><img src="https://img.shields.io/github/commit-activity/m/ai-akashic/Memorose?style=flat&color=green" alt="Commits" /></a>
   </p>
+  <p>
+    <i>"The rose of old remains only in its name; we hold only the naked name."</i><br />
+    <sub>— Bernard of Cluny</sub>
+  </p>
+  <p><sub>Inspired by <i>The Name of the Rose</i>, Memorose is building a distributed, multimodal long-term memory lake — reliable, continuously evolving, and highly flexible memory infrastructure.</sub></p>
   <br />
 </div>
 
@@ -174,11 +179,11 @@ Memorose processes memories through a 4-tier cognitive pipeline, modeled after h
 │                                                     │
 │  Operations: Insight ─► Reflect                     │
 └──────────────────────┬──────────────────────────────┘
-                       │  Goal decomposition
+                       │  Goal / task decomposition
                        ▼
 ┌─────────────────────────────────────────────────────┐
-│  L3  Goal Memory                                    │
-│  Hierarchical task trees. Progress tracking.        │
+│  L3  Goals & Task Memory                            │
+│  Goal structures, task trees, progress, outcomes.  │
 │  ► RocksDB                                          │
 └─────────────────────────────────────────────────────┘
 
@@ -203,7 +208,7 @@ flowchart TD
         L0["L0 Raw Events / 原始事件<br/>append-only event log"]
         L1["L1 Stable Memory / 稳定记忆<br/>facts + procedures"]
         L2["L2 Insights / 洞察层<br/>topics + clusters + reflections"]
-        L3["L3 Goals & Tasks / 目标与任务<br/>goals + milestones + dependencies"]
+        L3["L3 Goals & Task Memory / 目标与任务记忆<br/>goals + task trees + dependencies"]
     end
 
     subgraph Evolution["Memory Evolution / 记忆演化"]
