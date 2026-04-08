@@ -108,6 +108,7 @@ function ShardRaftCard({ shard, t }: { shard: ShardStatus; t: ReturnType<typeof 
     Leader: "text-success",
     Follower: "text-primary",
     Candidate: "text-warning",
+    Standalone: "text-success",
   }[shard.raft_state] || "text-muted-foreground";
 
   const isHealthy = shard.replication_lag <= 10;
@@ -135,6 +136,7 @@ function RaftStatusCard({ cluster, t }: { cluster: ClusterStatusSingle; t: Retur
     Leader: "text-success",
     Follower: "text-primary",
     Candidate: "text-warning",
+    Standalone: "text-success",
   }[cluster.raft_state] || "text-muted-foreground";
 
   return (
