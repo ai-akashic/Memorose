@@ -2,20 +2,21 @@
 
 import { useClusterStatus, useStats, usePendingCount } from "@/lib/hooks";
 import { isShardedCluster } from "@/lib/types";
-import type { ClusterStatusSingle, ClusterStatusSharded, ShardStatus } from "@/lib/types";
+import type { ClusterStatusSingle, ClusterStatusSharded, ShardStatus, TextIndexMetrics } from "@/lib/types";
 import { formatNumber, formatDuration } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { useOrgScope } from "@/lib/org-scope";
 import { useTranslations } from "next-intl";
 import {
-  LayoutDashboard,
   Activity,
+  Clock3,
   Database,
   GitBranch,
   Clock,
   Zap,
   Star,
   Server,
+  Search,
   Layers,
   UserMinus,
   Hourglass,
@@ -24,6 +25,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
 
 function StatCard({
   label,
@@ -246,6 +254,154 @@ function PipelineCard({ stats, t }: { stats: NonNullable<ReturnType<typeof useSt
   );
 }
 
+function InsightCard({ cluster, t }: { cluster: ClusterStatusSingle; t: ReturnType<typeof useTranslations> }) {
+  const insight = cluster.config.worker;
+
+  return (
+    <Card className="glass-card overflow-hidden relative">
+      <CardHeader className="p-4 pb-0">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Hourglass className="w-4 h-4 text-primary opacity-60" />
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("insight.title")}</span>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="p-4 pt-4 space-y-4">
+        <div className="grid grid-cols-2 gap-2">
+          <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("insight.batchTokens")}</span>
+            <span className="text-xs font-mono font-bold text-primary mt-1">{formatNumber(insight.insight_batch_target_tokens)}</span>
+          </div>
+          <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("insight.batchL1")}</span>
+            <span className="text-xs font-mono font-bold text-primary mt-1">{formatNumber(insight.insight_max_l1_per_batch)}</span>
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          {[
+            { label: t("insight.interval"), value: `${insight.insight_interval_ms}ms`, icon: Clock },
+            { label: t("insight.minL1"), value: formatNumber(insight.insight_min_pending_l1), icon: Layers },
+            { label: t("insight.minTokens"), value: formatNumber(insight.insight_min_pending_tokens), icon: Database },
+            { label: t("insight.maxDelay"), value: `${Math.round(insight.insight_max_delay_ms / 3600000)}h`, icon: Hourglass },
+            { label: t("insight.batchCycles"), value: formatNumber(insight.insight_max_batches_per_cycle), icon: Zap },
+          ].map((item) => (
+            <div key={item.label} className="flex items-center justify-between rounded-md px-2 py-1.5 hover:bg-card transition-colors">
+              <div className="flex items-center gap-2">
+                <item.icon className="w-3.5 h-3.5 text-muted-foreground/60" />
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{item.label}</span>
+              </div>
+              <span className="text-xs font-mono text-foreground/80">{item.value}</span>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function TextIndexCard({
+  title,
+  metrics,
+  t,
+}: {
+  title: string;
+  metrics: TextIndexMetrics;
+  t: ReturnType<typeof useTranslations>;
+}) {
+  const totalLookups = metrics.overlay_hit_total + metrics.overlay_miss_total;
+  const overlayHitRate = totalLookups > 0 ? `${((metrics.overlay_hit_total / totalLookups) * 100).toFixed(1)}%` : "—";
+  const avgCommitLatency = metrics.commit_total > 0 ? `${(metrics.commit_latency_total_ms / metrics.commit_total).toFixed(1)}ms` : "—";
+
+  return (
+    <Card className="glass-card overflow-hidden relative">
+      <CardHeader className="p-4 pb-0">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Search className="w-4 h-4 text-primary opacity-60" />
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{title}</span>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="p-4 pt-4 space-y-4">
+        <div className="grid grid-cols-2 gap-2">
+          <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("textIndex.dirtyDocs")}</span>
+            <span className="text-xs font-mono font-bold text-warning mt-1">{formatNumber(metrics.dirty_docs)}</span>
+          </div>
+          <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("textIndex.overlayDocs")}</span>
+            <span className="text-xs font-mono font-bold text-primary mt-1">{formatNumber(metrics.overlay_docs)}</span>
+          </div>
+          <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("textIndex.avgCommitLatency")}</span>
+            <span className="text-xs font-mono font-bold text-success mt-1">{avgCommitLatency}</span>
+          </div>
+          <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("textIndex.overlayHitRate")}</span>
+            <span className="text-xs font-mono font-bold text-primary mt-1">{overlayHitRate}</span>
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          {[
+            { label: t("textIndex.dirtyBytes"), value: formatBytes(metrics.dirty_bytes), icon: Database },
+            { label: t("textIndex.overlayBytes"), value: formatBytes(metrics.overlay_bytes), icon: Layers },
+            { label: t("textIndex.commitTotal"), value: formatNumber(metrics.commit_total), icon: Clock3 },
+            { label: t("textIndex.busySkips"), value: formatNumber(metrics.commit_skipped_busy_total), icon: Activity },
+          ].map((item) => (
+            <div key={item.label} className="flex items-center justify-between rounded-md px-2 py-1.5 hover:bg-card transition-colors">
+              <div className="flex items-center gap-2">
+                <item.icon className="w-3.5 h-3.5 text-muted-foreground/60" />
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{item.label}</span>
+              </div>
+              <span className="text-xs font-mono text-foreground/80">{item.value}</span>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function RuntimeModeBanner({
+  cluster,
+  t,
+}: {
+  cluster: ClusterStatusSingle | ClusterStatusSharded;
+  t: ReturnType<typeof useTranslations>;
+}) {
+  const standalone = cluster.runtime_mode === "standalone";
+
+  return (
+    <Card className="glass-card overflow-hidden">
+      <CardContent className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
+        <div className="space-y-1">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+            {t("runtime.title")}
+          </div>
+          <div className="flex items-center gap-2">
+            <span
+              className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wider ${
+                standalone ? "bg-success/10 text-success" : "bg-primary/10 text-primary"
+              }`}
+            >
+              {standalone ? t("runtime.standalone") : t("runtime.cluster")}
+            </span>
+            <span className="rounded-full bg-card px-2 py-1 text-[10px] font-mono uppercase tracking-wider text-foreground/75">
+              {cluster.write_path}
+            </span>
+          </div>
+        </div>
+        <div className="max-w-xl text-sm text-muted-foreground">
+          {standalone ? t("runtime.standaloneDesc") : t("runtime.clusterDesc")}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function SingleShardTopology({ cluster, t }: { cluster: ClusterStatusSingle; t: ReturnType<typeof useTranslations> }) {
   const hasNodes = cluster.voters.length > 0 || cluster.learners.length > 0;
 
@@ -408,6 +564,8 @@ export default function ClusterPage() {
     <div className="space-y-8 relative pb-10">
       <div className="absolute top-0 right-0 w-[500px] h-[300px] blob-bg opacity-20 pointer-events-none -z-10 mix-blend-screen" />
 
+      {cluster && <RuntimeModeBanner cluster={cluster} t={t} />}
+
       {/* KPI Cards */}
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
         <StatCard label={t("stats.totalEvents")} value={stats?.total_events ?? 0} icon={Activity} delay={0.1} compact />
@@ -436,7 +594,7 @@ export default function ClusterPage() {
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
           {cluster && !sharded && <RaftStatusCard cluster={cluster as ClusterStatusSingle} t={t} />}
           {cluster && !sharded && (
             <HeartbeatCard
@@ -445,7 +603,15 @@ export default function ClusterPage() {
               t={t}
             />
           )}
+          {cluster && !sharded && <InsightCard cluster={cluster as ClusterStatusSingle} t={t} />}
           {stats && <PipelineCard stats={stats} t={t} />}
+          {cluster && !sharded && (cluster as ClusterStatusSingle).text_index_metrics && (
+            <TextIndexCard
+              title={t("textIndex.title")}
+              metrics={(cluster as ClusterStatusSingle).text_index_metrics!}
+              t={t}
+            />
+          )}
         </div>
       )}
 
@@ -453,6 +619,21 @@ export default function ClusterPage() {
       {sharded && stats && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <PipelineCard stats={stats} t={t} />
+        </div>
+      )}
+
+      {sharded && (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+          {(cluster as ClusterStatusSharded).shards
+            .filter((shard) => shard.text_index_metrics)
+            .map((shard) => (
+              <TextIndexCard
+                key={`index-${shard.shard_id}`}
+                title={t("textIndex.shard", { shard: shard.shard_id })}
+                metrics={shard.text_index_metrics!}
+                t={t}
+              />
+            ))}
         </div>
       )}
 

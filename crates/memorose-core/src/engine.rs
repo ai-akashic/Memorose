@@ -4,7 +4,7 @@ use crate::arbitrator::{
 use crate::fact_extraction::{self, MemoryFactChangeType, MemoryFactDescriptor};
 use crate::reranker::Reranker;
 use crate::storage::graph::GraphStore;
-use crate::storage::index::TextIndex;
+use crate::storage::index::{TextIndex, TextIndexConfig, TextIndexMetricSnapshot};
 use crate::storage::kv::KvStore;
 use crate::storage::system_kv::SystemKvStore;
 use crate::storage::vector::VectorStore;
@@ -20,7 +20,8 @@ use memorose_common::{
     MemoryUnit, RelationType, SharePolicy, ShareTarget, TimeRange,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -29,6 +30,29 @@ use uuid::Uuid;
 
 const OBSOLETE_ACTION_MIN_CONFIDENCE: f32 = 0.85;
 const OBSOLETE_ACTION_RELATION_ONLY_MIN_CONFIDENCE: f32 = 0.70;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct ReflectionMarker {
+    pub first_event_at_ts: i64,
+    pub last_event_at_ts: i64,
+    pub pending_units: usize,
+    pub pending_tokens: usize,
+    #[serde(default)]
+    pub first_event_tx_micros: i64,
+    #[serde(default)]
+    pub last_event_tx_micros: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_event_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReflectionBatchOutcome {
+    pub created_topics: usize,
+    pub consumed_units: usize,
+    pub consumed_tokens: usize,
+    pub next_first_event_tx_micros: Option<i64>,
+    pub next_first_event_id: Option<String>,
+}
 
 #[derive(Clone)]
 pub struct MemoroseEngine {
@@ -40,6 +64,7 @@ pub struct MemoroseEngine {
     reranker: std::sync::Arc<dyn Reranker>,
     _root_path: PathBuf,
     _commit_interval_ms: u64,
+    storage_config: memorose_common::config::StorageConfig,
     pub auto_planner: bool,
     pub task_reflection: bool,
     pub task_locks: Arc<DashMap<Uuid, Arc<Mutex<()>>>>,
@@ -1811,13 +1836,18 @@ impl MemoroseEngine {
         auto_planner: bool,
         task_reflection: bool,
     ) -> Result<Self> {
-        let dim = memorose_common::config::AppConfig::load()
-            .ok()
+        let app_config = memorose_common::config::AppConfig::load().ok();
+        let dim = app_config
+            .as_ref()
             .map(|c| c.llm.embedding_dim)
             .unwrap_or(768);
-        Self::new(
+        let mut storage_config = app_config.map(|c| c.storage).unwrap_or_default();
+        storage_config.index_commit_interval_ms = commit_interval_ms;
+        storage_config.index_commit_min_interval_ms = commit_interval_ms.max(1);
+        storage_config.index_commit_max_interval_ms = commit_interval_ms.max(1);
+        Self::new_with_storage_config(
             path,
-            commit_interval_ms,
+            storage_config,
             auto_planner,
             task_reflection,
             memorose_common::config::DEFAULT_AUTO_LINK_SIMILARITY_THRESHOLD,
@@ -1829,6 +1859,29 @@ impl MemoroseEngine {
     pub async fn new(
         path: impl Into<PathBuf>,
         commit_interval_ms: u64,
+        auto_planner: bool,
+        task_reflection: bool,
+        auto_link_similarity_threshold: f32,
+        embedding_dim: i32,
+    ) -> Result<Self> {
+        let mut storage_config = memorose_common::config::StorageConfig::default();
+        storage_config.index_commit_interval_ms = commit_interval_ms;
+        storage_config.index_commit_min_interval_ms = commit_interval_ms.max(1);
+        storage_config.index_commit_max_interval_ms = commit_interval_ms.max(1);
+        Self::new_with_storage_config(
+            path,
+            storage_config,
+            auto_planner,
+            task_reflection,
+            auto_link_similarity_threshold,
+            embedding_dim,
+        )
+        .await
+    }
+
+    pub async fn new_with_storage_config(
+        path: impl Into<PathBuf>,
+        storage_config: memorose_common::config::StorageConfig,
         auto_planner: bool,
         task_reflection: bool,
         auto_link_similarity_threshold: f32,
@@ -1849,8 +1902,9 @@ impl MemoroseEngine {
         let graph = GraphStore::new(db).await?;
 
         let index_path = root_path.join("tantivy");
+        let index_config = TextIndexConfig::from_storage_config(&storage_config);
         let index =
-            tokio::task::spawn_blocking(move || TextIndex::new(index_path, commit_interval_ms))
+            tokio::task::spawn_blocking(move || TextIndex::with_config(index_path, index_config))
                 .await??;
 
         let arbitrator = Arbitrator::new();
@@ -1885,7 +1939,8 @@ impl MemoroseEngine {
             arbitrator,
             reranker,
             _root_path: root_path,
-            _commit_interval_ms: commit_interval_ms,
+            _commit_interval_ms: storage_config.index_commit_max_interval_ms,
+            storage_config,
             auto_planner,
             task_reflection,
             task_locks: Arc::new(DashMap::new()),
@@ -1927,7 +1982,10 @@ impl MemoroseEngine {
     }
 
     pub async fn ingest_event_directly(&self, event: Event) -> Result<()> {
-        // Validate event content is not empty
+        self.ingest_events_directly(vec![event]).await
+    }
+
+    fn validate_event_not_empty(event: &Event) -> Result<()> {
         let is_empty = match &event.content {
             memorose_common::EventContent::Text(text) => text.trim().is_empty(),
             memorose_common::EventContent::Image(url) => url.trim().is_empty(),
@@ -1946,25 +2004,35 @@ impl MemoroseEngine {
                 std::mem::discriminant(&event.content)
             ));
         }
+        Ok(())
+    }
 
-        let event_id = event.id.to_string();
-        let user_id = event.user_id.clone();
-        // Store event under user prefix
-        let key = format!("u:{}:event:{}", user_id, event_id);
-        let val = serde_json::to_vec(&event)?;
-        self._kv.put(key.as_bytes(), &val)?;
+    pub async fn ingest_events_directly(&self, events: Vec<Event>) -> Result<()> {
+        if events.is_empty() {
+            return Ok(());
+        }
 
-        // Global pending queue with only the owning user_id.
-        let pending_key = format!("pending:{}", event_id);
-        let pending_val = serde_json::to_vec(&serde_json::json!({
-            "user_id": user_id
-        }))?;
-        self.system_kv().put(pending_key.as_bytes(), &pending_val)?;
+        let mut batch = rocksdb::WriteBatch::default();
+        for event in &events {
+            Self::validate_event_not_empty(event)?;
 
-        // Set active_user marker
-        let active_key = format!("active_user:{}", user_id);
-        self.system_kv().put(active_key.as_bytes(), &[])?;
+            let event_id = event.id.to_string();
+            let user_id = event.user_id.clone();
+            let key = format!("u:{}:event:{}", user_id, event_id);
+            let val = serde_json::to_vec(event)?;
+            batch.put(key.as_bytes(), &val);
 
+            let pending_key = format!("pending:{}", event_id);
+            let pending_val = serde_json::to_vec(&serde_json::json!({
+                "user_id": user_id
+            }))?;
+            batch.put(pending_key.as_bytes(), &pending_val);
+
+            let active_key = format!("active_user:{}", event.user_id);
+            batch.put(active_key.as_bytes(), []);
+        }
+
+        self._kv.write_batch(batch)?;
         Ok(())
     }
 
@@ -1982,6 +2050,10 @@ impl MemoroseEngine {
 
     pub fn commit_interval_ms(&self) -> u64 {
         self._commit_interval_ms
+    }
+
+    pub fn storage_config(&self) -> &memorose_common::config::StorageConfig {
+        &self.storage_config
     }
 
     pub fn auto_planner(&self) -> bool {
@@ -2322,9 +2394,113 @@ impl MemoroseEngine {
     // ── Marker Methods ──────────────────────────────────────────────
 
     pub fn set_needs_reflect(&self, user_id: &str) -> Result<()> {
+        self.bump_reflection_marker(user_id, 1, 0)
+    }
+
+    pub fn bump_reflection_marker(
+        &self,
+        user_id: &str,
+        pending_units_delta: usize,
+        pending_tokens_delta: usize,
+    ) -> Result<()> {
+        self.bump_reflection_marker_with_window(
+            user_id,
+            pending_units_delta,
+            pending_tokens_delta,
+            None,
+            None,
+            None,
+        )
+    }
+
+    pub fn bump_reflection_marker_with_window(
+        &self,
+        user_id: &str,
+        pending_units_delta: usize,
+        pending_tokens_delta: usize,
+        first_event_tx_micros: Option<i64>,
+        last_event_tx_micros: Option<i64>,
+        first_event_id: Option<String>,
+    ) -> Result<()> {
         let key = format!("needs_reflect:{}", user_id);
-        let ts = chrono::Utc::now().timestamp().to_string();
-        self.system_kv().put(key.as_bytes(), ts.as_bytes())
+        let now = chrono::Utc::now().timestamp_millis();
+        let next = match self.system_kv().get(key.as_bytes())? {
+            Some(raw) => {
+                let mut marker =
+                    serde_json::from_slice::<ReflectionMarker>(&raw).unwrap_or_else(|_| {
+                        ReflectionMarker {
+                            first_event_at_ts: now,
+                            last_event_at_ts: now,
+                            pending_units: 0,
+                            pending_tokens: 0,
+                            first_event_tx_micros: 0,
+                            last_event_tx_micros: 0,
+                            first_event_id: None,
+                        }
+                    });
+                if marker.first_event_at_ts <= 0 {
+                    marker.first_event_at_ts = now;
+                }
+                marker.last_event_at_ts = now;
+                marker.pending_units = marker.pending_units.saturating_add(pending_units_delta);
+                marker.pending_tokens = marker.pending_tokens.saturating_add(pending_tokens_delta);
+                if let Some(first_tx) = first_event_tx_micros {
+                    let should_update_cursor = marker.first_event_tx_micros <= 0
+                        || first_tx < marker.first_event_tx_micros
+                        || (first_tx == marker.first_event_tx_micros
+                            && first_event_id
+                                .as_ref()
+                                .zip(marker.first_event_id.as_ref())
+                                .map(|(new_id, old_id)| new_id < old_id)
+                                .unwrap_or(marker.first_event_id.is_none()));
+                    if should_update_cursor {
+                        marker.first_event_tx_micros = first_tx;
+                        marker.first_event_id = first_event_id.clone();
+                    }
+                }
+                if let Some(last_tx) = last_event_tx_micros {
+                    marker.last_event_tx_micros = marker.last_event_tx_micros.max(last_tx);
+                }
+                marker
+            }
+            None => ReflectionMarker {
+                first_event_at_ts: now,
+                last_event_at_ts: now,
+                pending_units: pending_units_delta,
+                pending_tokens: pending_tokens_delta,
+                first_event_tx_micros: first_event_tx_micros.unwrap_or_default(),
+                last_event_tx_micros: last_event_tx_micros.unwrap_or_default(),
+                first_event_id,
+            },
+        };
+        self.system_kv()
+            .put(key.as_bytes(), &serde_json::to_vec(&next)?)
+    }
+
+    pub fn consume_reflection_marker_batch(
+        &self,
+        user_id: &str,
+        consumed_units: usize,
+        consumed_tokens: usize,
+        next_first_event_tx_micros: Option<i64>,
+        next_first_event_id: Option<String>,
+    ) -> Result<()> {
+        let key = format!("needs_reflect:{}", user_id);
+        let Some(raw) = self.system_kv().get(key.as_bytes())? else {
+            return Ok(());
+        };
+        let mut marker = serde_json::from_slice::<ReflectionMarker>(&raw).unwrap_or_default();
+        marker.pending_units = marker.pending_units.saturating_sub(consumed_units);
+        marker.pending_tokens = marker.pending_tokens.saturating_sub(consumed_tokens);
+
+        if marker.pending_units == 0 || next_first_event_tx_micros.is_none() {
+            return self.clear_reflection_marker(user_id);
+        }
+
+        marker.first_event_tx_micros = next_first_event_tx_micros.unwrap_or_default();
+        marker.first_event_id = next_first_event_id;
+        self.system_kv()
+            .put(key.as_bytes(), &serde_json::to_vec(&marker)?)
     }
 
     pub fn set_needs_community(&self, user_id: &str) -> Result<()> {
@@ -2334,15 +2510,24 @@ impl MemoroseEngine {
     }
 
     pub fn get_pending_reflections(&self) -> Result<Vec<String>> {
+        Ok(self
+            .get_pending_reflection_markers()?
+            .into_iter()
+            .map(|(user_id, _)| user_id)
+            .collect())
+    }
+
+    pub fn get_pending_reflection_markers(&self) -> Result<Vec<(String, ReflectionMarker)>> {
         let pairs = self.system_kv().scan(b"needs_reflect:")?;
-        let mut user_ids = Vec::new();
-        for (key, _) in pairs {
+        let mut markers = Vec::new();
+        for (key, value) in pairs {
             let key_str = String::from_utf8(key)?;
             if let Some(uid) = key_str.strip_prefix("needs_reflect:") {
-                user_ids.push(uid.to_string());
+                let marker = serde_json::from_slice::<ReflectionMarker>(&value).unwrap_or_default();
+                markers.push((uid.to_string(), marker));
             }
         }
-        Ok(user_ids)
+        Ok(markers)
     }
 
     pub fn clear_reflection_marker(&self, user_id: &str) -> Result<()> {
@@ -2369,36 +2554,70 @@ impl MemoroseEngine {
 
     // ── Reflection ──────────────────────────────────────────────────
 
-    /// Prospective Reflection: Summarize recent L1 memories into L2 Topic memories.
-    pub async fn reflect_on_session(&self, user_id: &str, stream_id: uuid::Uuid) -> Result<()> {
-        let recent_l1 = self.fetch_recent_l1_units(user_id, 20).await?;
-        let session_units: Vec<MemoryUnit> = recent_l1
-            .into_iter()
-            .filter(|u| u.stream_id == stream_id)
-            .collect();
+    async fn populate_missing_embeddings(&self, units: &mut [MemoryUnit]) {
+        let Some(client) = self.arbitrator.get_llm_client() else {
+            return;
+        };
 
-        if session_units.is_empty() {
-            return Ok(());
+        let mut texts = Vec::new();
+        let mut indices = Vec::new();
+        for (index, unit) in units.iter().enumerate() {
+            if unit.embedding.is_none() && !unit.content.trim().is_empty() {
+                indices.push(index);
+                texts.push(unit.content.clone());
+            }
+        }
+
+        if texts.is_empty() {
+            return;
+        }
+
+        let embeddings = match client.embed_batch(texts.clone()).await {
+            Ok(response) if response.data.len() == indices.len() => response.data,
+            _ => {
+                let mut fallback = Vec::with_capacity(texts.len());
+                for text in texts {
+                    fallback.push(
+                        client
+                            .embed(&text)
+                            .await
+                            .map(|response| response.data)
+                            .unwrap_or_default(),
+                    );
+                }
+                fallback
+            }
+        };
+
+        for (index, embedding) in indices.into_iter().zip(embeddings.into_iter()) {
+            if !embedding.is_empty() {
+                units[index].embedding = Some(embedding);
+            }
+        }
+    }
+
+    async fn reflect_on_units(
+        &self,
+        user_id: &str,
+        stream_id: uuid::Uuid,
+        source_units: Vec<MemoryUnit>,
+    ) -> Result<usize> {
+        if source_units.is_empty() {
+            return Ok(0);
         }
 
         let topic_units = self
             .arbitrator
-            .extract_topics(user_id, stream_id, session_units.clone())
+            .extract_topics(user_id, stream_id, source_units)
             .await?;
 
         if topic_units.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
 
-        let mut units_to_store = Vec::new();
-        for mut unit in topic_units {
-            if let Some(client) = self.arbitrator.get_llm_client() {
-                if let Ok(embedding) = client.embed(&unit.content).await {
-                    unit.embedding = Some(embedding.data);
-                }
-            }
-            units_to_store.push(unit);
-        }
+        let mut units_to_store = topic_units;
+        let topic_count = units_to_store.len();
+        self.populate_missing_embeddings(&mut units_to_store).await;
 
         self.store_memory_units(units_to_store.clone()).await?;
 
@@ -2415,7 +2634,224 @@ impl MemoroseEngine {
             }
         }
 
-        Ok(())
+        Ok(topic_count)
+    }
+
+    async fn fetch_l1_units_for_reflection_batch(
+        &self,
+        user_id: &str,
+        min_transaction_time_micros: Option<i64>,
+        min_event_id: Option<&str>,
+        max_units: usize,
+        max_tokens: usize,
+    ) -> Result<(Vec<MemoryUnit>, usize, Option<(i64, String)>)> {
+        if max_units == 0 {
+            return Ok((Vec::new(), 0, None));
+        }
+
+        let store = self._kv.clone();
+        let l1_index_prefix = format!("l1_idx:{}:", user_id).into_bytes();
+        let strip_prefix = format!("l1_idx:{}:", user_id);
+        let index_pairs = tokio::task::spawn_blocking({
+            let store = store.clone();
+            move || store.scan(&l1_index_prefix)
+        })
+        .await??;
+
+        let cursor = min_transaction_time_micros.zip(min_event_id.map(str::to_string));
+        if index_pairs.is_empty() {
+            let prefix = format!("u:{}:unit:", user_id).into_bytes();
+            let pairs = tokio::task::spawn_blocking({
+                let store = store.clone();
+                move || store.scan(&prefix)
+            })
+            .await??;
+
+            let mut ordered_units: Vec<(String, i64, MemoryUnit)> = pairs
+                .into_iter()
+                .filter_map(|(_, value)| serde_json::from_slice::<MemoryUnit>(&value).ok())
+                .filter(|unit| unit.level == 1 && Self::is_local_domain(&unit.domain))
+                .filter_map(|unit| {
+                    let id = unit.id.to_string();
+                    let ts = unit.transaction_time.timestamp_micros();
+                    let include = match &cursor {
+                        Some((cursor_ts, cursor_id)) => {
+                            ts > *cursor_ts || (ts == *cursor_ts && id >= *cursor_id)
+                        }
+                        None => true,
+                    };
+                    include.then_some((id, ts, unit))
+                })
+                .collect();
+            ordered_units.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+            return Self::pack_reflection_batch_units(ordered_units, max_units, max_tokens);
+        }
+
+        let mut id_ts: Vec<(String, i64)> = index_pairs
+            .into_iter()
+            .filter_map(|(key, value)| {
+                let key_str = String::from_utf8(key).ok()?;
+                let id = key_str.strip_prefix(&strip_prefix)?.to_string();
+                let ts = i64::from_le_bytes(value.as_slice().try_into().ok()?);
+                let include = match &cursor {
+                    Some((cursor_ts, cursor_id)) => {
+                        ts > *cursor_ts || (ts == *cursor_ts && id >= *cursor_id)
+                    }
+                    None => true,
+                };
+                include.then_some((id, ts))
+            })
+            .collect();
+
+        if id_ts.is_empty() {
+            return Ok((Vec::new(), 0, None));
+        }
+
+        id_ts.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+        if id_ts.len() > max_units.saturating_add(1) {
+            id_ts.truncate(max_units.saturating_add(1));
+        }
+
+        let keys: Vec<String> = id_ts
+            .iter()
+            .map(|(id, _)| format!("u:{}:unit:{}", user_id, id))
+            .collect();
+        let values = tokio::task::spawn_blocking({
+            let store = store.clone();
+            let key_refs_owned: Vec<Vec<u8>> = keys.iter().map(|k| k.as_bytes().to_vec()).collect();
+            move || {
+                store.multi_get(
+                    &key_refs_owned
+                        .iter()
+                        .map(|k| k.as_slice())
+                        .collect::<Vec<_>>(),
+                )
+            }
+        })
+        .await??;
+
+        let ordered_units: Vec<(String, i64, MemoryUnit)> = id_ts
+            .into_iter()
+            .zip(values.into_iter())
+            .filter_map(|((id, ts), value)| {
+                let unit =
+                    value.and_then(|bytes| serde_json::from_slice::<MemoryUnit>(&bytes).ok())?;
+                (unit.level == 1 && Self::is_local_domain(&unit.domain)).then_some((id, ts, unit))
+            })
+            .collect();
+        Self::pack_reflection_batch_units(ordered_units, max_units, max_tokens)
+    }
+
+    fn pack_reflection_batch_units(
+        mut ordered_units: Vec<(String, i64, MemoryUnit)>,
+        max_units: usize,
+        max_tokens: usize,
+    ) -> Result<(Vec<MemoryUnit>, usize, Option<(i64, String)>)> {
+        ordered_units.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+
+        let mut batch = Vec::new();
+        let mut consumed_tokens = 0usize;
+        let mut next_cursor = None;
+
+        for (id, ts, unit) in ordered_units {
+            let unit_tokens = count_tokens(&unit.content).max(1);
+            let would_exceed_tokens = !batch.is_empty()
+                && consumed_tokens.saturating_add(unit_tokens) > max_tokens.max(1);
+            let would_exceed_units = batch.len() >= max_units;
+
+            if would_exceed_tokens || would_exceed_units {
+                next_cursor = Some((ts, id));
+                break;
+            }
+
+            consumed_tokens = consumed_tokens.saturating_add(unit_tokens);
+            batch.push(unit);
+        }
+
+        Ok((batch, consumed_tokens, next_cursor))
+    }
+
+    /// Prospective Reflection: Summarize recent L1 memories into L2 Topic memories.
+    pub async fn reflect_on_session(&self, user_id: &str, stream_id: uuid::Uuid) -> Result<()> {
+        let recent_l1 = self.fetch_recent_l1_units(user_id, 20).await?;
+        let session_units: Vec<MemoryUnit> = recent_l1
+            .into_iter()
+            .filter(|u| u.stream_id == stream_id)
+            .collect();
+
+        self.reflect_on_units(user_id, stream_id, session_units)
+            .await
+            .map(|_| ())
+    }
+
+    /// User-window reflection: summarize a bounded recent L1 window, even across streams.
+    pub async fn reflect_on_user_window(&self, user_id: &str, limit: usize) -> Result<usize> {
+        self.reflect_on_user_window_since(user_id, None, limit)
+            .await
+    }
+
+    /// User-window reflection with an optional lower transaction-time bound.
+    pub async fn reflect_on_user_window_since(
+        &self,
+        user_id: &str,
+        min_transaction_time_micros: Option<i64>,
+        limit: usize,
+    ) -> Result<usize> {
+        let recent_l1 = match min_transaction_time_micros.filter(|ts| *ts > 0) {
+            Some(min_ts) => {
+                self.fetch_recent_l1_units_since(user_id, min_ts, limit.max(1))
+                    .await?
+            }
+            None => self.fetch_recent_l1_units(user_id, limit.max(1)).await?,
+        };
+        let Some(stream_id) = recent_l1
+            .iter()
+            .max_by_key(|unit| unit.transaction_time)
+            .map(|unit| unit.stream_id)
+        else {
+            return Ok(0);
+        };
+
+        self.reflect_on_units(user_id, stream_id, recent_l1).await
+    }
+
+    pub async fn reflect_on_user_window_batch(
+        &self,
+        user_id: &str,
+        min_transaction_time_micros: Option<i64>,
+        min_event_id: Option<&str>,
+        max_units: usize,
+        max_tokens: usize,
+    ) -> Result<ReflectionBatchOutcome> {
+        let (source_units, consumed_tokens, next_cursor) = self
+            .fetch_l1_units_for_reflection_batch(
+                user_id,
+                min_transaction_time_micros,
+                min_event_id,
+                max_units.max(1),
+                max_tokens.max(1),
+            )
+            .await?;
+
+        let consumed_units = source_units.len();
+        let Some(stream_id) = source_units
+            .iter()
+            .max_by_key(|unit| unit.transaction_time)
+            .map(|unit| unit.stream_id)
+        else {
+            return Ok(ReflectionBatchOutcome::default());
+        };
+
+        let created_topics = self
+            .reflect_on_units(user_id, stream_id, source_units)
+            .await?;
+        Ok(ReflectionBatchOutcome {
+            created_topics,
+            consumed_units,
+            consumed_tokens,
+            next_first_event_tx_micros: next_cursor.as_ref().map(|(ts, _)| *ts),
+            next_first_event_id: next_cursor.map(|(_, id)| id),
+        })
     }
 
     /// Retrospective Reflection: Apply feedback to the reranker and reinforce graph associations.
@@ -3943,38 +4379,57 @@ impl MemoroseEngine {
 
         // 1. Store Metadata in KV (user-prefixed keys + global index)
         let kv = self._kv.clone();
-        let skv = self.system_kv();
-        let mut kv_batch = Vec::new();
-        let mut marker_user_ids = HashSet::new();
+        let mut kv_batch = rocksdb::WriteBatch::default();
+        let mut reflection_deltas: HashMap<String, (usize, usize, i64, i64, String)> =
+            HashMap::new();
         for unit in &units {
             let key = format!("u:{}:unit:{}", unit.user_id, unit.id);
             let val = serde_json::to_vec(unit)?;
-            kv_batch.push((key, val));
+            kv_batch.put(key.as_bytes(), &val);
 
             // Global index for dashboard lookups
             let idx_key = format!("idx:unit:{}", unit.id);
-            kv_batch.push((idx_key, unit.user_id.as_bytes().to_vec()));
+            kv_batch.put(idx_key.as_bytes(), unit.user_id.as_bytes());
 
-            if Self::is_local_domain(&unit.domain) {
-                marker_user_ids.insert(unit.user_id.clone());
+            if unit.level == 1 && Self::is_local_domain(&unit.domain) {
+                let tx_micros = unit.transaction_time.timestamp_micros();
+                let entry = reflection_deltas.entry(unit.user_id.clone()).or_insert((
+                    0,
+                    0,
+                    tx_micros,
+                    tx_micros,
+                    unit.id.to_string(),
+                ));
+                entry.0 = entry.0.saturating_add(1);
+                entry.1 = entry.1.saturating_add(count_tokens(&unit.content));
+                if tx_micros < entry.2 || (tx_micros == entry.2 && unit.id.to_string() < entry.4) {
+                    entry.2 = tx_micros;
+                    entry.4 = unit.id.to_string();
+                }
+                entry.3 = entry.3.max(tx_micros);
             }
         }
 
-        let skv_clone = skv.clone();
-        let marker_uids: Vec<String> = marker_user_ids.into_iter().collect();
         tokio::task::spawn_blocking(move || {
-            for (k, v) in kv_batch {
-                kv.put(k.as_bytes(), &v)?;
-            }
-            // Set reflection markers for each user that got new units
-            for uid in &marker_uids {
-                let reflect_key = format!("needs_reflect:{}", uid);
-                let ts = chrono::Utc::now().timestamp().to_string();
-                skv_clone.put(reflect_key.as_bytes(), ts.as_bytes())?;
-            }
+            kv.write_batch(kv_batch)?;
             Ok::<(), anyhow::Error>(())
         })
         .await??;
+
+        for (
+            user_id,
+            (pending_units, pending_tokens, first_tx_micros, last_tx_micros, first_event_id),
+        ) in reflection_deltas
+        {
+            self.bump_reflection_marker_with_window(
+                &user_id,
+                pending_units,
+                pending_tokens,
+                Some(first_tx_micros),
+                Some(last_tx_micros),
+                Some(first_event_id),
+            )?;
+        }
 
         // Maintain L1 secondary index for efficient fetch_recent_l1_units.
         // Key: "l1_idx:{user_id}:{id}" -> timestamp_micros as little-endian bytes (fast sort, no JSON).
@@ -3993,10 +4448,12 @@ impl MemoroseEngine {
         if !l1_units.is_empty() {
             let kv_l1 = self._kv.clone();
             tokio::task::spawn_blocking(move || {
+                let mut batch = rocksdb::WriteBatch::default();
                 for (uid, id, ts_micros) in &l1_units {
                     let key = format!("l1_idx:{}:{}", uid, id);
-                    kv_l1.put(key.as_bytes(), &ts_micros.to_le_bytes())?;
+                    batch.put(key.as_bytes(), ts_micros.to_le_bytes());
                 }
+                kv_l1.write_batch(batch)?;
                 Ok::<(), anyhow::Error>(())
             })
             .await??;
@@ -5651,11 +6108,8 @@ impl MemoroseEngine {
             l2_unit.keywords.extend(insight.keywords);
             l2_unit.references = members.clone();
 
-            if let Some(client) = self.arbitrator.get_llm_client() {
-                if let Ok(emb) = client.embed(&l2_unit.content).await {
-                    l2_unit.embedding = Some(emb.data);
-                }
-            }
+            self.populate_missing_embeddings(std::slice::from_mut(&mut l2_unit))
+                .await;
 
             self.store_memory_unit(l2_unit.clone()).await?;
 
@@ -5808,11 +6262,8 @@ impl MemoroseEngine {
             l2_unit.keywords.extend(insight.keywords);
             l2_unit.references = members.clone();
 
-            if let Some(client) = self.arbitrator.get_llm_client() {
-                if let Ok(emb) = client.embed(&l2_unit.content).await {
-                    l2_unit.embedding = Some(emb.data);
-                }
-            }
+            self.populate_missing_embeddings(std::slice::from_mut(&mut l2_unit))
+                .await;
 
             self.store_memory_unit(l2_unit.clone()).await?;
 
@@ -5849,6 +6300,29 @@ impl MemoroseEngine {
         user_id: &str,
         limit: usize,
     ) -> Result<Vec<MemoryUnit>> {
+        self.fetch_recent_l1_units_with_min_tx(user_id, limit, None)
+            .await
+    }
+
+    pub async fn fetch_recent_l1_units_since(
+        &self,
+        user_id: &str,
+        min_transaction_time_micros: i64,
+        limit: usize,
+    ) -> Result<Vec<MemoryUnit>> {
+        self.fetch_recent_l1_units_with_min_tx(user_id, limit, Some(min_transaction_time_micros))
+            .await
+    }
+
+    async fn fetch_recent_l1_units_with_min_tx(
+        &self,
+        user_id: &str,
+        limit: usize,
+        min_transaction_time_micros: Option<i64>,
+    ) -> Result<Vec<MemoryUnit>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
         let prefix = format!("u:{}:unit:", user_id);
         let store = self._kv.clone();
         let prefix_bytes = prefix.into_bytes();
@@ -5866,23 +6340,41 @@ impl MemoroseEngine {
         if index_pairs.is_empty() {
             // Fallback for nodes that pre-date the L1 index: scan full units.
             return self
-                .fetch_recent_l1_units_fallback(prefix_bytes, limit)
+                .fetch_recent_l1_units_fallback(prefix_bytes, limit, min_transaction_time_micros)
                 .await;
         }
 
-        // Sort by timestamp descending, take top `limit` IDs.
-        let mut id_ts: Vec<(String, i64)> = index_pairs
-            .into_iter()
-            .filter_map(|(k, v)| {
-                let key_str = String::from_utf8(k).ok()?;
+        // Keep only the top-k newest IDs without sorting the entire index.
+        let mut heap: BinaryHeap<(Reverse<i64>, String)> = BinaryHeap::with_capacity(limit + 1);
+        for (key, value) in index_pairs {
+            let Some((id, ts)) = (|| {
+                let key_str = String::from_utf8(key).ok()?;
                 let id = key_str.strip_prefix(&strip_prefix)?.to_string();
-                let ts = i64::from_le_bytes(v.as_slice().try_into().ok()?);
+                let ts = i64::from_le_bytes(value.as_slice().try_into().ok()?);
                 Some((id, ts))
-            })
-            .collect();
+            })() else {
+                continue;
+            };
+            if min_transaction_time_micros.is_some_and(|min_ts| ts < min_ts) {
+                continue;
+            }
 
+            if heap.len() < limit {
+                heap.push((Reverse(ts), id));
+                continue;
+            }
+
+            if let Some((Reverse(oldest_ts), _)) = heap.peek() {
+                if ts > *oldest_ts {
+                    heap.pop();
+                    heap.push((Reverse(ts), id));
+                }
+            }
+        }
+
+        let mut id_ts: Vec<(String, i64)> =
+            heap.into_iter().map(|(Reverse(ts), id)| (id, ts)).collect();
         id_ts.sort_by(|a, b| b.1.cmp(&a.1));
-        id_ts.truncate(limit);
 
         // Multi-get the actual units by their KV keys.
         let keys: Vec<String> = id_ts
@@ -5917,6 +6409,7 @@ impl MemoroseEngine {
         &self,
         prefix_bytes: Vec<u8>,
         limit: usize,
+        min_transaction_time_micros: Option<i64>,
     ) -> Result<Vec<MemoryUnit>> {
         let store = self._kv.clone();
         let pairs = tokio::task::spawn_blocking(move || store.scan(&prefix_bytes)).await??;
@@ -5924,6 +6417,11 @@ impl MemoroseEngine {
             .into_iter()
             .filter_map(|(_, val)| serde_json::from_slice::<MemoryUnit>(&val).ok())
             .filter(|u| u.level == 1 && Self::is_local_domain(&u.domain))
+            .filter(|u| {
+                min_transaction_time_micros
+                    .map(|min_ts| u.transaction_time.timestamp_micros() >= min_ts)
+                    .unwrap_or(true)
+            })
             .collect();
         results.sort_by(|a, b| b.transaction_time.cmp(&a.transaction_time));
         results.truncate(limit);
@@ -6198,6 +6696,10 @@ impl MemoroseEngine {
                 .get_rac_metric_counter("correction_action_ignore_total")?,
             tombstone_total: self.get_rac_metric_counter("tombstone_total")?,
         })
+    }
+
+    pub fn get_text_index_metric_snapshot(&self) -> TextIndexMetricSnapshot {
+        self.index.metrics_snapshot()
     }
 
     pub fn get_rac_metric_history(&self, hours: usize) -> Result<Vec<RacMetricHistoryPoint>> {
@@ -10506,6 +11008,81 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn test_reflect_on_user_window_batches_across_streams() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let older_stream_id = Uuid::new_v4();
+        let newer_stream_id = Uuid::new_v4();
+        let now = Utc::now();
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true)
+            .await?
+            .with_arbitrator(crate::arbitrator::Arbitrator::with_client(Arc::new(
+                MockCorrectionLLM {
+                    response: format!(
+                        r#"[{{"summary":"Cross-stream topic","source_ids":["{}","{}"]}}]"#,
+                        Uuid::from_u128(21),
+                        Uuid::from_u128(22)
+                    ),
+                },
+            )));
+
+        let mut older = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            older_stream_id,
+            memorose_common::MemoryType::Factual,
+            "I live in Beijing".into(),
+            None,
+        );
+        older.id = Uuid::from_u128(21);
+        older.transaction_time = now - chrono::Duration::seconds(10);
+
+        let mut newer = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            newer_stream_id,
+            memorose_common::MemoryType::Factual,
+            "My office is in Chaoyang".into(),
+            None,
+        );
+        newer.id = Uuid::from_u128(22);
+        newer.transaction_time = now;
+
+        engine
+            .store_memory_units(vec![older.clone(), newer.clone()])
+            .await?;
+        let created_topics = engine.reflect_on_user_window(TEST_USER, 10).await?;
+        assert_eq!(created_topics, 1);
+
+        let prefix = format!("u:{}:unit:", TEST_USER);
+        let kv = engine._kv.clone();
+        let prefix_bytes = prefix.into_bytes();
+        let all_units: Vec<(Vec<u8>, Vec<u8>)> =
+            tokio::task::spawn_blocking(move || kv.scan(&prefix_bytes)).await??;
+
+        let l2s: Vec<MemoryUnit> = all_units
+            .into_iter()
+            .filter_map(|(_, v)| serde_json::from_slice::<MemoryUnit>(&v).ok())
+            .filter(|unit| unit.level == 2)
+            .collect();
+        assert_eq!(l2s.len(), 1);
+        assert_eq!(l2s[0].content, "Cross-stream topic");
+        assert_eq!(l2s[0].stream_id, newer_stream_id);
+        assert_eq!(l2s[0].embedding.as_deref(), Some(&[0.0, 0.0, 0.0][..]));
+
+        let outgoing = engine
+            .graph()
+            .get_outgoing_edges(TEST_USER, l2s[0].id)
+            .await?;
+        assert_eq!(outgoing.len(), 2);
+        assert!(outgoing.iter().any(|edge| edge.target_id == older.id));
+        assert!(outgoing.iter().any(|edge| edge.target_id == newer.id));
+
+        Ok(())
+    }
+
     #[test]
     fn test_reflection_and_community_markers_roundtrip() -> Result<()> {
         let temp_dir = tempdir()?;
@@ -10538,6 +11115,56 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_reflection_marker_accumulates_pending_units_and_tokens() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let rt = tokio::runtime::Runtime::new()?;
+        let engine = rt.block_on(MemoroseEngine::new_with_default_threshold(
+            temp_dir.path(),
+            1000,
+            true,
+            true,
+        ))?;
+
+        engine.bump_reflection_marker("alice", 2, 120)?;
+        engine.bump_reflection_marker("alice", 3, 80)?;
+
+        let markers = engine.get_pending_reflection_markers()?;
+        let alice = markers
+            .into_iter()
+            .find(|(user_id, _)| user_id == "alice")
+            .expect("alice marker should exist");
+        assert_eq!(alice.1.pending_units, 5);
+        assert_eq!(alice.1.pending_tokens, 200);
+        assert_eq!(alice.1.first_event_tx_micros, 0);
+        assert_eq!(alice.1.last_event_tx_micros, 0);
+        assert!(alice.1.last_event_at_ts >= alice.1.first_event_at_ts);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_store_l2_units_does_not_schedule_reflection() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+
+        let mut unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "Derived topic".into(),
+            None,
+        );
+        unit.level = 2;
+
+        engine.store_memory_units(vec![unit]).await?;
+
+        assert!(engine.get_pending_reflections()?.is_empty());
+        Ok(())
+    }
+
     #[tokio::test]
     async fn test_ingest_event_directly_rejects_empty_variants() -> Result<()> {
         let temp_dir = tempdir()?;
@@ -10562,6 +11189,137 @@ mod tests {
                 .to_string();
             assert!(err.contains("Rejected empty event"));
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_ingest_events_directly_batches_pending_writes() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+        let event_a = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            EventContent::Text("alpha".into()),
+        );
+        let event_b = Event::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            EventContent::Text("beta".into()),
+        );
+
+        engine
+            .ingest_events_directly(vec![event_a.clone(), event_b.clone()])
+            .await?;
+
+        assert_eq!(engine.count_pending_events().await?, 2);
+        let pending = engine.fetch_pending_events_limited(10).await?;
+        assert_eq!(pending.len(), 2);
+        assert!(pending.iter().any(|event| event.id == event_a.id));
+        assert!(pending.iter().any(|event| event.id == event_b.id));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_fetch_recent_l1_units_returns_top_k_without_full_scan_order_loss() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut older = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "older".into(),
+            None,
+        );
+        older.transaction_time = Utc::now() - chrono::Duration::minutes(10);
+
+        let mut newest = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "newest".into(),
+            None,
+        );
+        newest.transaction_time = Utc::now();
+
+        let mut middle = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "middle".into(),
+            None,
+        );
+        middle.transaction_time = Utc::now() - chrono::Duration::minutes(3);
+
+        let newest_id = newest.id;
+        let middle_id = middle.id;
+
+        engine
+            .store_memory_units(vec![older, newest, middle])
+            .await?;
+
+        let recent = engine.fetch_recent_l1_units(TEST_USER, 2).await?;
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0].id, newest_id);
+        assert_eq!(recent[1].id, middle_id);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_fetch_recent_l1_units_since_filters_to_incremental_window() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut older = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "older".into(),
+            None,
+        );
+        older.transaction_time = Utc::now() - chrono::Duration::minutes(10);
+
+        let mut newer = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "newer".into(),
+            None,
+        );
+        newer.transaction_time = Utc::now();
+
+        let newer_id = newer.id;
+        let min_tx_micros = newer.transaction_time.timestamp_micros();
+
+        engine.store_memory_units(vec![older, newer]).await?;
+
+        let recent = engine
+            .fetch_recent_l1_units_since(TEST_USER, min_tx_micros, 10)
+            .await?;
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].id, newer_id);
+
         Ok(())
     }
 
@@ -13420,5 +14178,114 @@ mod tests {
 
         assert_eq!(budgeted.len(), 1);
         assert_eq!(budgeted[0].0.id, small.id);
+    }
+}
+
+#[cfg(test)]
+mod missing_coverage_tests {
+    use super::*;
+
+    #[test]
+    fn test_rac_metric_history_point_merge() {
+        let mut p1 = RacMetricHistoryPoint {
+            bucket_start: "100".into(),
+            fact_extraction_attempt_total: 1,
+            fact_extraction_success_total: 2,
+            correction_action_obsolete_total: 3,
+            correction_action_contradicts_total: 4,
+            correction_action_reaffirm_total: 5,
+            correction_action_ignore_total: 6,
+            tombstone_total: 7,
+        };
+        let p2 = RacMetricHistoryPoint {
+            bucket_start: "200".into(),
+            fact_extraction_attempt_total: 10,
+            fact_extraction_success_total: 20,
+            correction_action_obsolete_total: 30,
+            correction_action_contradicts_total: 40,
+            correction_action_reaffirm_total: 50,
+            correction_action_ignore_total: 60,
+            tombstone_total: 70,
+        };
+        p1.merge(&p2);
+        assert_eq!(p1.fact_extraction_attempt_total, 11);
+        assert_eq!(p1.fact_extraction_success_total, 22);
+        assert_eq!(p1.correction_action_obsolete_total, 33);
+        assert_eq!(p1.correction_action_contradicts_total, 44);
+        assert_eq!(p1.correction_action_reaffirm_total, 55);
+        assert_eq!(p1.correction_action_ignore_total, 66);
+        assert_eq!(p1.tombstone_total, 77);
+    }
+
+    #[test]
+    fn test_matches_valid_time_filter() {
+        use chrono::TimeZone;
+        let t1 = Utc.timestamp_opt(1000, 0).unwrap();
+        let t2 = Utc.timestamp_opt(2000, 0).unwrap();
+        let t3 = Utc.timestamp_opt(3000, 0).unwrap();
+
+        // No range
+        assert!(MemoroseEngine::matches_valid_time_filter(Some(t2), None));
+
+        // No valid_time but range exists
+        let range = TimeRange {
+            start: Some(t1),
+            end: Some(t3),
+        };
+        assert!(!MemoroseEngine::matches_valid_time_filter(
+            None,
+            Some(&range)
+        ));
+
+        // valid_time < start
+        assert!(!MemoroseEngine::matches_valid_time_filter(
+            Some(t1 - chrono::Duration::seconds(1)),
+            Some(&range)
+        ));
+
+        // valid_time > end
+        assert!(!MemoroseEngine::matches_valid_time_filter(
+            Some(t3 + chrono::Duration::seconds(1)),
+            Some(&range)
+        ));
+
+        // Inside range
+        assert!(MemoroseEngine::matches_valid_time_filter(
+            Some(t2),
+            Some(&range)
+        ));
+    }
+
+    #[test]
+    fn test_memory_unit_token_cost() {
+        let mut unit = MemoryUnit::new(
+            None,
+            "user".into(),
+            None,
+            uuid::Uuid::new_v4(),
+            memorose_common::MemoryType::Factual,
+            "Hello world".into(),
+            None,
+        );
+        unit.keywords = vec!["keyword1".into(), "keyword2".into()];
+        unit.assets.push(memorose_common::Asset {
+            asset_type: "image".into(),
+            storage_key: "http://example.com/image.png".into(),
+            original_name: "image.png".into(),
+            description: Some("A nice image".into()),
+            metadata: std::collections::HashMap::new(),
+        });
+
+        let cost = MemoroseEngine::memory_unit_token_cost(&unit);
+        assert!(cost > 0);
+    }
+
+    #[tokio::test]
+    async fn test_memorose_engine_new_helper() {
+        let temp = tempfile::tempdir().unwrap();
+        let engine = MemoroseEngine::new(temp.path(), 1000, false, false, 0.5, 128)
+            .await
+            .unwrap();
+        assert_eq!(engine.auto_planner, false);
     }
 }

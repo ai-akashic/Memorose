@@ -65,8 +65,37 @@
     "pipeline": {
       "title": "Pipeline"
     },
+    "runtime": {
+      "title": "Runtime Mode",
+      "standalone": "Standalone",
+      "cluster": "Cluster",
+      "standaloneDesc": "This node runs in standalone mode. Writes go straight to the local engine and bypass the Raft consensus path.",
+      "clusterDesc": "This node runs in cluster mode. Writes go through leader routing and the Raft consensus path."
+    },
+    "textIndex": {
+      "title": "Text Index",
+      "shard": "Shard {shard} Text Index",
+      "dirtyDocs": "Dirty Docs",
+      "dirtyBytes": "Dirty Bytes",
+      "avgCommitLatency": "Avg Commit Latency",
+      "overlayHitRate": "Overlay Hit Rate",
+      "overlayDocs": "Overlay Docs",
+      "overlayBytes": "Overlay Bytes",
+      "commitTotal": "Commit Total",
+      "busySkips": "Busy Skips"
+    },
     "node": {
       "self": "Self"
+    },
+    "insight": {
+      "title": "Insight Reflection",
+      "interval": "Interval",
+      "minL1": "Min Pending L1",
+      "minTokens": "Min Pending Tokens",
+      "maxDelay": "Max Delay",
+      "batchTokens": "Batch Tokens",
+      "batchL1": "Batch L1",
+      "batchCycles": "Batches / Cycle"
     }
   },
   "Memories": {
@@ -458,6 +487,15 @@
       "snapshot": "Snapshot",
       "logs": "logs"
     },
+    "insight": {
+      "interval": "Insight Interval",
+      "minL1": "Min Pending L1",
+      "minTokens": "Min Pending Tokens",
+      "maxDelay": "Max Delay",
+      "batchTokens": "Batch Tokens",
+      "batchL1": "Batch L1",
+      "batchCycles": "Batches / Cycle"
+    },
     "domainMix": {
       "title": "Domain Mix",
       "agent": "Agent",
@@ -471,6 +509,31 @@
       "localL2": "Local L2",
       "sharedL1": "Shared L1",
       "sharedL2": "Shared L2"
+    },
+    "runtime": {
+      "title": "Runtime Mode",
+      "standalone": "Standalone",
+      "cluster": "Cluster",
+      "standaloneDesc": "This node runs in standalone mode. Writes go straight to the local engine and bypass the Raft consensus path.",
+      "clusterDesc": "This node runs in cluster mode. Writes go through leader routing and the Raft consensus path."
+    },
+    "textIndex": {
+      "dirtyDocs": "Dirty Docs",
+      "dirtyBytes": "Dirty Bytes",
+      "avgCommitLatency": "Avg Commit Latency",
+      "overlayHitRate": "Overlay Hit Rate",
+      "writePathTitle": "Text Index Write Path",
+      "commitTotal": "Commit Total",
+      "commitSeq": "Commit Seq",
+      "busySkips": "Busy Skips",
+      "commitLatencyTotal": "Commit Latency Total",
+      "overlayTitle": "Recent Overlay",
+      "overlayDocs": "Overlay Docs",
+      "overlayBytes": "Overlay Bytes",
+      "overlayHits": "Overlay Hits",
+      "overlayMisses": "Overlay Misses",
+      "overlayMerges": "Overlay Merges",
+      "overlayEvictions": "Overlay Evictions"
     },
     "rac": {
       "actionsTitle": "RAC Actions",

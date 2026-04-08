@@ -36,6 +36,7 @@ struct StoredSnapshot {
 pub struct MemoroseRaftStorage {
     engine: Arc<RwLock<Option<MemoroseEngine>>>,
     current_snapshot: Arc<Mutex<Option<StoredSnapshot>>>,
+    storage_config: memorose_common::config::StorageConfig,
     commit_interval_ms: u64,
     auto_planner: bool,
     task_reflection: bool,
@@ -45,12 +46,14 @@ pub struct MemoroseRaftStorage {
 impl MemoroseRaftStorage {
     pub fn new(engine: MemoroseEngine) -> Self {
         let commit_interval_ms = engine.commit_interval_ms();
+        let storage_config = engine.storage_config().clone();
         let auto_planner = engine.auto_planner();
         let task_reflection = engine.task_reflection();
         let auto_link_similarity_threshold = engine.auto_link_similarity_threshold;
         Self {
             engine: Arc::new(RwLock::new(Some(engine))),
             current_snapshot: Arc::new(Mutex::new(None)),
+            storage_config,
             commit_interval_ms,
             auto_planner,
             task_reflection,
@@ -558,6 +561,16 @@ impl RaftStorage<MemoroseTypeConfig> for MemoroseRaftStorage {
                         };
                         responses.push(crate::raft::types::ClientResponse { success });
                     }
+                    crate::raft::types::ClientRequest::IngestEvents(events) => {
+                        let success = match engine.ingest_events_directly(events.clone()).await {
+                            Ok(_) => true,
+                            Err(e) => {
+                                tracing::error!("Failed to apply batched events: {:?}", e);
+                                false
+                            }
+                        };
+                        responses.push(crate::raft::types::ClientResponse { success });
+                    }
                     crate::raft::types::ClientRequest::UpdateGraph(edge) => {
                         let success = match engine.graph().add_edge(&edge).await {
                             Ok(_) => true,
@@ -727,9 +740,12 @@ impl RaftStorage<MemoroseTypeConfig> for MemoroseRaftStorage {
             .ok()
             .map(|c| c.llm.embedding_dim)
             .unwrap_or(768);
-        let new_engine = MemoroseEngine::new(
+        let mut storage_config = self.storage_config.clone();
+        storage_config.index_commit_interval_ms = self.commit_interval_ms;
+        storage_config.index_commit_max_interval_ms = self.commit_interval_ms.max(1);
+        let new_engine = MemoroseEngine::new_with_storage_config(
             &root_path,
-            self.commit_interval_ms,
+            storage_config,
             self.auto_planner,
             self.task_reflection,
             self.auto_link_similarity_threshold,

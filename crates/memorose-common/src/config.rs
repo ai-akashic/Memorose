@@ -4,6 +4,16 @@ use std::env;
 
 // --- Constants for Default Configuration ---
 pub const DEFAULT_STORAGE_COMMIT_INTERVAL_MS: u64 = 5000;
+pub const DEFAULT_STORAGE_COMMIT_MIN_INTERVAL_MS: u64 = 5000;
+pub const DEFAULT_STORAGE_COMMIT_MAX_INTERVAL_MS: u64 = 30000;
+pub const DEFAULT_STORAGE_COMMIT_DOCS_THRESHOLD: usize = 2000;
+pub const DEFAULT_STORAGE_COMMIT_BYTES_THRESHOLD: u64 = 32_000_000;
+pub const DEFAULT_STORAGE_RECENT_OVERLAY_ENABLED: bool = true;
+pub const DEFAULT_STORAGE_RECENT_OVERLAY_TTL_SECS: u64 = 120;
+pub const DEFAULT_STORAGE_RECENT_OVERLAY_PER_USER_MAX_DOCS: usize = 1000;
+pub const DEFAULT_STORAGE_RECENT_OVERLAY_PER_USER_MAX_BYTES: usize = 8_388_608;
+pub const DEFAULT_STORAGE_RECENT_OVERLAY_GLOBAL_MAX_BYTES: usize = 134_217_728;
+pub const DEFAULT_STORAGE_RECENT_OVERLAY_QUERY_LIMIT: usize = 200;
 
 pub const DEFAULT_RAFT_HEARTBEAT_INTERVAL_MS: u64 = 500;
 pub const DEFAULT_RAFT_ELECTION_TIMEOUT_MIN_MS: u64 = 1500;
@@ -29,6 +39,12 @@ pub const DEFAULT_WORKER_COMMUNITY_MAX_GROUPS_PER_USER: usize = 100000;
 pub const DEFAULT_COMMUNITY_TRIGGER_L1_STEP: usize = 5;
 pub const DEFAULT_WORKER_INSIGHT_INTERVAL_MS: u64 = 30000;
 pub const DEFAULT_WORKER_INSIGHT_RECENT_L1_LIMIT: usize = 20;
+pub const DEFAULT_WORKER_INSIGHT_MIN_PENDING_TOKENS: usize = 2000;
+pub const DEFAULT_WORKER_INSIGHT_MIN_PENDING_L1: usize = 8;
+pub const DEFAULT_WORKER_INSIGHT_MAX_DELAY_MS: u64 = 21_600_000;
+pub const DEFAULT_WORKER_INSIGHT_BATCH_TARGET_TOKENS: usize = 4096;
+pub const DEFAULT_WORKER_INSIGHT_MAX_L1_PER_BATCH: usize = 32;
+pub const DEFAULT_WORKER_INSIGHT_MAX_BATCHES_PER_CYCLE: usize = 4;
 pub const DEFAULT_AUTO_LINK_SIMILARITY_THRESHOLD: f32 = 0.6;
 pub const DEFAULT_WORKER_TICK_INTERVAL_MS: u64 = 100;
 
@@ -77,10 +93,70 @@ pub struct StorageConfig {
     pub root_dir: String,
     #[serde(default = "default_commit_interval")]
     pub index_commit_interval_ms: u64,
+    #[serde(default = "default_commit_min_interval")]
+    pub index_commit_min_interval_ms: u64,
+    #[serde(default = "default_commit_max_interval")]
+    pub index_commit_max_interval_ms: u64,
+    #[serde(default = "default_commit_docs_threshold")]
+    pub index_commit_docs_threshold: usize,
+    #[serde(default = "default_commit_bytes_threshold")]
+    pub index_commit_bytes_threshold: u64,
+    #[serde(default = "default_recent_overlay_enabled")]
+    pub recent_overlay_enabled: bool,
+    #[serde(default = "default_recent_overlay_ttl_secs")]
+    pub recent_overlay_ttl_secs: u64,
+    #[serde(default = "default_recent_overlay_per_user_max_docs")]
+    pub recent_overlay_per_user_max_docs: usize,
+    #[serde(default = "default_recent_overlay_per_user_max_bytes")]
+    pub recent_overlay_per_user_max_bytes: usize,
+    #[serde(default = "default_recent_overlay_global_max_bytes")]
+    pub recent_overlay_global_max_bytes: usize,
+    #[serde(default = "default_recent_overlay_query_limit")]
+    pub recent_overlay_query_limit: usize,
 }
 
 fn default_commit_interval() -> u64 {
     DEFAULT_STORAGE_COMMIT_INTERVAL_MS
+}
+
+fn default_commit_min_interval() -> u64 {
+    DEFAULT_STORAGE_COMMIT_MIN_INTERVAL_MS
+}
+
+fn default_commit_max_interval() -> u64 {
+    DEFAULT_STORAGE_COMMIT_MAX_INTERVAL_MS
+}
+
+fn default_commit_docs_threshold() -> usize {
+    DEFAULT_STORAGE_COMMIT_DOCS_THRESHOLD
+}
+
+fn default_commit_bytes_threshold() -> u64 {
+    DEFAULT_STORAGE_COMMIT_BYTES_THRESHOLD
+}
+
+fn default_recent_overlay_enabled() -> bool {
+    DEFAULT_STORAGE_RECENT_OVERLAY_ENABLED
+}
+
+fn default_recent_overlay_ttl_secs() -> u64 {
+    DEFAULT_STORAGE_RECENT_OVERLAY_TTL_SECS
+}
+
+fn default_recent_overlay_per_user_max_docs() -> usize {
+    DEFAULT_STORAGE_RECENT_OVERLAY_PER_USER_MAX_DOCS
+}
+
+fn default_recent_overlay_per_user_max_bytes() -> usize {
+    DEFAULT_STORAGE_RECENT_OVERLAY_PER_USER_MAX_BYTES
+}
+
+fn default_recent_overlay_global_max_bytes() -> usize {
+    DEFAULT_STORAGE_RECENT_OVERLAY_GLOBAL_MAX_BYTES
+}
+
+fn default_recent_overlay_query_limit() -> usize {
+    DEFAULT_STORAGE_RECENT_OVERLAY_QUERY_LIMIT
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,6 +198,12 @@ pub struct WorkerConfig {
     pub community_trigger_l1_step: usize,
     pub insight_interval_ms: u64,
     pub insight_recent_l1_limit: usize,
+    pub insight_min_pending_tokens: usize,
+    pub insight_min_pending_l1: usize,
+    pub insight_max_delay_ms: u64,
+    pub insight_batch_target_tokens: usize,
+    pub insight_max_l1_per_batch: usize,
+    pub insight_max_batches_per_cycle: usize,
     pub enable_auto_planner: bool,
     pub enable_task_reflection: bool,
     pub auto_link_similarity_threshold: f32,
@@ -221,6 +303,16 @@ impl Default for StorageConfig {
         Self {
             root_dir: "./data".into(),
             index_commit_interval_ms: DEFAULT_STORAGE_COMMIT_INTERVAL_MS,
+            index_commit_min_interval_ms: DEFAULT_STORAGE_COMMIT_MIN_INTERVAL_MS,
+            index_commit_max_interval_ms: DEFAULT_STORAGE_COMMIT_MAX_INTERVAL_MS,
+            index_commit_docs_threshold: DEFAULT_STORAGE_COMMIT_DOCS_THRESHOLD,
+            index_commit_bytes_threshold: DEFAULT_STORAGE_COMMIT_BYTES_THRESHOLD,
+            recent_overlay_enabled: DEFAULT_STORAGE_RECENT_OVERLAY_ENABLED,
+            recent_overlay_ttl_secs: DEFAULT_STORAGE_RECENT_OVERLAY_TTL_SECS,
+            recent_overlay_per_user_max_docs: DEFAULT_STORAGE_RECENT_OVERLAY_PER_USER_MAX_DOCS,
+            recent_overlay_per_user_max_bytes: DEFAULT_STORAGE_RECENT_OVERLAY_PER_USER_MAX_BYTES,
+            recent_overlay_global_max_bytes: DEFAULT_STORAGE_RECENT_OVERLAY_GLOBAL_MAX_BYTES,
+            recent_overlay_query_limit: DEFAULT_STORAGE_RECENT_OVERLAY_QUERY_LIMIT,
         }
     }
 }
@@ -262,6 +354,12 @@ impl Default for WorkerConfig {
             community_trigger_l1_step: DEFAULT_COMMUNITY_TRIGGER_L1_STEP,
             insight_interval_ms: DEFAULT_WORKER_INSIGHT_INTERVAL_MS,
             insight_recent_l1_limit: DEFAULT_WORKER_INSIGHT_RECENT_L1_LIMIT,
+            insight_min_pending_tokens: DEFAULT_WORKER_INSIGHT_MIN_PENDING_TOKENS,
+            insight_min_pending_l1: DEFAULT_WORKER_INSIGHT_MIN_PENDING_L1,
+            insight_max_delay_ms: DEFAULT_WORKER_INSIGHT_MAX_DELAY_MS,
+            insight_batch_target_tokens: DEFAULT_WORKER_INSIGHT_BATCH_TARGET_TOKENS,
+            insight_max_l1_per_batch: DEFAULT_WORKER_INSIGHT_MAX_L1_PER_BATCH,
+            insight_max_batches_per_cycle: DEFAULT_WORKER_INSIGHT_MAX_BATCHES_PER_CYCLE,
             enable_auto_planner: true,
             enable_task_reflection: true,
             auto_link_similarity_threshold: DEFAULT_AUTO_LINK_SIMILARITY_THRESHOLD,
@@ -293,6 +391,46 @@ impl AppConfig {
             .set_default(
                 "storage.index_commit_interval_ms",
                 DEFAULT_STORAGE_COMMIT_INTERVAL_MS,
+            )?
+            .set_default(
+                "storage.index_commit_min_interval_ms",
+                DEFAULT_STORAGE_COMMIT_MIN_INTERVAL_MS,
+            )?
+            .set_default(
+                "storage.index_commit_max_interval_ms",
+                DEFAULT_STORAGE_COMMIT_MAX_INTERVAL_MS,
+            )?
+            .set_default(
+                "storage.index_commit_docs_threshold",
+                DEFAULT_STORAGE_COMMIT_DOCS_THRESHOLD as i64,
+            )?
+            .set_default(
+                "storage.index_commit_bytes_threshold",
+                DEFAULT_STORAGE_COMMIT_BYTES_THRESHOLD as i64,
+            )?
+            .set_default(
+                "storage.recent_overlay_enabled",
+                DEFAULT_STORAGE_RECENT_OVERLAY_ENABLED,
+            )?
+            .set_default(
+                "storage.recent_overlay_ttl_secs",
+                DEFAULT_STORAGE_RECENT_OVERLAY_TTL_SECS,
+            )?
+            .set_default(
+                "storage.recent_overlay_per_user_max_docs",
+                DEFAULT_STORAGE_RECENT_OVERLAY_PER_USER_MAX_DOCS as i64,
+            )?
+            .set_default(
+                "storage.recent_overlay_per_user_max_bytes",
+                DEFAULT_STORAGE_RECENT_OVERLAY_PER_USER_MAX_BYTES as i64,
+            )?
+            .set_default(
+                "storage.recent_overlay_global_max_bytes",
+                DEFAULT_STORAGE_RECENT_OVERLAY_GLOBAL_MAX_BYTES as i64,
+            )?
+            .set_default(
+                "storage.recent_overlay_query_limit",
+                DEFAULT_STORAGE_RECENT_OVERLAY_QUERY_LIMIT as i64,
             )?
             .set_default("llm.provider", "gemini")?
             .set_default("llm.model", "")?
@@ -385,6 +523,30 @@ impl AppConfig {
             .set_default(
                 "worker.insight_recent_l1_limit",
                 DEFAULT_WORKER_INSIGHT_RECENT_L1_LIMIT as i64,
+            )?
+            .set_default(
+                "worker.insight_min_pending_tokens",
+                DEFAULT_WORKER_INSIGHT_MIN_PENDING_TOKENS as i64,
+            )?
+            .set_default(
+                "worker.insight_min_pending_l1",
+                DEFAULT_WORKER_INSIGHT_MIN_PENDING_L1 as i64,
+            )?
+            .set_default(
+                "worker.insight_max_delay_ms",
+                DEFAULT_WORKER_INSIGHT_MAX_DELAY_MS,
+            )?
+            .set_default(
+                "worker.insight_batch_target_tokens",
+                DEFAULT_WORKER_INSIGHT_BATCH_TARGET_TOKENS as i64,
+            )?
+            .set_default(
+                "worker.insight_max_l1_per_batch",
+                DEFAULT_WORKER_INSIGHT_MAX_L1_PER_BATCH as i64,
+            )?
+            .set_default(
+                "worker.insight_max_batches_per_cycle",
+                DEFAULT_WORKER_INSIGHT_MAX_BATCHES_PER_CYCLE as i64,
             )?
             .set_default("worker.enable_auto_planner", true)?
             .set_default("worker.enable_task_reflection", true)?
@@ -484,6 +646,16 @@ impl AppConfig {
             .map_or(1, |s| s.nodes.len().max(1) as u32)
     }
 
+    /// Returns true when startup topology implies distributed/cluster operation.
+    pub fn is_cluster_mode(&self) -> bool {
+        self.is_sharded() || self.cluster_node_count() > 1
+    }
+
+    /// Returns true when startup topology implies single-node standalone operation.
+    pub fn is_standalone_mode(&self) -> bool {
+        !self.is_cluster_mode()
+    }
+
     /// Returns true when this node is the configured bootstrap seed node.
     ///
     /// When no explicit seed is configured, only a single-node topology is
@@ -517,6 +689,8 @@ mod tests {
     fn test_single_node_topology_auto_bootstraps_by_default() {
         let config = AppConfig::default();
         assert_eq!(config.cluster_node_count(), 1);
+        assert!(config.is_standalone_mode());
+        assert!(!config.is_cluster_mode());
         assert!(config.is_bootstrap_seed_node());
         assert!(config.should_auto_initialize_raft());
         assert!(!config.needs_explicit_bootstrap_seed());
@@ -544,6 +718,8 @@ mod tests {
         });
 
         assert_eq!(config.cluster_node_count(), 2);
+        assert!(config.is_cluster_mode());
+        assert!(!config.is_standalone_mode());
         assert!(!config.is_bootstrap_seed_node());
         assert!(!config.should_auto_initialize_raft());
         assert!(config.needs_explicit_bootstrap_seed());
@@ -598,7 +774,10 @@ mod tests {
         assert_eq!(config.get_active_key(), Some("gemini_key".to_string()));
         assert_eq!(config.get_model_name(), "gemini-model");
         assert_eq!(config.get_embedding_model_name(), "gemini-embed");
-        assert_eq!(config.get_base_url(), Some("https://generativelanguage.googleapis.com/v1beta/openai/".to_string()));
+        assert_eq!(
+            config.get_base_url(),
+            Some("https://generativelanguage.googleapis.com/v1beta/openai/".to_string())
+        );
 
         config.llm.provider = LLMProvider::OpenAI;
         config.llm.openai_api_key = Some("openai_key".to_string());
@@ -622,5 +801,151 @@ mod tests {
         config.sharding.as_mut().unwrap().shard_count = 2;
         assert!(config.is_sharded());
         assert_eq!(config.shard_count(), 2);
+    }
+
+    #[test]
+    fn test_llm_config_get_base_url() {
+        let mut config = LLMConfig {
+            provider: LLMProvider::OpenAI,
+            openai_api_key: None,
+            google_api_key: None,
+            model: "".into(),
+            base_url: None,
+            embedding_model: "".into(),
+            embedding_dim: 128,
+            embedding_output_dim: None,
+            embedding_task_type: None,
+            stt_provider: None,
+            stt_model: None,
+        };
+        assert_eq!(
+            config.get_base_url(),
+            Some("https://api.openai.com/v1".to_string())
+        );
+
+        config.provider = LLMProvider::Gemini;
+        assert_eq!(
+            config.get_base_url(),
+            Some("https://generativelanguage.googleapis.com".to_string())
+        );
+
+        config.base_url = Some("http://localhost:8080".into());
+        assert_eq!(
+            config.get_base_url(),
+            Some("http://localhost:8080".to_string())
+        );
+    }
+
+    #[test]
+    fn test_storage_config_defaults() {
+        assert_eq!(
+            default_commit_interval(),
+            DEFAULT_STORAGE_COMMIT_INTERVAL_MS
+        );
+        assert_eq!(
+            default_commit_min_interval(),
+            DEFAULT_STORAGE_COMMIT_MIN_INTERVAL_MS
+        );
+        assert_eq!(
+            default_commit_max_interval(),
+            DEFAULT_STORAGE_COMMIT_MAX_INTERVAL_MS
+        );
+        assert_eq!(
+            default_commit_docs_threshold(),
+            DEFAULT_STORAGE_COMMIT_DOCS_THRESHOLD
+        );
+        assert_eq!(
+            default_commit_bytes_threshold(),
+            DEFAULT_STORAGE_COMMIT_BYTES_THRESHOLD
+        );
+        assert_eq!(
+            default_recent_overlay_enabled(),
+            DEFAULT_STORAGE_RECENT_OVERLAY_ENABLED
+        );
+        assert_eq!(
+            default_recent_overlay_ttl_secs(),
+            DEFAULT_STORAGE_RECENT_OVERLAY_TTL_SECS
+        );
+        assert_eq!(
+            default_recent_overlay_per_user_max_docs(),
+            DEFAULT_STORAGE_RECENT_OVERLAY_PER_USER_MAX_DOCS
+        );
+        assert_eq!(
+            default_recent_overlay_per_user_max_bytes(),
+            DEFAULT_STORAGE_RECENT_OVERLAY_PER_USER_MAX_BYTES
+        );
+        assert_eq!(
+            default_recent_overlay_global_max_bytes(),
+            DEFAULT_STORAGE_RECENT_OVERLAY_GLOBAL_MAX_BYTES
+        );
+        assert_eq!(
+            default_recent_overlay_query_limit(),
+            DEFAULT_STORAGE_RECENT_OVERLAY_QUERY_LIMIT
+        );
+    }
+
+    #[test]
+    fn test_more_config_defaults() {
+        assert_eq!(default_auto_initialize(), true);
+        assert_eq!(default_shard_count(), 1);
+        assert_eq!(default_physical_node_id(), 1);
+    }
+
+    #[test]
+    fn test_app_config_accessors() {
+        let mut config = AppConfig::default();
+        config.llm.provider = LLMProvider::Gemini;
+        config.llm.google_api_key = Some("gemini-key".into());
+        config.llm.model = "gemini-model".into();
+        config.llm.embedding_model = "gemini-embedding".into();
+
+        assert_eq!(config.get_active_key(), Some("gemini-key".into()));
+        assert_eq!(config.get_model_name(), "gemini-model");
+        assert_eq!(config.get_embedding_model_name(), "gemini-embedding");
+        assert_eq!(
+            config.get_base_url(),
+            Some("https://generativelanguage.googleapis.com/v1beta/openai/".into())
+        );
+
+        config.llm.provider = LLMProvider::OpenAI;
+        config.llm.openai_api_key = Some("openai-key".into());
+        assert_eq!(config.get_active_key(), Some("openai-key".into()));
+        assert_eq!(config.get_base_url(), None);
+    }
+
+    #[test]
+    fn test_sharding_accessors() {
+        let mut config = AppConfig::default();
+        config.raft.node_id = 42;
+
+        assert_eq!(config.is_sharded(), false);
+        assert_eq!(config.shard_count(), 1);
+        assert_eq!(config.physical_node_id(), 42);
+        assert_eq!(config.cluster_node_count(), 1);
+        assert_eq!(config.is_cluster_mode(), false);
+
+        config.sharding = Some(ShardingConfig {
+            enabled: true,
+            shard_count: 5,
+            physical_node_id: 10,
+            nodes: vec![
+                ShardNodeConfig {
+                    id: 1,
+                    http_addr: "".into(),
+                    raft_base_port: 0,
+                },
+                ShardNodeConfig {
+                    id: 2,
+                    http_addr: "".into(),
+                    raft_base_port: 0,
+                },
+            ],
+        });
+
+        assert_eq!(config.is_sharded(), true);
+        assert_eq!(config.shard_count(), 5);
+        assert_eq!(config.physical_node_id(), 10);
+        assert_eq!(config.cluster_node_count(), 2);
+        assert_eq!(config.is_cluster_mode(), true);
     }
 }

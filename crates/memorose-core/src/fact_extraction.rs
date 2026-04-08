@@ -959,18 +959,20 @@ fn normalize_memory_clause(content: &str) -> String {
 
     loop {
         let lowered = normalized.to_ascii_lowercase();
-        let lowered_marker = leading_noise_markers_lowered().into_iter().find_map(|marker| {
-            let compact = marker.trim_end();
-            if lowered.starts_with(marker) {
-                Some(marker.len())
-            } else if lowered.starts_with(compact) {
-                let rest = normalized[compact.len()..].chars().next();
-                rest.filter(|ch| matches!(ch, ',' | '，' | ':' | '：' | '-' | ' ' | '!' | '！'))
-                    .map(|_| compact.len())
-            } else {
-                None
-            }
-        });
+        let lowered_marker = leading_noise_markers_lowered()
+            .into_iter()
+            .find_map(|marker| {
+                let compact = marker.trim_end();
+                if lowered.starts_with(marker) {
+                    Some(marker.len())
+                } else if lowered.starts_with(compact) {
+                    let rest = normalized[compact.len()..].chars().next();
+                    rest.filter(|ch| matches!(ch, ',' | '，' | ':' | '：' | '-' | ' ' | '!' | '！'))
+                        .map(|_| compact.len())
+                } else {
+                    None
+                }
+            });
         let raw_marker = leading_noise_markers_raw().into_iter().find_map(|marker| {
             if normalized.starts_with(marker) {
                 Some(marker.len())
@@ -1246,7 +1248,9 @@ fn subject_descriptor_from_candidate(
 ) -> Option<(MemoryFactSubject, String)> {
     let candidate = candidate
         .trim()
-        .trim_matches(|ch: char| !ch.is_alphanumeric() && !is_cjk_char(ch) && ch != '\'' && ch != '-')
+        .trim_matches(|ch: char| {
+            !ch.is_alphanumeric() && !is_cjk_char(ch) && ch != '\'' && ch != '-'
+        })
         .trim();
     if candidate.is_empty() || looks_like_non_entity_subject(candidate) {
         return None;
@@ -1275,7 +1279,10 @@ fn subject_descriptor_from_candidate(
             .as_deref()
             .and_then(normalize_subject_key_fragment)
             .unwrap_or_else(|| "self".to_string());
-        return Some((MemoryFactSubject::Organization, format!("organization:{org_key}")));
+        return Some((
+            MemoryFactSubject::Organization,
+            format!("organization:{org_key}"),
+        ));
     }
 
     if lowered.contains("assistant") || matches!(candidate, "助手" | "AI助手") {
@@ -1293,7 +1300,10 @@ fn subject_descriptor_from_candidate(
 
     let key = normalize_subject_key_fragment(candidate).unwrap_or_else(|| "unknown".to_string());
     Some(if looks_like_organization_subject(candidate) {
-        (MemoryFactSubject::Organization, format!("organization:{key}"))
+        (
+            MemoryFactSubject::Organization,
+            format!("organization:{key}"),
+        )
     } else {
         (MemoryFactSubject::External, format!("external:{key}"))
     })
@@ -1434,7 +1444,9 @@ fn canonicalize_schedule_value(value: &str) -> String {
         .to_string();
 
     strip_leading_articles(&normalized)
-        .trim_matches(|ch: char| !ch.is_alphanumeric() && !matches!(ch, '@' | '+' | ':' | '/' | '-'))
+        .trim_matches(|ch: char| {
+            !ch.is_alphanumeric() && !matches!(ch, '@' | '+' | ':' | '/' | '-')
+        })
         .trim()
         .to_string()
 }
@@ -3472,8 +3484,7 @@ mod tests {
     }
 
     fn contains_japanese_kana(text: &str) -> bool {
-        text.chars()
-            .any(|ch| matches!(ch as u32, 0x3040..=0x30FF))
+        text.chars().any(|ch| matches!(ch as u32, 0x3040..=0x30FF))
     }
 
     fn eval_case_language(content: &str) -> &'static str {
@@ -4274,7 +4285,9 @@ mod tests {
     #[test]
     fn test_detect_memory_facts_ignores_future_intent_inputs() {
         assert!(detect_memory_facts(&test_unit("I'll move to Beijing next year")).is_empty());
-        assert!(detect_memory_facts(&test_unit("We plan to move to Berlin next quarter")).is_empty());
+        assert!(
+            detect_memory_facts(&test_unit("We plan to move to Berlin next quarter")).is_empty()
+        );
         assert!(detect_memory_facts(&test_unit("我下个月会搬去北京")).is_empty());
         assert!(detect_memory_facts(&test_unit("我准备去上海发展")).is_empty());
     }
@@ -4282,7 +4295,8 @@ mod tests {
     #[test]
     fn test_detect_memory_facts_ignores_conditional_and_example_inputs() {
         assert!(
-            detect_memory_facts(&test_unit("If I move to Beijing next month, let me know")).is_empty()
+            detect_memory_facts(&test_unit("If I move to Beijing next month, let me know"))
+                .is_empty()
         );
         assert!(detect_memory_facts(&test_unit("Suppose John lives in Tokyo")).is_empty());
         assert!(detect_memory_facts(&test_unit("For example, I work at OpenAI")).is_empty());
@@ -4336,9 +4350,7 @@ mod tests {
 
     #[test]
     fn test_detect_memory_facts_supports_reported_speech_with_quoted_first_person() {
-        let facts = detect_memory_facts(&test_unit(
-            "John Doe said \"I now live in Beijing\"",
-        ));
+        let facts = detect_memory_facts(&test_unit("John Doe said \"I now live in Beijing\""));
 
         assert!(facts.iter().any(|fact| {
             fact.attribute == MemoryFactAttribute::Residence
@@ -4425,8 +4437,9 @@ mod tests {
 
     #[test]
     fn test_detect_memory_facts_keeps_schedule_unbound_under_according_to_clause() {
-        let facts =
-            detect_memory_facts(&test_unit("According to John Doe, the call is at 5pm tomorrow"));
+        let facts = detect_memory_facts(&test_unit(
+            "According to John Doe, the call is at 5pm tomorrow",
+        ));
 
         assert!(facts.iter().any(|fact| {
             fact.attribute == MemoryFactAttribute::Schedule
@@ -4784,5 +4797,35 @@ mod tests {
                 "change_type bucket {change_type} exact rate too low: {exact_rate:.2} stats={stats:?}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod detect_memory_fact_tests {
+    use super::*;
+    use memorose_common::MemoryType;
+    use uuid::Uuid;
+
+    fn test_unit(content: &str) -> MemoryUnit {
+        MemoryUnit::new(
+            None,
+            "test-user".into(),
+            None,
+            Uuid::new_v4(),
+            MemoryType::Factual,
+            content.into(),
+            None,
+        )
+    }
+
+    #[test]
+    fn test_detect_memory_fact_prioritizes_correctly() {
+        assert!(
+            memory_fact_change_type_priority(MemoryFactChangeType::Update)
+                > memory_fact_change_type_priority(MemoryFactChangeType::Addition)
+        );
+
+        let unit = test_unit("Alice was a teacher but is now a software engineer.");
+        let _detected = detect_memory_fact(&unit);
     }
 }

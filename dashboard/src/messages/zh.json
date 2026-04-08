@@ -65,8 +65,37 @@
     "pipeline": {
       "title": "处理流程"
     },
+    "runtime": {
+      "title": "运行模式",
+      "standalone": "单机",
+      "cluster": "集群",
+      "standaloneDesc": "当前以 standalone 运行，写请求直接进入本地引擎，绕过 Raft 共识链路。",
+      "clusterDesc": "当前以 cluster 运行，写请求会经过 leader 路由和 Raft 共识链路。"
+    },
+    "textIndex": {
+      "title": "文本索引",
+      "shard": "分片 {shard} 文本索引",
+      "dirtyDocs": "未提交文档",
+      "dirtyBytes": "未提交字节",
+      "avgCommitLatency": "平均提交耗时",
+      "overlayHitRate": "Overlay 命中率",
+      "overlayDocs": "Overlay 文档",
+      "overlayBytes": "Overlay 字节",
+      "commitTotal": "提交次数",
+      "busySkips": "写入忙跳过"
+    },
     "node": {
       "self": "自身"
+    },
+    "insight": {
+      "title": "反思调度",
+      "interval": "反思间隔",
+      "minL1": "最小待反思 L1",
+      "minTokens": "最小待反思 Token",
+      "maxDelay": "最长等待",
+      "batchTokens": "批次 Token",
+      "batchL1": "批次 L1 上限",
+      "batchCycles": "单轮批次数"
     }
   },
   "Memories": {
@@ -458,6 +487,15 @@
       "snapshot": "快照",
       "logs": "条日志"
     },
+    "insight": {
+      "interval": "反思间隔",
+      "minL1": "最小待反思 L1",
+      "minTokens": "最小待反思 Token",
+      "maxDelay": "最长等待",
+      "batchTokens": "批次 Token",
+      "batchL1": "批次 L1 上限",
+      "batchCycles": "单轮批次数"
+    },
     "domainMix": {
       "title": "领域分布",
       "agent": "智能体",
@@ -471,6 +509,31 @@
       "localL2": "本地 L2",
       "sharedL1": "共享 L1",
       "sharedL2": "共享 L2"
+    },
+    "runtime": {
+      "title": "运行模式",
+      "standalone": "单机",
+      "cluster": "集群",
+      "standaloneDesc": "当前以 standalone 运行，写请求直接进入本地引擎，绕过 Raft 共识链路。",
+      "clusterDesc": "当前以 cluster 运行，写请求会经过 leader 路由和 Raft 共识链路。"
+    },
+    "textIndex": {
+      "dirtyDocs": "未提交文档",
+      "dirtyBytes": "未提交字节",
+      "avgCommitLatency": "平均提交耗时",
+      "overlayHitRate": "Overlay 命中率",
+      "writePathTitle": "文本索引写入路径",
+      "commitTotal": "提交次数",
+      "commitSeq": "提交序号",
+      "busySkips": "写入忙跳过",
+      "commitLatencyTotal": "累计提交耗时",
+      "overlayTitle": "Recent Overlay",
+      "overlayDocs": "Overlay 文档",
+      "overlayBytes": "Overlay 字节",
+      "overlayHits": "Overlay 命中",
+      "overlayMisses": "Overlay 未命中",
+      "overlayMerges": "Overlay 补并",
+      "overlayEvictions": "Overlay 淘汰"
     },
     "rac": {
       "actionsTitle": "RAC 动作分布",

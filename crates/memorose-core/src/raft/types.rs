@@ -9,6 +9,8 @@ use std::io::Cursor;
 pub enum ClientRequest {
     /// Ingest a new event into the system.
     IngestEvent(Event),
+    /// Ingest multiple events in one raft entry.
+    IngestEvents(Vec<Event>),
     /// Update or add an edge in the knowledge graph.
     UpdateGraph(memorose_common::GraphEdge),
     // Future: etc.

@@ -5,7 +5,7 @@ export interface LoginResponse {
 
 export interface ShardStatus {
   shard_id: number;
-  raft_state: "Leader" | "Follower" | "Candidate";
+  raft_state: "Leader" | "Follower" | "Candidate" | "Standalone";
   current_leader: number | null;
   current_term: number;
   last_log_index: number;
@@ -13,13 +13,41 @@ export interface ShardStatus {
   replication_lag: number;
   voters: number[];
   learners: number[];
+  text_index_metrics?: TextIndexMetrics;
+}
+
+export interface TextIndexMetrics {
+  dirty_docs: number;
+  dirty_bytes: number;
+  commit_seq: number;
+  commit_total: number;
+  commit_skipped_busy_total: number;
+  overlay_docs: number;
+  overlay_bytes: number;
+  overlay_evicted_total: number;
+  overlay_hit_total: number;
+  overlay_miss_total: number;
+  overlay_merge_total: number;
+  commit_latency_total_ms: number;
+}
+
+export interface WorkerInsightConfig {
+  insight_interval_ms: number;
+  insight_min_pending_tokens: number;
+  insight_min_pending_l1: number;
+  insight_max_delay_ms: number;
+  insight_batch_target_tokens: number;
+  insight_max_l1_per_batch: number;
+  insight_max_batches_per_cycle: number;
 }
 
 // Single-shard backward-compatible format
 export interface ClusterStatusSingle {
   node_id: number;
   shard_id: number;
-  raft_state: "Leader" | "Follower" | "Candidate";
+  runtime_mode: "standalone" | "cluster";
+  write_path: "local_bypass" | "raft_consensus";
+  raft_state: "Leader" | "Follower" | "Candidate" | "Standalone";
   current_leader: number | null;
   current_term: number;
   last_log_index: number;
@@ -27,10 +55,12 @@ export interface ClusterStatusSingle {
   replication_lag: number;
   voters: number[];
   learners: number[];
+  text_index_metrics?: TextIndexMetrics;
   snapshot_policy_logs: number;
   config: {
     heartbeat_interval_ms: number;
     election_timeout_min_ms: number;
+    worker: WorkerInsightConfig;
   };
 }
 
@@ -38,10 +68,13 @@ export interface ClusterStatusSingle {
 export interface ClusterStatusSharded {
   physical_node_id: number;
   shard_count: number;
+  runtime_mode: "standalone" | "cluster";
+  write_path: "local_bypass" | "raft_consensus";
   shards: ShardStatus[];
   config: {
     heartbeat_interval_ms: number;
     election_timeout_min_ms: number;
+    worker: WorkerInsightConfig;
   };
 }
 
@@ -57,6 +90,7 @@ export interface Stats {
   pending_events: number;
   total_memory_units: number;
   total_edges: number;
+  text_index_metrics?: TextIndexMetrics;
   rac_metrics?: {
     fact_extraction_attempt_total: number;
     fact_extraction_success_total: number;

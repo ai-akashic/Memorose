@@ -28,11 +28,18 @@ mod shard_manager;
 
 use shard_manager::ShardManager;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RuntimeMode {
+    Standalone,
+    Cluster,
+}
+
 struct AppState {
     shard_manager: ShardManager,
     llm_client: Arc<dyn LLMClient>,
     embedding_cache: Cache<String, Vec<f32>>,
     config: AppConfig,
+    runtime_mode: RuntimeMode,
     start_time: std::time::Instant,
     dashboard_auth: dashboard::auth::DashboardAuth,
     management_registry: dashboard::registry::ManagementRegistry,
@@ -40,6 +47,23 @@ struct AppState {
     dashboard_cache: Cache<String, serde_json::Value>,
     /// Shared HTTP client for leader-forwarding; reusing it preserves connection pools.
     http_client: reqwest::Client,
+}
+
+impl AppState {
+    fn is_standalone_mode(&self) -> bool {
+        self.runtime_mode == RuntimeMode::Standalone
+    }
+
+    fn is_cluster_mode(&self) -> bool {
+        self.runtime_mode == RuntimeMode::Cluster
+    }
+
+    fn write_path_name(&self) -> &'static str {
+        match self.runtime_mode {
+            RuntimeMode::Standalone => "local_bypass",
+            RuntimeMode::Cluster => "raft_consensus",
+        }
+    }
 }
 
 fn public_asset_storage_key(asset: &Asset) -> String {
@@ -143,16 +167,29 @@ async fn main() {
     );
 
     let config = AppConfig::load().expect("Failed to load configuration");
+    let runtime_mode = if config.is_standalone_mode() {
+        RuntimeMode::Standalone
+    } else {
+        RuntimeMode::Cluster
+    };
     tracing::info!("Using LLM Provider: {:?}", config.llm.provider);
     tracing::info!("Using LLM Model: {}", config.llm.model);
     tracing::info!("Using Embedding Model: {}", config.llm.embedding_model);
+    tracing::info!(
+        "Runtime mode: {:?}, write path: {}",
+        runtime_mode,
+        match runtime_mode {
+            RuntimeMode::Standalone => "local_bypass",
+            RuntimeMode::Cluster => "raft_consensus",
+        }
+    );
 
     let data_dir = config.storage.root_dir.clone();
 
     // Initialize shard manager (handles engine, raft, workers for all shards)
     let shard_manager = if config.is_sharded() {
         tracing::info!(
-            "Starting in sharded mode: {} shards, physical_node_id={}",
+            "Starting in cluster mode: {} shards, physical_node_id={}",
             config.shard_count(),
             config.physical_node_id()
         );
@@ -160,10 +197,18 @@ async fn main() {
             .await
             .expect("Failed to start ShardManager")
     } else {
-        tracing::info!(
-            "Starting in single-shard mode (node_id={})",
-            config.raft.node_id
-        );
+        if config.is_cluster_mode() {
+            tracing::info!(
+                "Starting in single-shard cluster mode (node_id={}, cluster_nodes={})",
+                config.raft.node_id,
+                config.cluster_node_count()
+            );
+        } else {
+            tracing::info!(
+                "Starting in standalone mode (node_id={})",
+                config.raft.node_id
+            );
+        }
         ShardManager::new_single_shard(&config)
             .await
             .expect("Failed to start single-shard ShardManager")
@@ -203,6 +248,7 @@ async fn main() {
         llm_client,
         embedding_cache,
         config: config.clone(),
+        runtime_mode,
         start_time: std::time::Instant::now(),
         dashboard_auth,
         management_registry,
@@ -295,6 +341,10 @@ async fn main() {
         .route(
             "/v1/users/:user_id/streams/:stream_id/events",
             post(ingest_event),
+        )
+        .route(
+            "/v1/users/:user_id/streams/:stream_id/events/batch",
+            post(ingest_events_batch),
         )
         .route(
             "/v1/users/:user_id/streams/:stream_id/retrieve",
@@ -641,41 +691,62 @@ async fn add_edge(
     Json(payload): Json<AddEdgeRequest>,
 ) -> axum::response::Response {
     let shard = state.shard_manager.shard_for_user(&user_id);
-    let metrics = shard.raft.metrics().borrow().clone();
-    let current_leader = metrics.current_leader;
-    let node_id = metrics.id;
+    if state.is_cluster_mode() {
+        let raft = shard.raft.as_ref().expect("cluster mode requires raft");
+        let metrics = raft.metrics().borrow().clone();
+        let current_leader = metrics.current_leader;
+        let node_id = metrics.id;
 
-    // Forward to leader if not leader
-    if current_leader != Some(node_id) {
-        if let Some(leader_id) = current_leader {
-            let path = format!("/v1/users/{}/graph/edges", user_id);
+        if current_leader != Some(node_id) {
+            if let Some(leader_id) = current_leader {
+                let path = format!("/v1/users/{}/graph/edges", user_id);
 
-            tracing::info!(
-                "Not leader (I'm {}, leader is {}), forwarding request",
-                node_id,
-                leader_id
-            );
+                tracing::info!(
+                    "Not leader (I'm {}, leader is {}), forwarding request",
+                    node_id,
+                    leader_id
+                );
 
-            match forward_to_leader(&state, leader_id, &path, &payload).await {
-                Ok(response) => return response,
-                Err(err_response) => return err_response,
+                match forward_to_leader(&state, leader_id, &path, &payload).await {
+                    Ok(response) => return response,
+                    Err(err_response) => return err_response,
+                }
             }
-        }
 
-        // If no leader, return error
-        return not_leader_response(current_leader, state.config.is_sharded());
+            return not_leader_response(current_leader, state.config.is_sharded());
+        }
     }
 
     let edge = GraphEdge::new(
-        user_id,
+        user_id.clone(),
         payload.source_id,
         payload.target_id,
         payload.relation,
         payload.weight.unwrap_or(1.0),
     );
 
+    if state.is_standalone_mode() {
+        return match shard.engine.graph().add_edge(&edge).await {
+            Ok(_) => Json(serde_json::json!({
+                "status": "accepted",
+                "write_path": state.write_path_name(),
+            }))
+            .into_response(),
+            Err(e) => {
+                tracing::error!("Direct write error (graph): {:?}", e);
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": e.to_string() })),
+                )
+                    .into_response()
+            }
+        };
+    }
+
     match shard
         .raft
+        .as_ref()
+        .expect("cluster mode requires raft")
         .client_write(memorose_core::raft::types::ClientRequest::UpdateGraph(edge))
         .await
     {
@@ -735,6 +806,11 @@ struct IngestRequest {
     task_progress: Option<f32>,
 }
 
+#[derive(Deserialize, Serialize)]
+struct BatchIngestRequest {
+    events: Vec<IngestRequest>,
+}
+
 fn default_content_type() -> String {
     "text".to_string()
 }
@@ -768,29 +844,30 @@ async fn ingest_event(
         }
     }
     let shard = state.shard_manager.shard_for_user(&user_id);
-    let metrics = shard.raft.metrics().borrow().clone();
-    let current_leader = metrics.current_leader;
-    let node_id = metrics.id;
+    if state.is_cluster_mode() {
+        let raft = shard.raft.as_ref().expect("cluster mode requires raft");
+        let metrics = raft.metrics().borrow().clone();
+        let current_leader = metrics.current_leader;
+        let node_id = metrics.id;
 
-    // Forward to leader if not leader
-    if current_leader != Some(node_id) {
-        if let Some(leader_id) = current_leader {
-            let path = format!("/v1/users/{}/streams/{}/events", user_id, stream_id);
+        if current_leader != Some(node_id) {
+            if let Some(leader_id) = current_leader {
+                let path = format!("/v1/users/{}/streams/{}/events", user_id, stream_id);
 
-            tracing::info!(
-                "Not leader (I'm {}, leader is {}), forwarding request",
-                node_id,
-                leader_id
-            );
+                tracing::info!(
+                    "Not leader (I'm {}, leader is {}), forwarding request",
+                    node_id,
+                    leader_id
+                );
 
-            match forward_to_leader(&state, leader_id, &path, &payload).await {
-                Ok(response) => return response,
-                Err(err_response) => return err_response,
+                match forward_to_leader(&state, leader_id, &path, &payload).await {
+                    Ok(response) => return response,
+                    Err(err_response) => return err_response,
+                }
             }
-        }
 
-        // If no leader, return error
-        return not_leader_response(current_leader, state.config.is_sharded());
+            return not_leader_response(current_leader, state.config.is_sharded());
+        }
     }
 
     let content = match parse_ingest_content(&payload.content_type, payload.content) {
@@ -806,7 +883,13 @@ async fn ingest_event(
                 .into_response();
         }
     };
-    let mut event = Event::new(payload.org_id.clone(), user_id, None, stream_id, content);
+    let mut event = Event::new(
+        payload.org_id.clone(),
+        user_id.clone(),
+        None,
+        stream_id,
+        content,
+    );
     if let Some(l) = payload.level {
         event.metadata["target_level"] = serde_json::json!(l);
     }
@@ -820,9 +903,32 @@ async fn ingest_event(
         event.metadata["task_progress"] = serde_json::json!(p);
     }
     let event_id = event.id;
+    if state.is_standalone_mode() {
+        return match shard.engine.ingest_event_directly(event).await {
+            Ok(_) => Json(serde_json::json!({
+                "status": "accepted",
+                "event_id": event_id,
+                "write_path": state.write_path_name(),
+            }))
+            .into_response(),
+            Err(e) => {
+                tracing::error!("Direct write error (event): {:?}", e);
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "status": "error",
+                        "message": e.to_string()
+                    })),
+                )
+                    .into_response()
+            }
+        };
+    }
 
     match shard
         .raft
+        .as_ref()
+        .expect("cluster mode requires raft")
         .client_write(memorose_core::raft::types::ClientRequest::IngestEvent(
             event,
         ))
@@ -835,6 +941,147 @@ async fn ingest_event(
         .into_response(),
         Err(e) => {
             tracing::error!("Raft write error: {:?}", e);
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "status": "error",
+                    "message": e.to_string()
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn ingest_events_batch(
+    State(state): State<Arc<AppState>>,
+    Path((user_id, stream_id)): Path<(String, Uuid)>,
+    Json(payload): Json<BatchIngestRequest>,
+) -> axum::response::Response {
+    if let Err(r) = validate_id(&user_id, "user_id") {
+        return r;
+    }
+    if payload.events.is_empty() {
+        return Json(serde_json::json!({
+            "status": "accepted",
+            "event_ids": Vec::<String>::new(),
+            "count": 0
+        }))
+        .into_response();
+    }
+
+    for event in &payload.events {
+        if let Some(org_id) = event.org_id.as_deref() {
+            if let Err(r) = validate_id(org_id, "org_id") {
+                return r;
+            }
+        }
+    }
+    let shard = state.shard_manager.shard_for_user(&user_id);
+    if state.is_cluster_mode() {
+        let raft = shard.raft.as_ref().expect("cluster mode requires raft");
+        let metrics = raft.metrics().borrow().clone();
+        let current_leader = metrics.current_leader;
+        let node_id = metrics.id;
+
+        if current_leader != Some(node_id) {
+            if let Some(leader_id) = current_leader {
+                let path = format!("/v1/users/{}/streams/{}/events/batch", user_id, stream_id);
+                tracing::info!(
+                    "Not leader (I'm {}, leader is {}), forwarding batch request",
+                    node_id,
+                    leader_id
+                );
+                match forward_to_leader(&state, leader_id, &path, &payload).await {
+                    Ok(response) => return response,
+                    Err(err_response) => return err_response,
+                }
+            }
+
+            return not_leader_response(current_leader, state.config.is_sharded());
+        }
+    }
+
+    let mut events = Vec::with_capacity(payload.events.len());
+    let mut event_ids = Vec::with_capacity(payload.events.len());
+    for item in payload.events {
+        let content = match parse_ingest_content(&item.content_type, item.content) {
+            Ok(content) => content,
+            Err(message) => {
+                return (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "status": "error",
+                        "message": message
+                    })),
+                )
+                    .into_response();
+            }
+        };
+
+        let mut event = Event::new(
+            item.org_id.clone(),
+            user_id.clone(),
+            None,
+            stream_id,
+            content,
+        );
+        if let Some(level) = item.level {
+            event.metadata["target_level"] = serde_json::json!(level);
+        }
+        if let Some(parent_id) = item.parent_id {
+            event.metadata["parent_id"] = serde_json::json!(parent_id);
+        }
+        if let Some(task_status) = item.task_status {
+            event.metadata["task_status"] = serde_json::json!(task_status);
+        }
+        if let Some(task_progress) = item.task_progress {
+            event.metadata["task_progress"] = serde_json::json!(task_progress);
+        }
+        event_ids.push(event.id.to_string());
+        events.push(event);
+    }
+
+    if state.is_standalone_mode() {
+        return match shard.engine.ingest_events_directly(events).await {
+            Ok(_) => Json(serde_json::json!({
+                "status": "accepted",
+                "event_ids": event_ids,
+                "count": event_ids.len(),
+                "write_path": state.write_path_name(),
+            }))
+            .into_response(),
+            Err(e) => {
+                tracing::error!("Direct batch write error: {:?}", e);
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "status": "error",
+                        "message": e.to_string()
+                    })),
+                )
+                    .into_response()
+            }
+        };
+    }
+
+    match shard
+        .raft
+        .as_ref()
+        .expect("cluster mode requires raft")
+        .client_write(memorose_core::raft::types::ClientRequest::IngestEvents(
+            events,
+        ))
+        .await
+    {
+        Ok(_) => Json(serde_json::json!({
+            "status": "accepted",
+            "event_ids": event_ids,
+            "count": event_ids.len()
+        }))
+        .into_response(),
+        Err(e) => {
+            tracing::error!("Raft batch write error: {:?}", e);
             (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
@@ -1785,6 +2032,13 @@ struct JoinRequest {
 }
 
 async fn initialize_cluster(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    if state.is_standalone_mode() {
+        return Json(serde_json::json!({
+            "status": "skipped",
+            "message": "Cluster initialization is disabled in standalone mode",
+            "write_path": state.write_path_name(),
+        }));
+    }
     let results = state.shard_manager.initialize_all(&state.config).await;
     Json(serde_json::json!({
         "status": "initialized",
@@ -1796,6 +2050,11 @@ async fn join_cluster(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<JoinRequest>,
 ) -> Json<serde_json::Value> {
+    if state.is_standalone_mode() {
+        return Json(serde_json::json!({
+            "error": "join_cluster is disabled in standalone mode"
+        }));
+    }
     if state.config.is_sharded() {
         // Multi-shard: join all raft groups
         let results = state
@@ -1810,10 +2069,11 @@ async fn join_cluster(
     } else {
         // Single-shard: join the local raft group using the provided node address
         let shard = state.shard_manager.shard(0).unwrap();
+        let raft = shard.raft.as_ref().expect("cluster mode requires raft");
         let node_id = payload.node_id as u64;
 
         // Check if already a voter — idempotent on restart
-        let metrics = shard.raft.metrics().borrow().clone();
+        let metrics = raft.metrics().borrow().clone();
         let existing_voters: std::collections::BTreeSet<u64> =
             metrics.membership_config.membership().voter_ids().collect();
         if existing_voters.contains(&node_id) {
@@ -1829,7 +2089,7 @@ async fn join_cluster(
         if leader.is_none() {
             for _ in 0..20 {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                leader = shard.raft.metrics().borrow().current_leader;
+                leader = raft.metrics().borrow().current_leader;
                 if leader.is_some() {
                     break;
                 }
@@ -1845,7 +2105,7 @@ async fn join_cluster(
             addr: payload.address.clone(),
         };
 
-        match shard.raft.add_learner(node_id, node, true).await {
+        match raft.add_learner(node_id, node, true).await {
             Ok(_) => {}
             Err(e) => {
                 return Json(
@@ -1856,12 +2116,12 @@ async fn join_cluster(
 
         tokio::task::yield_now().await;
 
-        let metrics = shard.raft.metrics().borrow().clone();
+        let metrics = raft.metrics().borrow().clone();
         let mut members: std::collections::BTreeSet<u64> =
             metrics.membership_config.membership().voter_ids().collect();
         members.insert(node_id);
 
-        match shard.raft.change_membership(members, false).await {
+        match raft.change_membership(members, false).await {
             Ok(_) => Json(serde_json::json!({
                 "status": "joined",
                 "node_id": node_id,
@@ -1878,6 +2138,11 @@ async fn leave_cluster(
     State(state): State<Arc<AppState>>,
     Path(node_id): Path<u32>,
 ) -> Json<serde_json::Value> {
+    if state.is_standalone_mode() {
+        return Json(serde_json::json!({
+            "error": "leave_cluster is disabled in standalone mode"
+        }));
+    }
     if state.config.is_sharded() {
         let results = state.shard_manager.leave_all(node_id).await;
         Json(serde_json::json!({
@@ -1887,7 +2152,8 @@ async fn leave_cluster(
         }))
     } else {
         let shard = state.shard_manager.shard(0).unwrap();
-        let metrics = shard.raft.metrics().borrow().clone();
+        let raft = shard.raft.as_ref().expect("cluster mode requires raft");
+        let metrics = raft.metrics().borrow().clone();
         let mut members: std::collections::BTreeSet<u64> =
             metrics.membership_config.membership().voter_ids().collect();
 
@@ -1895,7 +2161,7 @@ async fn leave_cluster(
             return Json(serde_json::json!({ "error": "Node not found in cluster" }));
         }
 
-        match shard.raft.change_membership(members, false).await {
+        match raft.change_membership(members, false).await {
             Ok(_) => Json(serde_json::json!({
                 "status": "left",
                 "node_id": node_id

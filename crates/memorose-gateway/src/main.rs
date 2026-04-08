@@ -557,7 +557,7 @@ mod tests {
             "count": 5,
             "nested": { "total": 10 }
         });
-        
+
         let merged = merge_sum(a, b);
         assert_eq!(merged["count"], json!(15));
         assert_eq!(merged["nested"]["total"], json!(15));

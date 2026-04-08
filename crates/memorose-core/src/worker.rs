@@ -1,7 +1,9 @@
 use crate::llm::{EmbedInput, EmbedPart, LLMClient};
 use crate::MemoroseEngine;
 use anyhow::Result;
-use memorose_common::{config::AppConfig, tokenizer::count_tokens, Asset, Event, EventContent, GraphEdge, MemoryUnit};
+use memorose_common::{
+    config::AppConfig, tokenizer::count_tokens, Asset, Event, EventContent, GraphEdge, MemoryUnit,
+};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -43,11 +45,35 @@ pub struct BackgroundWorker {
 }
 
 impl BackgroundWorker {
+    fn should_process_reflection_marker(&self, marker: &crate::engine::ReflectionMarker) -> bool {
+        if marker.first_event_at_ts <= 0 {
+            return true;
+        }
+
+        if marker.pending_units >= self.config.insight_min_pending_l1.max(1) {
+            return true;
+        }
+
+        if marker.pending_tokens >= self.config.insight_min_pending_tokens.max(1) {
+            return true;
+        }
+
+        let max_delay_ms = self
+            .config
+            .insight_max_delay_ms
+            .max(self.config.tick_interval_ms);
+        let age_ms = chrono::Utc::now()
+            .timestamp_millis()
+            .saturating_sub(marker.first_event_at_ts);
+        age_ms as u64 >= max_delay_ms
+    }
+
     fn packed_event_key(event: &Event) -> PackedGroupKey {
         let is_agent = event.metadata.get("role").and_then(|v| v.as_str()) == Some("assistant")
             || event.metadata.get("agent_id").is_some();
         let agent_id = if is_agent {
-            event.metadata
+            event
+                .metadata
                 .get("agent_id")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
@@ -711,8 +737,12 @@ impl BackgroundWorker {
         }
 
         let batch_size = self.config.consolidation_batch_size.max(1);
-        let fetch_limit = batch_size.saturating_mul(self.config.consolidation_fetch_multiplier.max(1));
-        let events = self.engine.fetch_pending_events_limited(fetch_limit).await?;
+        let fetch_limit =
+            batch_size.saturating_mul(self.config.consolidation_fetch_multiplier.max(1));
+        let events = self
+            .engine
+            .fetch_pending_events_limited(fetch_limit)
+            .await?;
         if events.is_empty() {
             return Ok(false);
         }
@@ -943,7 +973,8 @@ impl BackgroundWorker {
         let mut processed_ids = std::collections::HashSet::new();
         let mut any_processed = false;
         let mut next_commit_seq_by_key: HashMap<PackedGroupKey, u64> = HashMap::new();
-        let mut pending_by_key: HashMap<PackedGroupKey, HashMap<u64, ProducedBatch>> = HashMap::new();
+        let mut pending_by_key: HashMap<PackedGroupKey, HashMap<u64, ProducedBatch>> =
+            HashMap::new();
 
         while let Some(item) = rx.recv().await {
             let key = item.key.clone();
@@ -1356,10 +1387,8 @@ impl BackgroundWorker {
                 self.engine.graph().add_edge(&edge).await?;
             }
 
-            // Post-storage hooks (Reflection markers, etc.)
             let mut l1_increase_by_user: HashMap<String, usize> = HashMap::new();
             for unit in &units_to_store {
-                let _ = self.engine.set_needs_reflect(&unit.user_id);
                 if unit.level == 1 {
                     *l1_increase_by_user.entry(unit.user_id.clone()).or_insert(0) += 1;
                 }
@@ -1489,66 +1518,93 @@ impl BackgroundWorker {
         let engine = self.engine.clone();
 
         // Marker-driven: only process users with needs_reflect markers
-        let user_ids = engine.get_pending_reflections()?;
-        if user_ids.is_empty() {
+        let pending_markers = engine.get_pending_reflection_markers()?;
+        if pending_markers.is_empty() {
             return Ok(());
         }
 
-        for user_id in user_ids {
-            // Fetch recent L1s for this user to find active streams
-            let recent_l1s = match engine
-                .fetch_recent_l1_units(&user_id, self.config.insight_recent_l1_limit.max(1))
-                .await
-            {
-                Ok(l1s) => l1s,
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to load recent L1 units for reflection (user {}): {:?}",
-                        user_id,
-                        e
-                    );
-                    continue;
-                }
-            };
-
-            // Extract unique stream IDs
-            let mut unique_streams = std::collections::HashSet::new();
-            for unit in recent_l1s {
-                unique_streams.insert(unit.stream_id);
+        for (user_id, marker) in pending_markers {
+            if !self.should_process_reflection_marker(&marker) {
+                continue;
             }
+            let mut remaining_marker = marker.clone();
+            let max_batches = self.config.insight_max_batches_per_cycle.max(1);
 
-            if !unique_streams.is_empty() {
+            for batch_no in 0..max_batches {
+                if remaining_marker.pending_units == 0 {
+                    engine.clear_reflection_marker(&user_id)?;
+                    break;
+                }
+
+                let reflection_limit = remaining_marker
+                    .pending_units
+                    .min(self.config.insight_max_l1_per_batch.max(1));
                 tracing::info!(
-                    "Found {} active streams for reflection (user {})",
-                    unique_streams.len(),
-                    user_id
+                    "Running user-window reflection (user={}, batch={}, pending_units={}, pending_tokens={}, first_tx_micros={}, limit={}, token_budget={})",
+                    user_id,
+                    batch_no + 1,
+                    remaining_marker.pending_units,
+                    remaining_marker.pending_tokens,
+                    remaining_marker.first_event_tx_micros,
+                    reflection_limit,
+                    self.config.insight_batch_target_tokens
                 );
-                let mut all_succeeded = true;
-                for stream_id in unique_streams {
-                    match engine.reflect_on_session(&user_id, stream_id).await {
-                        Ok(_) => {
-                            tracing::debug!(
-                                "Reflection completed for stream {} (user {})",
-                                stream_id,
-                                user_id
-                            );
-                        }
-                        Err(e) => {
-                            all_succeeded = false;
-                            tracing::warn!(
-                                "Reflection failed for stream {} (user {}): {:?}",
-                                stream_id,
-                                user_id,
-                                e
-                            );
+
+                match engine
+                    .reflect_on_user_window_batch(
+                        &user_id,
+                        (remaining_marker.first_event_tx_micros > 0)
+                            .then_some(remaining_marker.first_event_tx_micros),
+                        remaining_marker.first_event_id.as_deref(),
+                        reflection_limit,
+                        self.config.insight_batch_target_tokens,
+                    )
+                    .await
+                {
+                    Ok(outcome) if outcome.consumed_units == 0 => {
+                        engine.clear_reflection_marker(&user_id)?;
+                        break;
+                    }
+                    Ok(outcome) => {
+                        tracing::debug!(
+                            "User-window reflection batch completed for user {} with {} topics from {} units",
+                            user_id,
+                            outcome.created_topics,
+                            outcome.consumed_units
+                        );
+                        engine.consume_reflection_marker_batch(
+                            &user_id,
+                            outcome.consumed_units,
+                            outcome.consumed_tokens,
+                            outcome.next_first_event_tx_micros,
+                            outcome.next_first_event_id.clone(),
+                        )?;
+
+                        remaining_marker.pending_units = remaining_marker
+                            .pending_units
+                            .saturating_sub(outcome.consumed_units);
+                        remaining_marker.pending_tokens = remaining_marker
+                            .pending_tokens
+                            .saturating_sub(outcome.consumed_tokens);
+                        remaining_marker.first_event_tx_micros =
+                            outcome.next_first_event_tx_micros.unwrap_or_default();
+                        remaining_marker.first_event_id = outcome.next_first_event_id;
+
+                        if remaining_marker.pending_units == 0
+                            || remaining_marker.first_event_tx_micros <= 0
+                        {
+                            break;
                         }
                     }
+                    Err(e) => {
+                        tracing::warn!(
+                            "User-window reflection failed for user {}: {:?}",
+                            user_id,
+                            e
+                        );
+                        break;
+                    }
                 }
-                if all_succeeded {
-                    engine.clear_reflection_marker(&user_id)?;
-                }
-            } else {
-                engine.clear_reflection_marker(&user_id)?;
             }
         }
 
@@ -1634,6 +1690,7 @@ mod tests {
     use super::*;
     use crate::llm::CompressionOutput;
     use async_trait::async_trait;
+    use chrono::Utc;
     use memorose_common::{Event, EventContent, L3Task, MemoryType, TaskStatus};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::tempdir;
@@ -2780,7 +2837,7 @@ mod tests {
         let engine =
             MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
 
-        let worker = BackgroundWorker::new(engine);
+        let mut worker = BackgroundWorker::new(engine);
         let processed = worker.run_consolidation_cycle().await?;
 
         assert!(!processed);
@@ -3164,7 +3221,7 @@ mod tests {
                 true,
             ))
             .expect("engine");
-        let worker = BackgroundWorker::new(engine);
+        let mut worker = BackgroundWorker::new(engine);
 
         let stream_a = Uuid::new_v4();
         let stream_b = Uuid::new_v4();
@@ -3233,7 +3290,7 @@ mod tests {
                 true,
             ))
             .expect("engine");
-        let worker = BackgroundWorker::new(engine);
+        let mut worker = BackgroundWorker::new(engine);
 
         let stream_a = Uuid::new_v4();
         let stream_b = Uuid::new_v4();
@@ -4056,6 +4113,7 @@ mod tests {
             generate_response: None,
         }));
         worker.config.insight_interval_ms = 1;
+        worker.config.insight_min_pending_l1 = 1;
         *worker.last_insight.lock().await = std::time::Instant::now() - Duration::from_secs(1);
 
         engine.set_needs_reflect(TEST_USER)?;
@@ -4089,6 +4147,7 @@ mod tests {
         let mut worker = BackgroundWorker::new(engine.clone());
         worker.llm_client = Some(llm);
         worker.config.insight_interval_ms = 1;
+        worker.config.insight_min_pending_l1 = 1;
         *worker.last_insight.lock().await = std::time::Instant::now() - Duration::from_secs(1);
 
         engine.set_needs_reflect(TEST_USER)?;
@@ -4111,6 +4170,188 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_run_insight_cycle_only_reflects_incremental_l1_window() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let llm = Arc::new(TopicLLM);
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true)
+            .await?
+            .with_arbitrator(crate::arbitrator::Arbitrator::with_client(llm.clone()));
+
+        let first_stream_id = Uuid::new_v4();
+        let second_stream_id = Uuid::new_v4();
+
+        let mut first = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            first_stream_id,
+            MemoryType::Factual,
+            "first delta".into(),
+            None,
+        );
+        first.transaction_time = Utc::now() - chrono::Duration::minutes(5);
+        let first_id = first.id;
+        engine.store_memory_units(vec![first]).await?;
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.llm_client = Some(llm.clone());
+        worker.config.insight_interval_ms = 1;
+        worker.config.insight_min_pending_l1 = 1;
+        *worker.last_insight.lock().await = std::time::Instant::now() - Duration::from_secs(1);
+
+        worker.run_insight_cycle().await?;
+
+        let mut second = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            second_stream_id,
+            MemoryType::Factual,
+            "second delta".into(),
+            None,
+        );
+        second.transaction_time = Utc::now();
+        let second_id = second.id;
+        engine.store_memory_units(vec![second]).await?;
+        *worker.last_insight.lock().await = std::time::Instant::now() - Duration::from_secs(1);
+
+        worker.run_insight_cycle().await?;
+
+        let prefix = format!("u:{}:unit:", TEST_USER);
+        let kv = engine.kv();
+        let all_units = kv.scan(prefix.as_bytes())?;
+        let topics = all_units
+            .into_iter()
+            .filter_map(|(_, value)| serde_json::from_slice::<MemoryUnit>(&value).ok())
+            .filter(|unit| unit.level == 2 && unit.content == "Topic summary")
+            .collect::<Vec<_>>();
+        assert_eq!(topics.len(), 2);
+
+        let topic_refs = topics
+            .iter()
+            .map(|unit| {
+                let mut refs = unit.references.clone();
+                refs.sort();
+                refs
+            })
+            .collect::<Vec<_>>();
+
+        assert!(topic_refs.iter().any(|refs| refs == &vec![first_id]));
+        assert!(topic_refs.iter().any(|refs| refs == &vec![second_id]));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_insight_cycle_drains_backlog_across_multiple_batches() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let llm = Arc::new(TopicLLM);
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true)
+            .await?
+            .with_arbitrator(crate::arbitrator::Arbitrator::with_client(llm.clone()));
+
+        let stream_id = Uuid::new_v4();
+        let now = Utc::now();
+        let mut units = Vec::new();
+        for offset in 0..3 {
+            let mut unit = MemoryUnit::new(
+                None,
+                TEST_USER.into(),
+                None,
+                stream_id,
+                MemoryType::Factual,
+                format!("delta {}", offset),
+                None,
+            );
+            unit.transaction_time = now + chrono::Duration::microseconds(offset as i64);
+            units.push(unit);
+        }
+        engine.store_memory_units(units).await?;
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.llm_client = Some(llm);
+        worker.config.insight_interval_ms = 1;
+        worker.config.insight_min_pending_l1 = 1;
+        worker.config.insight_max_l1_per_batch = 1;
+        worker.config.insight_max_batches_per_cycle = 2;
+        worker.config.insight_batch_target_tokens = usize::MAX / 4;
+        *worker.last_insight.lock().await = std::time::Instant::now() - Duration::from_secs(1);
+
+        worker.run_insight_cycle().await?;
+
+        let markers = engine.get_pending_reflection_markers()?;
+        let marker = markers
+            .into_iter()
+            .find(|(user_id, _)| user_id == TEST_USER)
+            .map(|(_, marker)| marker)
+            .expect("marker should remain for unfinished backlog");
+        assert_eq!(marker.pending_units, 1);
+
+        *worker.last_insight.lock().await = std::time::Instant::now() - Duration::from_secs(1);
+        worker.run_insight_cycle().await?;
+        assert!(engine.get_pending_reflections()?.is_empty());
+
+        let prefix = format!("u:{}:unit:", TEST_USER);
+        let kv = engine.kv();
+        let all_units = kv.scan(prefix.as_bytes())?;
+        let topics = all_units
+            .into_iter()
+            .filter_map(|(_, value)| serde_json::from_slice::<MemoryUnit>(&value).ok())
+            .filter(|unit| unit.level == 2 && unit.content == "Topic summary")
+            .collect::<Vec<_>>();
+        assert_eq!(topics.len(), 3);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_insight_cycle_defers_small_pending_reflection() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let llm = Arc::new(TopicLLM);
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true)
+            .await?
+            .with_arbitrator(crate::arbitrator::Arbitrator::with_client(llm.clone()));
+
+        let stream_id = Uuid::new_v4();
+        engine
+            .store_memory_unit(MemoryUnit::new(
+                None,
+                TEST_USER.into(),
+                None,
+                stream_id,
+                MemoryType::Factual,
+                "small delta".into(),
+                None,
+            ))
+            .await?;
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.llm_client = Some(llm);
+        worker.config.insight_interval_ms = 1;
+        worker.config.insight_min_pending_l1 = 2;
+        worker.config.insight_min_pending_tokens = usize::MAX / 2;
+        worker.config.insight_max_delay_ms = u64::MAX / 2;
+        *worker.last_insight.lock().await = std::time::Instant::now() - Duration::from_secs(1);
+
+        worker.run_insight_cycle().await?;
+
+        assert_eq!(
+            engine.get_pending_reflections()?,
+            vec![TEST_USER.to_string()]
+        );
+        let prefix = format!("u:{}:unit:", TEST_USER);
+        let kv = engine.kv();
+        let all_units = kv.scan(prefix.as_bytes())?;
+        let topics = all_units
+            .into_iter()
+            .filter_map(|(_, value)| serde_json::from_slice::<MemoryUnit>(&value).ok())
+            .filter(|unit| unit.level == 2 && unit.content == "Topic summary")
+            .collect::<Vec<_>>();
+        assert!(topics.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_run_community_cycle_clears_marker_when_no_edges_exist() -> Result<()> {
         let temp_dir = tempdir()?;
         let engine =
@@ -4125,5 +4366,65 @@ mod tests {
 
         assert!(engine.get_pending_communities()?.is_empty());
         Ok(())
+    }
+
+    #[test]
+    fn test_packed_event_key_and_estimate_tokens() {
+        let mut event = Event::new(
+            None,
+            "user1".into(),
+            None,
+            Uuid::new_v4(),
+            EventContent::Text("Hello".into()),
+        );
+        event.stream_id = Uuid::new_v4();
+
+        // Key logic
+        let key = BackgroundWorker::packed_event_key(&event);
+        assert_eq!(key.0, "user1");
+        assert_eq!(key.2, None);
+
+        event.metadata = serde_json::json!({"role": "assistant"});
+        let key_agent = BackgroundWorker::packed_event_key(&event);
+        assert_eq!(key_agent.2, Some("default_agent".to_string()));
+
+        // Token logic
+        let tokens_text = BackgroundWorker::estimate_event_pack_tokens(&event);
+        assert!(tokens_text > 4);
+
+        let event_json = Event::new(
+            None,
+            "user1".into(),
+            None,
+            Uuid::new_v4(),
+            EventContent::Json(serde_json::json!({ "a": 1 })),
+        );
+        let tokens_json = BackgroundWorker::estimate_event_pack_tokens(&event_json);
+        assert!(tokens_json > 4);
+
+        let event_img = Event::new(
+            None,
+            "user1".into(),
+            None,
+            Uuid::new_v4(),
+            EventContent::Image("http://test".into()),
+        );
+        let tokens_img = BackgroundWorker::estimate_event_pack_tokens(&event_img);
+        assert!(tokens_img > 16);
+    }
+
+    #[tokio::test]
+    async fn test_worker_lifecycle_methods() {
+        let temp = tempfile::tempdir().unwrap();
+        let engine = MemoroseEngine::new(temp.path(), 1000, false, false, 0.5, 128)
+            .await
+            .unwrap();
+        let mut worker = BackgroundWorker::new(engine);
+
+        // is_leader without raft
+        assert!(worker.is_leader().await);
+
+        // If we want to test set_raft we need a MemoroseRaft object, which might be hard to mock.
+        // We'll skip set_raft for now.
     }
 }

@@ -11,7 +11,7 @@ use openraft::BasicNode;
 
 pub struct ShardState {
     pub engine: MemoroseEngine,
-    pub raft: MemoroseRaft,
+    pub raft: Option<MemoroseRaft>,
 }
 
 pub struct ShardManager {
@@ -59,9 +59,9 @@ impl ShardManager {
                 raft_addr_str
             );
 
-            let engine = MemoroseEngine::new(
+            let engine = MemoroseEngine::new_with_storage_config(
                 &shard_dir,
-                config.storage.index_commit_interval_ms,
+                config.storage.clone(),
                 config.worker.enable_auto_planner,
                 config.worker.enable_task_reflection,
                 config.worker.auto_link_similarity_threshold,
@@ -101,7 +101,13 @@ impl ShardManager {
                 }
             });
 
-            shards.insert(shard_id, ShardState { engine, raft });
+            shards.insert(
+                shard_id,
+                ShardState {
+                    engine,
+                    raft: Some(raft),
+                },
+            );
         }
 
         Ok(Self {
@@ -115,11 +121,10 @@ impl ShardManager {
     pub async fn new_single_shard(config: &AppConfig) -> anyhow::Result<Self> {
         let data_dir = &config.storage.root_dir;
         let node_id = config.raft.node_id;
-        let raft_addr_str = config.raft.raft_addr.clone();
 
-        let engine = MemoroseEngine::new(
+        let engine = MemoroseEngine::new_with_storage_config(
             data_dir,
-            config.storage.index_commit_interval_ms,
+            config.storage.clone(),
             config.worker.enable_auto_planner,
             config.worker.enable_task_reflection,
             config.worker.auto_link_similarity_threshold,
@@ -127,25 +132,31 @@ impl ShardManager {
         )
         .await?;
 
-        let raft = start_raft_node(node_id, engine.clone(), config.clone())
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to start raft: {:?}", e))?;
-
         // Start background worker
         let mut worker = BackgroundWorker::with_config(engine.clone(), config.clone());
-        worker.set_raft(raft.clone());
+        let raft = if config.is_cluster_mode() {
+            let raft_addr_str = config.raft.raft_addr.clone();
+            let raft = start_raft_node(node_id, engine.clone(), config.clone())
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to start raft: {:?}", e))?;
+            worker.set_raft(raft.clone());
+
+            let raft_addr: SocketAddr = raft_addr_str.parse()?;
+            let raft_for_server = raft.clone();
+            tokio::spawn(async move {
+                tracing::info!("Raft gRPC server listening on {}", raft_addr);
+                if let Err(e) = run_raft_server(raft_addr, raft_for_server).await {
+                    tracing::error!("Raft server error: {:?}", e);
+                }
+            });
+            Some(raft)
+        } else {
+            tracing::info!("Standalone mode: skipping raft node/server startup");
+            None
+        };
+
         tokio::spawn(async move {
             worker.run().await;
-        });
-
-        // Start raft gRPC server
-        let raft_addr: SocketAddr = raft_addr_str.parse()?;
-        let raft_for_server = raft.clone();
-        tokio::spawn(async move {
-            tracing::info!("Raft gRPC server listening on {}", raft_addr);
-            if let Err(e) = run_raft_server(raft_addr, raft_for_server).await {
-                tracing::error!("Raft server error: {:?}", e);
-            }
         });
 
         let mut shards = HashMap::new();
@@ -191,8 +202,14 @@ impl ShardManager {
         let sharding = config.sharding.as_ref();
 
         for (&shard_id, shard) in &self.shards {
+            let Some(raft) = shard.raft.as_ref() else {
+                results.push(serde_json::json!({
+                    "shard_id": shard_id, "status": "skipped_no_raft"
+                }));
+                continue;
+            };
             // Check if already initialized (has logs or membership)
-            let metrics = shard.raft.metrics().borrow().clone();
+            let metrics = raft.metrics().borrow().clone();
             if metrics.last_log_index.unwrap_or(0) > 0
                 || metrics.membership_config.membership().voter_ids().count() > 0
             {
@@ -223,7 +240,7 @@ impl ShardManager {
             let mut nodes = BTreeMap::new();
             nodes.insert(raft_node_id, BasicNode { addr: raft_addr });
 
-            match shard.raft.initialize(nodes).await {
+            match raft.initialize(nodes).await {
                 Ok(_) => {
                     tracing::info!(
                         "Initialized raft for shard {} (node_id={})",
@@ -266,6 +283,13 @@ impl ShardManager {
         let sharding = config.sharding.as_ref();
 
         for (&shard_id, shard) in &self.shards {
+            let Some(raft) = shard.raft.as_ref() else {
+                results.push(serde_json::json!({
+                    "shard_id": shard_id,
+                    "error": "raft unavailable"
+                }));
+                continue;
+            };
             let joining_raft_id = if self.shard_count > 1 {
                 encode_raft_node_id(shard_id, joining_physical_node_id)
             } else {
@@ -295,7 +319,7 @@ impl ShardManager {
             let node = BasicNode { addr: joining_addr };
 
             // Add as learner
-            match shard.raft.add_learner(joining_raft_id, node, true).await {
+            match raft.add_learner(joining_raft_id, node, true).await {
                 Ok(_) => {}
                 Err(e) => {
                     results.push(serde_json::json!({
@@ -309,12 +333,12 @@ impl ShardManager {
             tokio::task::yield_now().await;
 
             // Promote to voter
-            let metrics = shard.raft.metrics().borrow().clone();
+            let metrics = raft.metrics().borrow().clone();
             let mut members: BTreeSet<u64> =
                 metrics.membership_config.membership().voter_ids().collect();
             members.insert(joining_raft_id);
 
-            match shard.raft.change_membership(members, false).await {
+            match raft.change_membership(members, false).await {
                 Ok(_) => {
                     results.push(serde_json::json!({
                         "shard_id": shard_id,
@@ -338,13 +362,20 @@ impl ShardManager {
         let mut results = Vec::new();
 
         for (&shard_id, shard) in &self.shards {
+            let Some(raft) = shard.raft.as_ref() else {
+                results.push(serde_json::json!({
+                    "shard_id": shard_id,
+                    "error": "raft unavailable"
+                }));
+                continue;
+            };
             let leaving_raft_id = if self.shard_count > 1 {
                 encode_raft_node_id(shard_id, leaving_physical_node_id)
             } else {
                 leaving_physical_node_id as u64
             };
 
-            let metrics = shard.raft.metrics().borrow().clone();
+            let metrics = raft.metrics().borrow().clone();
             let mut members: BTreeSet<u64> =
                 metrics.membership_config.membership().voter_ids().collect();
 
@@ -356,7 +387,7 @@ impl ShardManager {
                 continue;
             }
 
-            match shard.raft.change_membership(members, false).await {
+            match raft.change_membership(members, false).await {
                 Ok(_) => {
                     results.push(serde_json::json!({
                         "shard_id": shard_id,
@@ -381,8 +412,10 @@ impl ShardManager {
             if let Err(e) = shard.engine.graph().flush().await {
                 tracing::error!("Graph flush error for shard {}: {:?}", shard_id, e);
             }
-            if let Err(e) = shard.raft.shutdown().await {
-                tracing::error!("Raft shutdown error for shard {}: {:?}", shard_id, e);
+            if let Some(raft) = shard.raft.as_ref() {
+                if let Err(e) = raft.shutdown().await {
+                    tracing::error!("Raft shutdown error for shard {}: {:?}", shard_id, e);
+                }
             }
         }
     }
@@ -400,6 +433,7 @@ mod tests {
             storage: memorose_common::config::StorageConfig {
                 root_dir: dir.path().to_str().unwrap().to_string(),
                 index_commit_interval_ms: 100,
+                ..Default::default()
             },
             sharding: Some(memorose_common::config::ShardingConfig {
                 enabled: true,
@@ -440,6 +474,7 @@ mod tests {
             storage: memorose_common::config::StorageConfig {
                 root_dir: dir.path().to_str().unwrap().to_string(),
                 index_commit_interval_ms: 100,
+                ..Default::default()
             },
             sharding: Some(memorose_common::config::ShardingConfig {
                 enabled: true,

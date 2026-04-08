@@ -5,9 +5,11 @@ import { formatNumber } from "@/lib/utils";
 import {
   Activity,
   Bot,
+  Clock3,
   Database,
   GitBranch,
   Layers,
+  Search,
   Share2,
   User,
 } from "lucide-react";
@@ -27,10 +29,17 @@ import { api } from "@/lib/api";
 import { useOrgScope } from "@/lib/org-scope";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { GraphData } from "@/lib/types";
+import type { ClusterStatus, GraphData } from "@/lib/types";
 import { motion } from "framer-motion";
 import { useTranslations } from "next-intl";
 import { DashboardHero } from "@/components/dashboard-chrome";
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
 
 function NumberTicker({ value }: { value: number }) {
   const [displayValue, setDisplayValue] = useState(0);
@@ -226,6 +235,7 @@ function WorkerStatus({ config, className = "" }: { config: NonNullable<ReturnTy
   const t = useTranslations("Metrics");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const snapshotLogs = "snapshot_policy_logs" in config ? (config as any).snapshot_policy_logs : "N/A";
+  const worker = config.config.worker;
   return (
     <Card className={`glass-card flex flex-col border-white/[0.04] ${className}`}>
       <CardHeader className="pb-4 border-b border-border">
@@ -239,6 +249,13 @@ function WorkerStatus({ config, className = "" }: { config: NonNullable<ReturnTy
           { label: t("node.heartbeat"), value: `${config.config.heartbeat_interval_ms}ms` },
           { label: t("node.election"), value: `${config.config.election_timeout_min_ms}ms` },
           { label: t("node.snapshot"), value: `${snapshotLogs} ${t("node.logs")}` },
+          { label: t("insight.interval"), value: `${worker.insight_interval_ms}ms` },
+          { label: t("insight.minL1"), value: worker.insight_min_pending_l1 },
+          { label: t("insight.minTokens"), value: worker.insight_min_pending_tokens },
+          { label: t("insight.maxDelay"), value: `${Math.round(worker.insight_max_delay_ms / 3600000)}h` },
+          { label: t("insight.batchTokens"), value: worker.insight_batch_target_tokens },
+          { label: t("insight.batchL1"), value: worker.insight_max_l1_per_batch },
+          { label: t("insight.batchCycles"), value: worker.insight_max_batches_per_cycle },
         ].map((item) => (
           <div key={item.label} className="flex flex-col gap-0.5">
             <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{item.label}</span>
@@ -256,7 +273,7 @@ function BreakdownCard({
   className = "",
 }: {
   title: string;
-  rows: Array<{ label: string; value: number; tone?: string }>;
+  rows: Array<{ label: string; value: string | number; tone?: string }>;
   className?: string;
 }) {
   return (
@@ -271,10 +288,47 @@ function BreakdownCard({
           <div key={row.label} className="flex items-center justify-between gap-4">
             <span className="text-sm text-muted-foreground">{row.label}</span>
             <span className={`font-mono text-sm ${row.tone ?? "text-foreground/80"}`}>
-              {formatNumber(row.value)}
+              {typeof row.value === "number" ? formatNumber(row.value) : row.value}
             </span>
           </div>
         ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+function RuntimeModeBanner({
+  cluster,
+  t,
+}: {
+  cluster: ClusterStatus;
+  t: ReturnType<typeof useTranslations>;
+}) {
+  const standalone = cluster.runtime_mode === "standalone";
+
+  return (
+    <Card className="glass-card overflow-hidden border-white/[0.04]">
+      <CardContent className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
+        <div className="space-y-1">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+            {t("runtime.title")}
+          </div>
+          <div className="flex items-center gap-2">
+            <span
+              className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wider ${
+                standalone ? "bg-success/10 text-success" : "bg-primary/10 text-primary"
+              }`}
+            >
+              {standalone ? t("runtime.standalone") : t("runtime.cluster")}
+            </span>
+            <span className="rounded-full bg-card px-2 py-1 text-[10px] font-mono uppercase tracking-wider text-foreground/75">
+              {cluster.write_path}
+            </span>
+          </div>
+        </div>
+        <div className="max-w-xl text-sm text-muted-foreground">
+          {standalone ? t("runtime.standaloneDesc") : t("runtime.clusterDesc")}
+        </div>
       </CardContent>
     </Card>
   );
@@ -287,6 +341,17 @@ export default function MetricsPage() {
   const { data: stats, isLoading: statsLoading } = useStats(undefined, scopedOrgId || undefined);
   const { data: cluster } = useClusterStatus();
   const [graphData, setGraphData] = useState<GraphData | null>(null);
+  const textIndexMetrics = stats?.text_index_metrics;
+  const overlayLookups =
+    (textIndexMetrics?.overlay_hit_total ?? 0) + (textIndexMetrics?.overlay_miss_total ?? 0);
+  const overlayHitRate =
+    overlayLookups > 0
+      ? `${(((textIndexMetrics?.overlay_hit_total ?? 0) / overlayLookups) * 100).toFixed(1)}%`
+      : "—";
+  const avgCommitLatency =
+    textIndexMetrics && textIndexMetrics.commit_total > 0
+      ? `${(textIndexMetrics.commit_latency_total_ms / textIndexMetrics.commit_total).toFixed(1)}ms`
+      : "—";
 
   useEffect(() => {
     async function loadGraph() {
@@ -337,6 +402,8 @@ export default function MetricsPage() {
           transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
           className="space-y-3"
         >
+          {cluster && <RuntimeModeBanner cluster={cluster} t={t} />}
+
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
             <StatCard label={t("stats.ingested")} value={stats?.total_events ?? 0} icon={Activity} delay={0.1} compact />
             <StatCard label={t("stats.pending")} value={stats?.pending_events ?? 0} icon={Activity} color="text-warning" delay={0.15} compact />
@@ -350,6 +417,111 @@ export default function MetricsPage() {
             <ImportanceHistogram orgId={scopedOrgId || undefined} className="min-h-[280px]" />
             <RelationDistribution graphData={graphData} className="min-h-[280px]" />
           </div>
+
+          {textIndexMetrics && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                <StatCard
+                  label={t("textIndex.dirtyDocs")}
+                  value={textIndexMetrics.dirty_docs}
+                  icon={Activity}
+                  color="text-warning"
+                  delay={0.18}
+                  compact
+                />
+                <StatCard
+                  label={t("textIndex.dirtyBytes")}
+                  value={formatBytes(textIndexMetrics.dirty_bytes)}
+                  icon={Database}
+                  color="text-primary"
+                  delay={0.2}
+                  compact
+                />
+                <StatCard
+                  label={t("textIndex.avgCommitLatency")}
+                  value={avgCommitLatency}
+                  icon={Clock3}
+                  color="text-success"
+                  delay={0.22}
+                  compact
+                />
+                <StatCard
+                  label={t("textIndex.overlayHitRate")}
+                  value={overlayHitRate}
+                  icon={Search}
+                  color="text-primary"
+                  delay={0.24}
+                  compact
+                />
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+                <BreakdownCard
+                  title={t("textIndex.writePathTitle")}
+                  className="min-h-[220px]"
+                  rows={[
+                    {
+                      label: t("textIndex.commitTotal"),
+                      value: textIndexMetrics.commit_total,
+                      tone: "text-primary",
+                    },
+                    {
+                      label: t("textIndex.commitSeq"),
+                      value: textIndexMetrics.commit_seq,
+                      tone: "text-foreground/80",
+                    },
+                    {
+                      label: t("textIndex.busySkips"),
+                      value: textIndexMetrics.commit_skipped_busy_total,
+                      tone: "text-warning",
+                    },
+                    {
+                      label: t("textIndex.commitLatencyTotal"),
+                      value: `${textIndexMetrics.commit_latency_total_ms}ms`,
+                      tone: "text-success",
+                    },
+                  ]}
+                />
+
+                <BreakdownCard
+                  title={t("textIndex.overlayTitle")}
+                  className="min-h-[220px]"
+                  rows={[
+                    {
+                      label: t("textIndex.overlayDocs"),
+                      value: textIndexMetrics.overlay_docs,
+                      tone: "text-primary",
+                    },
+                    {
+                      label: t("textIndex.overlayBytes"),
+                      value: formatBytes(textIndexMetrics.overlay_bytes),
+                      tone: "text-foreground/80",
+                    },
+                    {
+                      label: t("textIndex.overlayHits"),
+                      value: textIndexMetrics.overlay_hit_total,
+                      tone: "text-success",
+                    },
+                    {
+                      label: t("textIndex.overlayMisses"),
+                      value: textIndexMetrics.overlay_miss_total,
+                      tone: "text-warning",
+                    },
+                    {
+                      label: t("textIndex.overlayMerges"),
+                      value: textIndexMetrics.overlay_merge_total,
+                      tone: "text-accent",
+                    },
+                    {
+                      label: t("textIndex.overlayEvictions"),
+                      value: textIndexMetrics.overlay_evicted_total,
+                      tone: "text-muted-foreground",
+                    },
+                  ]}
+                />
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
             {cluster ? (

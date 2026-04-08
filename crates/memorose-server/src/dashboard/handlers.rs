@@ -14,6 +14,7 @@ use memorose_core::engine::{
     OrganizationKnowledgeMembershipEntry, RacDecisionEffect, RacDecisionRecord,
     RacMetricHistoryPoint, RacMetricSnapshot, RacReviewRecord, RacReviewStatus,
 };
+use memorose_core::storage::index::TextIndexMetricSnapshot;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -122,8 +123,14 @@ fn is_local_domain(domain: &MemoryDomain) -> bool {
     matches!(domain, MemoryDomain::Agent | MemoryDomain::User)
 }
 
-fn matches_dashboard_org_scope(record_org_id: Option<&str>, requested_org_id: Option<&str>) -> bool {
-    match requested_org_id.map(str::trim).filter(|value| !value.is_empty()) {
+fn matches_dashboard_org_scope(
+    record_org_id: Option<&str>,
+    requested_org_id: Option<&str>,
+) -> bool {
+    match requested_org_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         None => true,
         Some("default") => record_org_id.is_none() || record_org_id == Some("default"),
         Some(expected) => record_org_id == Some(expected),
@@ -1153,37 +1160,55 @@ pub async fn cluster_status(State(state): State<Arc<crate::AppState>>) -> Json<s
     let mut shard_statuses = Vec::new();
 
     for (shard_id, shard) in state.shard_manager.all_shards() {
-        let metrics = shard.raft.metrics().borrow().clone();
+        let index_metrics = shard.engine.get_text_index_metric_snapshot();
+        if let Some(raft) = shard.raft.as_ref() {
+            let metrics = raft.metrics().borrow().clone();
 
-        let raft_state = if metrics.current_leader == Some(metrics.id) {
-            "Leader"
-        } else if metrics.current_leader.is_some() {
-            "Follower"
+            let raft_state = if metrics.current_leader == Some(metrics.id) {
+                "Leader"
+            } else if metrics.current_leader.is_some() {
+                "Follower"
+            } else {
+                "Candidate"
+            };
+
+            let last_log_index = metrics.last_log_index.unwrap_or_default();
+            let last_applied = metrics.last_applied.map(|l| l.index).unwrap_or_default();
+
+            let voters: Vec<u64> = metrics.membership_config.membership().voter_ids().collect();
+            let learners: Vec<u64> = metrics
+                .membership_config
+                .membership()
+                .learner_ids()
+                .collect();
+
+            shard_statuses.push(serde_json::json!({
+                "shard_id": shard_id,
+                "raft_state": raft_state,
+                "current_leader": metrics.current_leader,
+                "current_term": metrics.current_term,
+                "last_log_index": last_log_index,
+                "last_applied": last_applied,
+                "replication_lag": last_log_index.saturating_sub(last_applied),
+                "voters": voters,
+                "learners": learners,
+                "text_index_metrics": index_metrics,
+            }));
         } else {
-            "Candidate"
-        };
-
-        let last_log_index = metrics.last_log_index.unwrap_or_default();
-        let last_applied = metrics.last_applied.map(|l| l.index).unwrap_or_default();
-
-        let voters: Vec<u64> = metrics.membership_config.membership().voter_ids().collect();
-        let learners: Vec<u64> = metrics
-            .membership_config
-            .membership()
-            .learner_ids()
-            .collect();
-
-        shard_statuses.push(serde_json::json!({
-            "shard_id": shard_id,
-            "raft_state": raft_state,
-            "current_leader": metrics.current_leader,
-            "current_term": metrics.current_term,
-            "last_log_index": last_log_index,
-            "last_applied": last_applied,
-            "replication_lag": last_log_index.saturating_sub(last_applied),
-            "voters": voters,
-            "learners": learners,
-        }));
+            let node_id = state.shard_manager.physical_node_id() as u64;
+            shard_statuses.push(serde_json::json!({
+                "shard_id": shard_id,
+                "raft_state": "Standalone",
+                "current_leader": node_id,
+                "current_term": 0,
+                "last_log_index": 0,
+                "last_applied": 0,
+                "replication_lag": 0,
+                "voters": [node_id],
+                "learners": [],
+                "text_index_metrics": index_metrics,
+            }));
+        }
     }
 
     // Sort by shard_id for deterministic output
@@ -1195,9 +1220,24 @@ pub async fn cluster_status(State(state): State<Arc<crate::AppState>>) -> Json<s
             let mut result = first.clone();
             result["node_id"] = serde_json::json!(state.shard_manager.physical_node_id());
             result["snapshot_policy_logs"] = serde_json::json!(state.config.raft.snapshot_logs);
+            result["runtime_mode"] = serde_json::json!(if state.is_standalone_mode() {
+                "standalone"
+            } else {
+                "cluster"
+            });
+            result["write_path"] = serde_json::json!(state.write_path_name());
             result["config"] = serde_json::json!({
                 "heartbeat_interval_ms": state.config.raft.heartbeat_interval_ms,
                 "election_timeout_min_ms": state.config.raft.election_timeout_min_ms,
+                "worker": {
+                    "insight_interval_ms": state.config.worker.insight_interval_ms,
+                    "insight_min_pending_tokens": state.config.worker.insight_min_pending_tokens,
+                    "insight_min_pending_l1": state.config.worker.insight_min_pending_l1,
+                    "insight_max_delay_ms": state.config.worker.insight_max_delay_ms,
+                    "insight_batch_target_tokens": state.config.worker.insight_batch_target_tokens,
+                    "insight_max_l1_per_batch": state.config.worker.insight_max_l1_per_batch,
+                    "insight_max_batches_per_cycle": state.config.worker.insight_max_batches_per_cycle,
+                }
             });
             return Json(result);
         }
@@ -1206,10 +1246,21 @@ pub async fn cluster_status(State(state): State<Arc<crate::AppState>>) -> Json<s
     Json(serde_json::json!({
         "physical_node_id": state.shard_manager.physical_node_id(),
         "shard_count": state.shard_manager.shard_count(),
+        "runtime_mode": if state.is_standalone_mode() { "standalone" } else { "cluster" },
+        "write_path": state.write_path_name(),
         "shards": shard_statuses,
         "config": {
             "heartbeat_interval_ms": state.config.raft.heartbeat_interval_ms,
             "election_timeout_min_ms": state.config.raft.election_timeout_min_ms,
+            "worker": {
+                "insight_interval_ms": state.config.worker.insight_interval_ms,
+                "insight_min_pending_tokens": state.config.worker.insight_min_pending_tokens,
+                "insight_min_pending_l1": state.config.worker.insight_min_pending_l1,
+                "insight_max_delay_ms": state.config.worker.insight_max_delay_ms,
+                "insight_batch_target_tokens": state.config.worker.insight_batch_target_tokens,
+                "insight_max_l1_per_batch": state.config.worker.insight_max_l1_per_batch,
+                "insight_max_batches_per_cycle": state.config.worker.insight_max_batches_per_cycle,
+            }
         }
     }))
 }
@@ -1259,6 +1310,7 @@ pub async fn stats(
     let mut total_edges = 0usize;
     let mut total_memory = MemoryAggregate::default();
     let mut rac_metrics = RacMetricSnapshot::default();
+    let mut text_index_metrics = TextIndexMetricSnapshot::default();
     let mut rac_history = std::collections::BTreeMap::<String, RacMetricHistoryPoint>::new();
     let mut rac_recent_decisions = Vec::<RacDecisionRecord>::new();
 
@@ -1383,6 +1435,7 @@ pub async fn stats(
             if let Ok(snapshot) = shard.engine.get_rac_metric_snapshot() {
                 rac_metrics.merge(&snapshot);
             }
+            text_index_metrics.merge(&shard.engine.get_text_index_metric_snapshot());
             if let Ok(history) = shard.engine.get_rac_metric_history(history_hours) {
                 for point in history {
                     rac_history
@@ -1444,6 +1497,7 @@ pub async fn stats(
             "local": local_levels,
             "shared": shared_levels,
         },
+        "text_index_metrics": text_index_metrics,
         "rac_metrics": rac_metrics,
         "rac_metrics_history": rac_history.into_values().collect::<Vec<_>>(),
         "rac_recent_decisions": rac_recent_decisions,
@@ -2828,10 +2882,7 @@ pub async fn list_memories(
                             }
                         })
                         .filter(|u| {
-                            matches_dashboard_org_scope(
-                                u.org_id.as_deref(),
-                                org_filter.as_deref(),
-                            )
+                            matches_dashboard_org_scope(u.org_id.as_deref(), org_filter.as_deref())
                         })
                         .map(|u| {
                             let memory_type_str = match u.memory_type {
@@ -2896,10 +2947,7 @@ pub async fn list_memories(
                                 .unwrap_or(false)
                         })
                         .filter(|e| {
-                            matches_dashboard_org_scope(
-                                e.org_id.as_deref(),
-                                org_filter.as_deref(),
-                            )
+                            matches_dashboard_org_scope(e.org_id.as_deref(), org_filter.as_deref())
                         })
                         .map(|event| {
                             let (content, _) = event_content_preview(&event.content);
@@ -3095,10 +3143,7 @@ pub async fn graph_data(
             for unit_id in node_ids_vec {
                 if let Some(hit) = engine.get_shared_search_hit_by_index(unit_id).await? {
                     let unit = hit.memory_unit();
-                    if !matches_dashboard_org_scope(
-                        unit.org_id.as_deref(),
-                        org_filter.as_deref(),
-                    ) {
+                    if !matches_dashboard_org_scope(unit.org_id.as_deref(), org_filter.as_deref()) {
                         continue;
                     }
                     let label = if unit.content.chars().count() > 80 {
@@ -4738,7 +4783,10 @@ mod test_aggregates {
     fn test_matches_dashboard_org_scope_treats_default_as_null_or_default() {
         assert!(matches_dashboard_org_scope(None, None));
         assert!(matches_dashboard_org_scope(None, Some("default")));
-        assert!(matches_dashboard_org_scope(Some("default"), Some("default")));
+        assert!(matches_dashboard_org_scope(
+            Some("default"),
+            Some("default")
+        ));
         assert!(!matches_dashboard_org_scope(Some("org-a"), Some("default")));
         assert!(matches_dashboard_org_scope(Some("org-a"), Some("org-a")));
         assert!(!matches_dashboard_org_scope(None, Some("org-a")));
