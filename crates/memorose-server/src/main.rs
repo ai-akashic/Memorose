@@ -255,7 +255,6 @@ async fn main() {
         login_limiter,
         dashboard_cache,
         http_client: reqwest::Client::builder()
-            .no_proxy()
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .expect("Failed to build HTTP client"),

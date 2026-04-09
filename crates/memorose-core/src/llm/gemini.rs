@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use base64::{engine::general_purpose, Engine as _};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 pub struct GeminiClient {
     client: Client,
@@ -46,7 +47,10 @@ impl GeminiClient {
             task_type,
         );
         Self {
-            client: Client::builder().no_proxy().build().unwrap_or_default(),
+            client: Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()
+                .unwrap_or_default(),
             api_key,
             base_url,
             model,
