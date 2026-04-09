@@ -4791,4 +4791,29 @@ mod test_aggregates {
         assert!(matches_dashboard_org_scope(Some("org-a"), Some("org-a")));
         assert!(!matches_dashboard_org_scope(None, Some("org-a")));
     }
+
+    #[test]
+    fn test_update_last_activity() {
+        let mut last_activity = None;
+        update_last_activity(&mut last_activity, 100);
+        assert_eq!(last_activity, Some(100));
+
+        update_last_activity(&mut last_activity, 50);
+        assert_eq!(last_activity, Some(100)); // Should not update if older
+
+        update_last_activity(&mut last_activity, 150);
+        assert_eq!(last_activity, Some(150)); // Should update if newer
+    }
+
+    #[test]
+    fn test_validate_registry_id() {
+        assert!(validate_registry_id("valid-id", "field_name").is_ok());
+        assert!(validate_registry_id("  valid-id  ", "field_name").is_ok());
+        
+        let err = validate_registry_id("", "field_name").unwrap_err();
+        assert_eq!(err.status(), axum::http::StatusCode::BAD_REQUEST);
+        
+        let err = validate_registry_id("   ", "field_name").unwrap_err();
+        assert_eq!(err.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
 }

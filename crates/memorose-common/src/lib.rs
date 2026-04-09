@@ -668,4 +668,56 @@ mod tests {
     fn test_memory_type_default() {
         assert_eq!(MemoryType::default(), MemoryType::Factual);
     }
+
+    #[test]
+    fn test_forgetting_tombstone() {
+        let tombstone = ForgettingTombstone {
+            user_id: "u1".into(),
+            org_id: None,
+            target_kind: ForgetTargetKind::Event,
+            target_id: "evt1".into(),
+            reason_query: "forget about xyz".into(),
+            created_at: Utc::now(),
+            preview_id: None,
+            mode: ForgetMode::Logical,
+        };
+        assert_eq!(tombstone.target_kind, ForgetTargetKind::Event);
+        assert_eq!(tombstone.mode, ForgetMode::Logical);
+        assert_eq!(tombstone.user_id, "u1");
+    }
+
+    #[test]
+    fn test_asset() {
+        let asset = Asset {
+            storage_key: "local://uuid.png".into(),
+            original_name: "test.png".into(),
+            asset_type: "image/png".into(),
+            description: None,
+            metadata: std::collections::HashMap::new(),
+        };
+        assert_eq!(asset.asset_type, "image/png");
+        assert_eq!(asset.storage_key, "local://uuid.png");
+    }
+
+    #[test]
+    fn test_l3_task() {
+        let task = L3Task {
+            task_id: Uuid::new_v4(),
+            org_id: None,
+            user_id: "user1".into(),
+            agent_id: None,
+            parent_id: None,
+            title: "Task".into(),
+            description: "Task desc".into(),
+            status: TaskStatus::Pending,
+            progress: 0.0,
+            dependencies: vec![],
+            context_refs: vec![],
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            result_summary: None,
+        };
+        assert_eq!(task.user_id, "user1");
+        assert!(matches!(task.status, TaskStatus::Pending));
+    }
 }

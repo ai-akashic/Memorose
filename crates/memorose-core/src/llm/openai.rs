@@ -120,7 +120,7 @@ impl OpenAIClient {
         let actual_base_url = base_url.unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
         let client = Client::builder()
-            .timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(120))
             .build()
             .unwrap_or_default();
 

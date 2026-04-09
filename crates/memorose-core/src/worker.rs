@@ -933,7 +933,12 @@ impl BackgroundWorker {
             return Ok(false);
         }
 
-        valid_events.sort_by(|a, b| a.transaction_time.cmp(&b.transaction_time));
+        valid_events.sort_by_key(|event| {
+            (
+                Self::packed_event_key(event),
+                event.transaction_time,
+            )
+        });
 
         // 1.5 Batching / Prompt Packing with overfetch + fair selection
         let pending_valid_count = valid_events.len();
@@ -1144,18 +1149,28 @@ impl BackgroundWorker {
             }
             if buffer.len() >= mini_batch_size {
                 let batch: Vec<_> = buffer.drain(..).collect();
-                if let Ok(ids) = self.process_pipeline_batch(batch).await {
-                    processed_ids.extend(ids);
-                    any_processed = true;
+                match self.process_pipeline_batch(batch).await {
+                    Ok(ids) => {
+                        processed_ids.extend(ids);
+                        any_processed = true;
+                    }
+                    Err(error) => {
+                        tracing::error!("Consolidation pipeline batch failed: {:?}", error);
+                    }
                 }
             }
         }
 
         // Process remaining
         if !buffer.is_empty() {
-            if let Ok(ids) = self.process_pipeline_batch(buffer).await {
-                processed_ids.extend(ids);
-                any_processed = true;
+            match self.process_pipeline_batch(buffer).await {
+                Ok(ids) => {
+                    processed_ids.extend(ids);
+                    any_processed = true;
+                }
+                Err(error) => {
+                    tracing::error!("Consolidation pipeline tail batch failed: {:?}", error);
+                }
             }
         }
 
@@ -1388,19 +1403,27 @@ impl BackgroundWorker {
             if let Some(client) = self.llm_client.as_ref() {
                 match client.embed_content_batch(inputs_to_embed.clone()).await {
                     Ok(embs) if embs.data.len() == needs_embedding.len() => embs.data,
-                    _ => {
-                        // Fallback to individual embed_content calls
-                        let mut embs = Vec::with_capacity(inputs_to_embed.len());
+                    Ok(_) | Err(_) => {
+                        // Fallback to individual calls
+                        let mut fallbacks = Vec::with_capacity(needs_embedding.len());
                         for input in inputs_to_embed {
-                            embs.push(
-                                client
-                                    .embed_content(input)
-                                    .await
-                                    .map(|r| r.data)
-                                    .unwrap_or_default(),
-                            );
+                            let text = match input {
+                                EmbedInput::Text(t) => t,
+                                EmbedInput::Multimodal { parts } => {
+                                    let mut combined = String::new();
+                                    for part in parts {
+                                        if let crate::llm::EmbedPart::Text(t) = part {
+                                            combined.push_str(&t);
+                                            combined.push('\n');
+                                        }
+                                    }
+                                    combined
+                                }
+                            };
+                            let emb = client.embed(&text).await?;
+                            fallbacks.push(emb.data);
                         }
-                        embs
+                        fallbacks
                     }
                 }
             } else {
@@ -2967,7 +2990,7 @@ mod tests {
             MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
 
         let mut worker = BackgroundWorker::new(engine);
-        worker.config.consolidation_interval_ms = 1;
+        worker.config.consolidation_interval_ms = 1; worker.config.tick_interval_ms = 1;
         *worker.last_consolidation.lock().await =
             std::time::Instant::now() - Duration::from_secs(1);
 
@@ -3108,7 +3131,7 @@ mod tests {
             fail_compress: false,
             generate_response: None,
         }));
-        worker.config.consolidation_interval_ms = 1;
+        worker.config.consolidation_interval_ms = 1; worker.config.tick_interval_ms = 1;
         worker.config.consolidation_batch_size = 32;
         worker.config.consolidation_target_tokens = 10_000;
         worker.config.consolidation_max_events_per_pack = 32;
@@ -3148,7 +3171,7 @@ mod tests {
 
         let mut worker = BackgroundWorker::new(engine.clone());
         worker.llm_client = Some(llm);
-        worker.config.consolidation_interval_ms = 1;
+        worker.config.consolidation_interval_ms = 1; worker.config.tick_interval_ms = 1;
         worker.config.llm_concurrency = 2;
         worker.config.consolidation_batch_size = 8;
         worker.config.consolidation_target_tokens = 4;
@@ -3206,7 +3229,7 @@ mod tests {
             fail_compress: false,
             generate_response: None,
         }));
-        worker.config.consolidation_interval_ms = 1;
+        worker.config.consolidation_interval_ms = 1; worker.config.tick_interval_ms = 1;
         worker.config.consolidation_batch_size = 2;
         worker.config.consolidation_fetch_multiplier = 3;
         worker.config.consolidation_target_tokens = 4;
@@ -3275,7 +3298,7 @@ mod tests {
 
         let mut worker = BackgroundWorker::new(engine.clone());
         worker.llm_client = Some(llm.clone());
-        worker.config.consolidation_interval_ms = 1;
+        worker.config.consolidation_interval_ms = 1; worker.config.tick_interval_ms = 1;
         worker.config.llm_concurrency = 2;
         worker.config.consolidation_batch_size = 2;
         worker.config.consolidation_fetch_multiplier = 1;
@@ -3893,6 +3916,10 @@ mod tests {
         let stream_id = Uuid::new_v4();
 
         let mut worker = BackgroundWorker::new(engine.clone());
+        worker.llm_client = Some(Arc::new(MockLLM {
+            fail_compress: false,
+            generate_response: None,
+        }));
         worker.config.community_trigger_l1_step = 1;
 
         let processed = worker
@@ -4074,7 +4101,11 @@ mod tests {
             MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
 
         let mut worker = BackgroundWorker::new(engine.clone());
-        worker.config.consolidation_interval_ms = 1;
+        worker.llm_client = Some(Arc::new(MockLLM {
+            fail_compress: false,
+            generate_response: None,
+        }));
+        worker.config.consolidation_interval_ms = 1; worker.config.tick_interval_ms = 1;
         *worker.last_consolidation.lock().await =
             std::time::Instant::now() - Duration::from_secs(1);
 
@@ -4119,7 +4150,11 @@ mod tests {
             MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
 
         let mut worker = BackgroundWorker::new(engine.clone());
-        worker.config.consolidation_interval_ms = 1;
+        worker.llm_client = Some(Arc::new(MockLLM {
+            fail_compress: false,
+            generate_response: None,
+        }));
+        worker.config.consolidation_interval_ms = 1; worker.config.tick_interval_ms = 1;
         *worker.last_consolidation.lock().await =
             std::time::Instant::now() - Duration::from_secs(1);
 
