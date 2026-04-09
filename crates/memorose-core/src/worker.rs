@@ -6,7 +6,10 @@ use memorose_common::{
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use tokio::sync::mpsc;
 use tokio::time::Duration;
 
@@ -32,15 +35,36 @@ struct ProducedBatch {
     embed_input: Option<EmbedInput>,
 }
 
+struct RunningFlagGuard {
+    flag: Arc<AtomicBool>,
+}
+
+impl RunningFlagGuard {
+    fn try_acquire(flag: Arc<AtomicBool>) -> Option<Self> {
+        flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| Self { flag })
+    }
+}
+
+impl Drop for RunningFlagGuard {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::Release);
+    }
+}
+
+#[derive(Clone)]
 pub struct BackgroundWorker {
     engine: MemoroseEngine,
     llm_client: Option<Arc<dyn LLMClient>>,
     config: memorose_common::config::WorkerConfig,
-    last_decay: tokio::sync::Mutex<std::time::Instant>,
-    last_compaction: tokio::sync::Mutex<std::time::Instant>,
-    last_consolidation: tokio::sync::Mutex<std::time::Instant>,
-    last_insight: tokio::sync::Mutex<std::time::Instant>,
-    last_community: tokio::sync::Mutex<std::time::Instant>,
+    last_decay: Arc<tokio::sync::Mutex<std::time::Instant>>,
+    last_compaction: Arc<tokio::sync::Mutex<std::time::Instant>>,
+    last_consolidation: Arc<tokio::sync::Mutex<std::time::Instant>>,
+    last_insight: Arc<tokio::sync::Mutex<std::time::Instant>>,
+    last_community: Arc<tokio::sync::Mutex<std::time::Instant>>,
+    consolidation_running: Arc<AtomicBool>,
+    insight_running: Arc<AtomicBool>,
     raft: Option<crate::raft::MemoroseRaft>,
 }
 
@@ -320,11 +344,13 @@ impl BackgroundWorker {
             engine,
             llm_client,
             config: config.worker,
-            last_decay: tokio::sync::Mutex::new(now),
-            last_compaction: tokio::sync::Mutex::new(now),
-            last_consolidation: tokio::sync::Mutex::new(now),
-            last_insight: tokio::sync::Mutex::new(now),
-            last_community: tokio::sync::Mutex::new(now),
+            last_decay: Arc::new(tokio::sync::Mutex::new(now)),
+            last_compaction: Arc::new(tokio::sync::Mutex::new(now)),
+            last_consolidation: Arc::new(tokio::sync::Mutex::new(now)),
+            last_insight: Arc::new(tokio::sync::Mutex::new(now)),
+            last_community: Arc::new(tokio::sync::Mutex::new(now)),
+            consolidation_running: Arc::new(AtomicBool::new(false)),
+            insight_running: Arc::new(AtomicBool::new(false)),
             raft: None,
         }
     }
@@ -344,8 +370,108 @@ impl BackgroundWorker {
 
     pub async fn run(&self) {
         let tick_ms = self.config.tick_interval_ms.max(10);
-        tracing::info!("Background Worker started (Loop interval: {}ms).", tick_ms);
+        let consolidation_interval_ms = self
+            .config
+            .consolidation_interval_ms
+            .max(self.config.tick_interval_ms);
+        let insight_interval_ms = self
+            .config
+            .insight_interval_ms
+            .max(self.config.tick_interval_ms);
+        tracing::info!(
+            "Background Worker started (maintenance={}ms, consolidation={}ms, insight={}ms).",
+            tick_ms,
+            consolidation_interval_ms,
+            insight_interval_ms
+        );
+
+        let mut loop_tasks = tokio::task::JoinSet::new();
+
+        let consolidation_worker = self.clone();
+        loop_tasks.spawn(async move {
+            consolidation_worker.run_consolidation_loop().await;
+            "consolidation"
+        });
+
+        if self.llm_client.is_some() {
+            let insight_worker = self.clone();
+            loop_tasks.spawn(async move {
+                insight_worker.run_insight_loop().await;
+                "insight"
+            });
+        }
+
         let mut interval = tokio::time::interval(Duration::from_millis(tick_ms));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    if !self.is_leader().await {
+                        continue;
+                    }
+
+                    if let Err(e) = self.run_decay_cycle().await {
+                        tracing::error!("Decay cycle failed: {:?}", e);
+                    }
+
+                    if let Err(e) = self.run_l3_task_cycle().await {
+                        tracing::error!("L3 Task cycle failed: {:?}", e);
+                    }
+
+                    if let Err(e) = self.run_compaction_cycle().await {
+                        tracing::error!("Compaction cycle failed: {:?}", e);
+                    }
+
+                    if self.llm_client.is_some() {
+                        if let Err(e) = self.run_community_cycle().await {
+                            tracing::error!("Community cycle failed: {:?}", e);
+                        }
+                    }
+                }
+                Some(result) = loop_tasks.join_next() => {
+                    match result {
+                        Ok(loop_name) => {
+                            tracing::warn!("{} loop exited unexpectedly; restarting", loop_name);
+                        }
+                        Err(error) => {
+                            tracing::error!("Background loop task failed: {:?}", error);
+                        }
+                    }
+
+                    loop_tasks.abort_all();
+                    while loop_tasks.join_next().await.is_some() {}
+
+                    let should_restart_insight = self.llm_client.is_some();
+                    let consolidation_worker = self.clone();
+                    loop_tasks.spawn(async move {
+                        consolidation_worker.run_consolidation_loop().await;
+                        "consolidation"
+                    });
+
+                    if should_restart_insight {
+                        let insight_worker = self.clone();
+                        loop_tasks.spawn(async move {
+                            insight_worker.run_insight_loop().await;
+                            "insight"
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    async fn run_consolidation_loop(self) {
+        let tick_ms = self.config.tick_interval_ms.max(10);
+        tracing::info!(
+            "Consolidation loop started (poll={}ms, run_interval={}ms).",
+            tick_ms,
+            self.config
+                .consolidation_interval_ms
+                .max(self.config.tick_interval_ms)
+        );
+
+        let mut interval = tokio::time::interval(Duration::from_millis(tick_ms));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         loop {
             interval.tick().await;
@@ -354,34 +480,52 @@ impl BackgroundWorker {
                 continue;
             }
 
-            // Each cycle tracks its own last-run timestamp independently,
-            // preventing the thundering-herd that occurred when a shared
-            // tick counter was reset to zero.
+            let Some(_running_guard) =
+                RunningFlagGuard::try_acquire(self.consolidation_running.clone())
+            else {
+                tracing::debug!("Consolidation loop is still busy; skipping this tick.");
+                continue;
+            };
 
-            if let Err(e) = self.run_decay_cycle().await {
-                tracing::error!("Decay cycle failed: {:?}", e);
+            if let Err(error) = self.run_consolidation_cycle().await {
+                tracing::error!("Consolidation loop failed: {:?}", error);
+            }
+        }
+    }
+
+    async fn run_insight_loop(self) {
+        if self.llm_client.is_none() {
+            tracing::info!("Insight loop disabled: no LLM client configured.");
+            return;
+        }
+
+        let tick_ms = self.config.tick_interval_ms.max(10);
+        tracing::info!(
+            "Insight loop started (poll={}ms, run_interval={}ms).",
+            tick_ms,
+            self.config
+                .insight_interval_ms
+                .max(self.config.tick_interval_ms)
+        );
+
+        let mut interval = tokio::time::interval(Duration::from_millis(tick_ms));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+        loop {
+            interval.tick().await;
+
+            if !self.is_leader().await {
+                continue;
             }
 
-            if let Err(e) = self.run_l3_task_cycle().await {
-                tracing::error!("L3 Task cycle failed: {:?}", e);
-            }
+            let Some(_running_guard) = RunningFlagGuard::try_acquire(self.insight_running.clone())
+            else {
+                tracing::debug!("Insight loop is still busy; skipping this tick.");
+                continue;
+            };
 
-            if let Err(e) = self.run_consolidation_cycle().await {
-                tracing::error!("Consolidation cycle failed: {:?}", e);
-            }
-
-            if let Err(e) = self.run_compaction_cycle().await {
-                tracing::error!("Compaction cycle failed: {:?}", e);
-            }
-
-            if self.llm_client.is_some() {
-                if let Err(e) = self.run_insight_cycle().await {
-                    tracing::error!("Insight cycle failed: {:?}", e);
-                }
-
-                if let Err(e) = self.run_community_cycle().await {
-                    tracing::error!("Community cycle failed: {:?}", e);
-                }
+            if let Err(error) = self.run_insight_cycle().await {
+                tracing::error!("Insight loop failed: {:?}", error);
             }
         }
     }

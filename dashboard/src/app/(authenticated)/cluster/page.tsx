@@ -26,6 +26,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 
+const RAFT_STATE_COLOR: Record<ShardStatus["raft_state"], string> = {
+  Leader: "text-success",
+  Follower: "text-primary",
+  Candidate: "text-warning",
+  Standalone: "text-success",
+};
+
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -104,12 +111,7 @@ function RaftMetricsGrid({ data, stateColor, t }: { data: ShardStatus | ClusterS
 }
 
 function ShardRaftCard({ shard, t }: { shard: ShardStatus; t: ReturnType<typeof useTranslations> }) {
-  const stateColor = {
-    Leader: "text-success",
-    Follower: "text-primary",
-    Candidate: "text-warning",
-    Standalone: "text-success",
-  }[shard.raft_state] || "text-muted-foreground";
+  const stateColor = RAFT_STATE_COLOR[shard.raft_state] || "text-muted-foreground";
 
   const isHealthy = shard.replication_lag <= 10;
 
@@ -132,12 +134,7 @@ function ShardRaftCard({ shard, t }: { shard: ShardStatus; t: ReturnType<typeof 
 }
 
 function RaftStatusCard({ cluster, t }: { cluster: ClusterStatusSingle; t: ReturnType<typeof useTranslations> }) {
-  const stateColor = {
-    Leader: "text-success",
-    Follower: "text-primary",
-    Candidate: "text-warning",
-    Standalone: "text-success",
-  }[cluster.raft_state] || "text-muted-foreground";
+  const stateColor = RAFT_STATE_COLOR[cluster.raft_state] || "text-muted-foreground";
 
   return (
     <Card className="glass-card overflow-hidden relative">
