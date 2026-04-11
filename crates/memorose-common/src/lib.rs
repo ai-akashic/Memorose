@@ -404,6 +404,20 @@ pub struct StoredMemoryFact {
     pub confidence: f32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MaterializationState {
+    Pending,
+    RetryScheduled,
+    Failed,
+    #[default]
+    Published,
+}
+
+fn default_memory_visibility() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryUnit {
     pub id: Uuid,
@@ -423,6 +437,15 @@ pub struct MemoryUnit {
     /// Vector embedding for retrieval
     #[serde(skip_serializing_if = "Option::is_none")]
     pub embedding: Option<Vec<f32>>,
+
+    #[serde(default = "default_memory_visibility")]
+    pub visible: bool,
+
+    #[serde(default)]
+    pub materialization_state: MaterializationState,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub materialized_at: Option<DateTime<Utc>>,
 
     /// Keywords for text indexing
     pub keywords: Vec<String>,
@@ -506,6 +529,9 @@ impl MemoryUnit {
             share_policy: SharePolicy::default(),
             content,
             embedding,
+            visible: true,
+            materialization_state: MaterializationState::Published,
+            materialized_at: Some(now),
             keywords: Vec::new(),
             importance: 1.0, // Start with high importance
             level: 1,        // Default to L1

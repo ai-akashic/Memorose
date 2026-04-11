@@ -17,7 +17,7 @@ use flate2::Compression;
 use lancedb::connect;
 use memorose_common::{
     tokenizer::count_tokens, Event, ForgettingTombstone, GraphEdge, MemoryDomain, MemoryType,
-    MemoryUnit, RelationType, SharePolicy, ShareTarget, TimeRange,
+    MaterializationState, MemoryUnit, RelationType, SharePolicy, ShareTarget, TimeRange,
 };
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
@@ -52,6 +52,71 @@ pub struct ReflectionBatchOutcome {
     pub consumed_tokens: usize,
     pub next_first_event_tx_micros: Option<i64>,
     pub next_first_event_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PendingMaterializationJobStatus {
+    Pending,
+    RetryScheduled,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PendingMaterializationPart {
+    Text { text: String },
+    InlineData { mime_type: String, data: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PendingMaterializationInput {
+    Text(String),
+    Multimodal { parts: Vec<PendingMaterializationPart> },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingMaterializationJob {
+    pub job_id: Uuid,
+    pub unit: MemoryUnit,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub post_publish_edges: Vec<GraphEdge>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embed_input: Option<PendingMaterializationInput>,
+    pub status: PendingMaterializationJobStatus,
+    #[serde(default)]
+    pub attempts: u32,
+    pub next_attempt_at_micros: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl PendingMaterializationJob {
+    pub fn new(
+        mut unit: MemoryUnit,
+        post_publish_edges: Vec<GraphEdge>,
+        embed_input: Option<PendingMaterializationInput>,
+    ) -> Self {
+        let now = Utc::now();
+        unit.visible = false;
+        unit.materialization_state = MaterializationState::Pending;
+        unit.materialized_at = None;
+        Self {
+            job_id: Uuid::new_v4(),
+            unit,
+            post_publish_edges,
+            embed_input,
+            status: PendingMaterializationJobStatus::Pending,
+            attempts: 0,
+            next_attempt_at_micros: now.timestamp_micros(),
+            last_error: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -2615,24 +2680,27 @@ impl MemoroseEngine {
             return Ok(0);
         }
 
-        let mut units_to_store = topic_units;
-        let topic_count = units_to_store.len();
-        self.populate_missing_embeddings(&mut units_to_store).await;
-
-        self.store_memory_units(units_to_store.clone()).await?;
-
-        for topic in units_to_store {
-            for source_id in topic.references {
-                let edge = GraphEdge::new(
-                    topic.user_id.clone(),
-                    topic.id,
-                    source_id,
-                    RelationType::DerivedFrom,
-                    1.0,
-                );
-                self.graph.add_edge(&edge).await?;
-            }
-        }
+        let topic_count = topic_units.len();
+        let jobs = topic_units
+            .into_iter()
+            .map(|topic| {
+                let post_publish_edges = topic
+                    .references
+                    .iter()
+                    .map(|source_id| {
+                        GraphEdge::new(
+                            topic.user_id.clone(),
+                            topic.id,
+                            *source_id,
+                            RelationType::DerivedFrom,
+                            1.0,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                PendingMaterializationJob::new(topic, post_publish_edges, None)
+            })
+            .collect::<Vec<_>>();
+        self.enqueue_materialization_jobs(jobs)?;
 
         Ok(topic_count)
     }
@@ -3956,10 +4024,12 @@ impl MemoroseEngine {
     ) -> Result<()> {
         let kv = self._kv.clone();
         let index_key = format!("idx:unit:{}", unit_id);
+        let hooks_key = Self::materialization_post_publish_key(unit_id);
 
         tokio::task::spawn_blocking(move || {
             kv.delete(&unit_key)?;
             kv.delete(index_key.as_bytes()).ok();
+            kv.delete(hooks_key.as_bytes()).ok();
             Ok::<(), anyhow::Error>(())
         })
         .await??;
@@ -4357,15 +4427,94 @@ impl MemoroseEngine {
         Ok(published_count)
     }
 
-    pub async fn store_memory_units(&self, units: Vec<MemoryUnit>) -> Result<()> {
-        self.store_memory_units_internal(units, true).await
+    async fn write_materialized_search_storage(&self, unit: &MemoryUnit) -> Result<()> {
+        if unit.embedding.is_some() {
+            self.vector.ensure_table("memories").await?;
+            self.vector
+                .delete_by_id("memories", &unit.id.to_string())
+                .await?;
+            self.vector.add("memories", vec![unit.clone()]).await?;
+        }
+
+        let index = self.index.clone();
+        let unit_for_index = unit.clone();
+        let id = unit.id.to_string();
+        tokio::task::spawn_blocking(move || {
+            index.delete_unit(&id)?;
+            index.index_unit(&unit_for_index)?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await??;
+
+        Ok(())
     }
 
-    pub(crate) async fn store_memory_units_without_reconciliation(
+    async fn write_published_memory_unit_metadata(&self, unit: &MemoryUnit) -> Result<()> {
+        let kv = self._kv.clone();
+        let unit_to_store = unit.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut batch = rocksdb::WriteBatch::default();
+            let key = format!("u:{}:unit:{}", unit_to_store.user_id, unit_to_store.id);
+            let idx_key = format!("idx:unit:{}", unit_to_store.id);
+            batch.put(key.as_bytes(), &serde_json::to_vec(&unit_to_store)?);
+            batch.put(idx_key.as_bytes(), unit_to_store.user_id.as_bytes());
+
+            if unit_to_store.level == 1 && Self::is_local_domain(&unit_to_store.domain) {
+                let l1_key = format!("l1_idx:{}:{}", unit_to_store.user_id, unit_to_store.id);
+                batch.put(
+                    l1_key.as_bytes(),
+                    unit_to_store.transaction_time.timestamp_micros().to_le_bytes(),
+                );
+            }
+
+            kv.write_batch(batch)?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await??;
+
+        if unit.level == 1 && Self::is_local_domain(&unit.domain) {
+            let tx_micros = unit.transaction_time.timestamp_micros();
+            self.bump_reflection_marker_with_window(
+                &unit.user_id,
+                1,
+                count_tokens(&unit.content),
+                Some(tx_micros),
+                Some(tx_micros),
+                Some(unit.id.to_string()),
+            )?;
+        }
+
+        Ok(())
+    }
+
+    pub(crate) async fn publish_materialized_memory_unit(&self, unit: &MemoryUnit) -> Result<()> {
+        Self::validate_materialized_units(std::slice::from_ref(unit))?;
+        self.write_materialized_search_storage(unit).await?;
+        self.write_published_memory_unit_metadata(unit).await
+    }
+
+    pub(crate) async fn run_published_memory_unit_side_effects(
         &self,
-        units: Vec<MemoryUnit>,
+        unit: &MemoryUnit,
     ) -> Result<()> {
-        self.store_memory_units_internal(units, false).await
+        if !Self::is_local_domain(&unit.domain) || !self.is_visible_memory_unit(unit)? {
+            return Ok(());
+        }
+
+        if let Err(error) = self.auto_link_memory(unit).await {
+            tracing::error!("Auto-linking failed for unit {}: {:?}", unit.id, error);
+        }
+        if let Err(error) = self.semantic_link_memory(unit).await {
+            tracing::error!("Semantic linking failed for unit {}: {:?}", unit.id, error);
+        }
+
+        self.publish_native_shared_knowledge(std::slice::from_ref(unit))
+            .await?;
+        Ok(())
+    }
+
+    pub async fn store_memory_units(&self, units: Vec<MemoryUnit>) -> Result<()> {
+        self.store_memory_units_internal(units, true).await
     }
 
     async fn store_memory_units_internal(
@@ -4376,6 +4525,8 @@ impl MemoroseEngine {
         if units.is_empty() {
             return Ok(());
         }
+
+        Self::validate_materialized_units(&units)?;
 
         // 1. Store Metadata in KV (user-prefixed keys + global index)
         let kv = self._kv.clone();
@@ -5802,7 +5953,9 @@ impl MemoroseEngine {
         if self.is_memory_unit_forgotten(user_id, id)? {
             return Ok(None);
         }
-        self.get_memory_unit_raw(user_id, id)
+        Ok(self
+            .get_memory_unit_raw(user_id, id)?
+            .filter(|unit| self.is_visible_memory_unit(unit).unwrap_or(false)))
     }
 
     /// Return a native memory unit even if it has been logically forgotten.
@@ -5851,6 +6004,207 @@ impl MemoroseEngine {
 
     fn forgotten_event_key(user_id: &str, id: &str) -> String {
         format!("forget:event:{}:{}", user_id, id)
+    }
+
+    fn materialization_job_key(job_id: Uuid) -> String {
+        format!("materialize:job:{}", job_id)
+    }
+
+    fn materialization_due_key(next_attempt_at_micros: i64, job_id: Uuid) -> String {
+        format!(
+            "materialize:due:{:020}:{}",
+            next_attempt_at_micros.max(0),
+            job_id
+        )
+    }
+
+    fn materialization_due_prefix() -> &'static [u8] {
+        b"materialize:due:"
+    }
+
+    fn materialization_post_publish_key(unit_id: Uuid) -> String {
+        format!("materialize:hooks:{}", unit_id)
+    }
+
+    fn requires_materialized_embedding(unit: &MemoryUnit) -> bool {
+        unit.visible
+            && unit.materialization_state == MaterializationState::Published
+            && (1..=3).contains(&unit.level)
+            && Self::is_local_domain(&unit.domain)
+    }
+
+    fn validate_materialized_units(units: &[MemoryUnit]) -> Result<()> {
+        if cfg!(test) {
+            return Ok(());
+        }
+
+        for unit in units {
+            if Self::requires_materialized_embedding(unit)
+                && unit.embedding.as_ref().map(|embedding| embedding.is_empty()) != Some(false)
+            {
+                return Err(anyhow!(
+                    "memory unit {} (level {}) cannot be published without an embedding",
+                    unit.id,
+                    unit.level
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn materialization_post_publish_applied(&self, unit_id: Uuid) -> Result<bool> {
+        Ok(self
+            .system_kv()
+            .get(Self::materialization_post_publish_key(unit_id).as_bytes())?
+            .is_some())
+    }
+
+    pub(crate) fn mark_materialization_post_publish_applied(&self, unit_id: Uuid) -> Result<()> {
+        let now = chrono::Utc::now().timestamp_micros().to_string();
+        self.system_kv().put(
+            Self::materialization_post_publish_key(unit_id).as_bytes(),
+            now.as_bytes(),
+        )
+    }
+
+    fn save_materialization_job(&self, job: &PendingMaterializationJob) -> Result<()> {
+        let system_kv = self.system_kv();
+        let job_key = Self::materialization_job_key(job.job_id);
+        let due_key = Self::materialization_due_key(job.next_attempt_at_micros, job.job_id);
+        system_kv.put(job_key.as_bytes(), &serde_json::to_vec(job)?)?;
+        if job.status != PendingMaterializationJobStatus::Failed {
+            system_kv.put(due_key.as_bytes(), &[])?;
+        }
+        Ok(())
+    }
+
+    pub fn enqueue_materialization_jobs(
+        &self,
+        jobs: Vec<PendingMaterializationJob>,
+    ) -> Result<()> {
+        let system_kv = self.system_kv();
+        for job in jobs {
+            let job_key = Self::materialization_job_key(job.job_id);
+            let due_key = Self::materialization_due_key(job.next_attempt_at_micros, job.job_id);
+            system_kv.put(job_key.as_bytes(), &serde_json::to_vec(&job)?)?;
+            system_kv.put(due_key.as_bytes(), &[])?;
+        }
+        Ok(())
+    }
+
+    pub fn fetch_due_materialization_jobs(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<PendingMaterializationJob>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let system_kv = self.system_kv();
+        let now = Utc::now().timestamp_micros().max(0);
+        let due_entries = system_kv.scan(Self::materialization_due_prefix())?;
+        let mut jobs = Vec::new();
+
+        for (key, _) in due_entries {
+            if jobs.len() >= limit {
+                break;
+            }
+
+            let Ok(key_str) = String::from_utf8(key) else {
+                continue;
+            };
+            let mut parts = key_str.split(':');
+            let Some("materialize") = parts.next() else {
+                continue;
+            };
+            let Some("due") = parts.next() else {
+                continue;
+            };
+            let Some(due_raw) = parts.next() else {
+                continue;
+            };
+            let Some(job_id_raw) = parts.next() else {
+                continue;
+            };
+
+            let Ok(due_at) = due_raw.parse::<i64>() else {
+                continue;
+            };
+            if due_at > now {
+                break;
+            }
+
+            let Ok(job_id) = Uuid::parse_str(job_id_raw) else {
+                continue;
+            };
+            let job_key = Self::materialization_job_key(job_id);
+            let Some(bytes) = system_kv.get(job_key.as_bytes())? else {
+                system_kv.delete(key_str.as_bytes()).ok();
+                continue;
+            };
+            let Ok(job) = serde_json::from_slice::<PendingMaterializationJob>(&bytes) else {
+                continue;
+            };
+            if job.status == PendingMaterializationJobStatus::Failed {
+                continue;
+            }
+            jobs.push(job);
+        }
+
+        Ok(jobs)
+    }
+
+    pub fn reschedule_materialization_job(
+        &self,
+        job: &mut PendingMaterializationJob,
+        error: impl ToString,
+    ) -> Result<()> {
+        let system_kv = self.system_kv();
+        let old_due_key = Self::materialization_due_key(job.next_attempt_at_micros, job.job_id);
+        system_kv.delete(old_due_key.as_bytes()).ok();
+
+        job.attempts = job.attempts.saturating_add(1);
+        job.status = PendingMaterializationJobStatus::RetryScheduled;
+        job.last_error = Some(error.to_string());
+        job.updated_at = Utc::now();
+
+        let backoff_secs = match job.attempts {
+            0 | 1 => 10,
+            2 => 30,
+            3 => 120,
+            4 => 600,
+            _ => 1800,
+        };
+        job.next_attempt_at_micros = (Utc::now() + chrono::Duration::seconds(backoff_secs))
+            .timestamp_micros();
+
+        self.save_materialization_job(job)
+    }
+
+    pub fn fail_materialization_job(
+        &self,
+        job: &mut PendingMaterializationJob,
+        error: impl ToString,
+    ) -> Result<()> {
+        let system_kv = self.system_kv();
+        let old_due_key = Self::materialization_due_key(job.next_attempt_at_micros, job.job_id);
+        system_kv.delete(old_due_key.as_bytes()).ok();
+
+        job.attempts = job.attempts.saturating_add(1);
+        job.status = PendingMaterializationJobStatus::Failed;
+        job.last_error = Some(error.to_string());
+        job.updated_at = Utc::now();
+
+        self.save_materialization_job(job)
+    }
+
+    pub fn delete_materialization_job(&self, job: &PendingMaterializationJob) -> Result<()> {
+        let system_kv = self.system_kv();
+        let job_key = Self::materialization_job_key(job.job_id);
+        let due_key = Self::materialization_due_key(job.next_attempt_at_micros, job.job_id);
+        system_kv.delete(job_key.as_bytes()).ok();
+        system_kv.delete(due_key.as_bytes()).ok();
+        Ok(())
     }
 
     pub fn mark_memory_unit_forgotten(
@@ -5910,7 +6264,9 @@ impl MemoroseEngine {
             return Ok(true);
         }
 
-        Ok(!self.is_memory_unit_forgotten(&unit.user_id, unit.id)?)
+        Ok(unit.visible
+            && unit.materialization_state == MaterializationState::Published
+            && !self.is_memory_unit_forgotten(&unit.user_id, unit.id)?)
     }
 
     pub async fn delete_memory_unit_hard(&self, user_id: &str, unit_id: Uuid) -> Result<()> {
@@ -5989,18 +6345,26 @@ impl MemoroseEngine {
 
         // 1. Delete from KV + L1 secondary index
         let kv_clone = kv.clone();
-        let keys_and_levels: Vec<(Vec<u8>, String, u8)> = to_prune
+        let keys_and_levels: Vec<(Vec<u8>, String, u8, String)> = to_prune
             .iter()
-            .map(|(k, u)| (k.clone(), u.id.to_string(), u.level))
+            .map(|(k, u)| {
+                (
+                    k.clone(),
+                    u.id.to_string(),
+                    u.level,
+                    Self::materialization_post_publish_key(u.id),
+                )
+            })
             .collect();
         let user_id_owned = user_id.to_string();
         tokio::task::spawn_blocking(move || {
-            for (key, id, level) in &keys_and_levels {
+            for (key, id, level, hooks_key) in &keys_and_levels {
                 kv_clone.delete(key)?;
                 if *level == 1 {
                     let l1_key = format!("l1_idx:{}:{}", user_id_owned, id);
                     kv_clone.delete(l1_key.as_bytes()).ok();
                 }
+                kv_clone.delete(hooks_key.as_bytes()).ok();
             }
             Ok::<(), anyhow::Error>(())
         })
@@ -6107,24 +6471,25 @@ impl MemoroseEngine {
             l2_unit.keywords.push(insight.name.clone());
             l2_unit.keywords.extend(insight.keywords);
             l2_unit.references = members.clone();
-
-            self.populate_missing_embeddings(std::slice::from_mut(&mut l2_unit))
-                .await;
-
-            self.store_memory_unit(l2_unit.clone()).await?;
-
             let l2_id = l2_unit.id;
             let uid2 = user_id.to_string();
-            for member_id in members {
-                let edge = GraphEdge::new(
-                    uid2.clone(),
-                    l2_id,
-                    member_id,
-                    RelationType::DerivedFrom,
-                    1.0,
-                );
-                self.graph.add_edge(&edge).await?;
-            }
+            let post_publish_edges = members
+                .iter()
+                .map(|member_id| {
+                    GraphEdge::new(
+                        uid2.clone(),
+                        l2_id,
+                        *member_id,
+                        RelationType::DerivedFrom,
+                        1.0,
+                    )
+                })
+                .collect::<Vec<_>>();
+            self.enqueue_materialization_jobs(vec![PendingMaterializationJob::new(
+                l2_unit,
+                post_publish_edges,
+                None,
+            )])?;
 
             created += 1;
             tracing::info!(
@@ -6261,24 +6626,25 @@ impl MemoroseEngine {
             l2_unit.keywords.push(insight.name.clone());
             l2_unit.keywords.extend(insight.keywords);
             l2_unit.references = members.clone();
-
-            self.populate_missing_embeddings(std::slice::from_mut(&mut l2_unit))
-                .await;
-
-            self.store_memory_unit(l2_unit.clone()).await?;
-
             let l2_id = l2_unit.id;
             let uid2 = user_id.to_string();
-            for member_id in members {
-                let edge = GraphEdge::new(
-                    uid2.clone(),
-                    l2_id,
-                    member_id,
-                    RelationType::DerivedFrom,
-                    1.0,
-                );
-                self.graph.add_edge(&edge).await?;
-            }
+            let post_publish_edges = members
+                .iter()
+                .map(|member_id| {
+                    GraphEdge::new(
+                        uid2.clone(),
+                        l2_id,
+                        *member_id,
+                        RelationType::DerivedFrom,
+                        1.0,
+                    )
+                })
+                .collect::<Vec<_>>();
+            self.enqueue_materialization_jobs(vec![PendingMaterializationJob::new(
+                l2_unit,
+                post_publish_edges,
+                None,
+            )])?;
 
             tracing::info!(
                 "Created L2 Insight '{}' from {} members for user {}",
@@ -6399,7 +6765,10 @@ impl MemoroseEngine {
         let results: Vec<MemoryUnit> = values
             .into_iter()
             .filter_map(|v| v.and_then(|bytes| serde_json::from_slice::<MemoryUnit>(&bytes).ok()))
-            .filter(|unit: &MemoryUnit| Self::is_local_domain(&unit.domain))
+            .filter(|unit: &MemoryUnit| {
+                Self::is_local_domain(&unit.domain)
+                    && self.is_visible_memory_unit(unit).unwrap_or(false)
+            })
             .collect();
 
         Ok(results)
@@ -6416,7 +6785,11 @@ impl MemoroseEngine {
         let mut results: Vec<MemoryUnit> = pairs
             .into_iter()
             .filter_map(|(_, val)| serde_json::from_slice::<MemoryUnit>(&val).ok())
-            .filter(|u| u.level == 1 && Self::is_local_domain(&u.domain))
+            .filter(|u| {
+                u.level == 1
+                    && Self::is_local_domain(&u.domain)
+                    && self.is_visible_memory_unit(u).unwrap_or(false)
+            })
             .filter(|u| {
                 min_transaction_time_micros
                     .map(|min_ts| u.transaction_time.timestamp_micros() >= min_ts)
@@ -6527,7 +6900,7 @@ impl MemoroseEngine {
         for (i, res) in db_results.into_iter().enumerate() {
             if let Some(bytes) = res {
                 if let Ok(unit) = serde_json::from_slice::<MemoryUnit>(&bytes) {
-                    if self.is_memory_unit_forgotten(user_id, unit.id)? {
+                    if !self.is_visible_memory_unit(&unit)? {
                         continue;
                     }
                     final_results.push((unit, results[i].1));
@@ -6581,7 +6954,7 @@ impl MemoroseEngine {
         for res in results {
             if let Some(bytes) = res {
                 if let Ok(unit) = serde_json::from_slice::<MemoryUnit>(&bytes) {
-                    if self.is_memory_unit_forgotten(user_id, unit.id)? {
+                    if !self.is_visible_memory_unit(&unit)? {
                         continue;
                     }
                     units.push(unit);

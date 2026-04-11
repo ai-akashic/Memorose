@@ -64,6 +64,7 @@ pub struct BackgroundWorker {
     last_insight: Arc<tokio::sync::Mutex<std::time::Instant>>,
     last_community: Arc<tokio::sync::Mutex<std::time::Instant>>,
     consolidation_running: Arc<AtomicBool>,
+    materialization_running: Arc<AtomicBool>,
     insight_running: Arc<AtomicBool>,
     raft: Option<crate::raft::MemoroseRaft>,
 }
@@ -350,6 +351,7 @@ impl BackgroundWorker {
             last_insight: Arc::new(tokio::sync::Mutex::new(now)),
             last_community: Arc::new(tokio::sync::Mutex::new(now)),
             consolidation_running: Arc::new(AtomicBool::new(false)),
+            materialization_running: Arc::new(AtomicBool::new(false)),
             insight_running: Arc::new(AtomicBool::new(false)),
             raft: None,
         }
@@ -379,9 +381,10 @@ impl BackgroundWorker {
             .insight_interval_ms
             .max(self.config.tick_interval_ms);
         tracing::info!(
-            "Background Worker started (maintenance={}ms, consolidation={}ms, insight={}ms).",
+            "Background Worker started (maintenance={}ms, consolidation={}ms, materialization={}ms, insight={}ms).",
             tick_ms,
             consolidation_interval_ms,
+            tick_ms,
             insight_interval_ms
         );
 
@@ -391,6 +394,12 @@ impl BackgroundWorker {
         loop_tasks.spawn(async move {
             consolidation_worker.run_consolidation_loop().await;
             "consolidation"
+        });
+
+        let materialization_worker = self.clone();
+        loop_tasks.spawn(async move {
+            materialization_worker.run_materialization_loop().await;
+            "materialization"
         });
 
         if self.llm_client.is_some() {
@@ -448,6 +457,12 @@ impl BackgroundWorker {
                         "consolidation"
                     });
 
+                    let materialization_worker = self.clone();
+                    loop_tasks.spawn(async move {
+                        materialization_worker.run_materialization_loop().await;
+                        "materialization"
+                    });
+
                     if should_restart_insight {
                         let insight_worker = self.clone();
                         loop_tasks.spawn(async move {
@@ -489,6 +504,33 @@ impl BackgroundWorker {
 
             if let Err(error) = self.run_consolidation_cycle().await {
                 tracing::error!("Consolidation loop failed: {:?}", error);
+            }
+        }
+    }
+
+    async fn run_materialization_loop(self) {
+        let tick_ms = self.config.tick_interval_ms.max(10);
+        tracing::info!("Materialization loop started (poll={}ms).", tick_ms);
+
+        let mut interval = tokio::time::interval(Duration::from_millis(tick_ms));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+        loop {
+            interval.tick().await;
+
+            if !self.is_leader().await {
+                continue;
+            }
+
+            let Some(_running_guard) =
+                RunningFlagGuard::try_acquire(self.materialization_running.clone())
+            else {
+                tracing::debug!("Materialization loop is still busy; skipping this tick.");
+                continue;
+            };
+
+            if let Err(error) = self.run_materialization_cycle().await {
+                tracing::error!("Materialization loop failed: {:?}", error);
             }
         }
     }
@@ -663,6 +705,297 @@ impl BackgroundWorker {
                     .collect::<Option<Vec<f32>>>()
                     .filter(|vec| !vec.is_empty())
             })
+    }
+
+    fn pending_input_from_embed_input(
+        input: EmbedInput,
+    ) -> crate::engine::PendingMaterializationInput {
+        match input {
+            EmbedInput::Text(text) => crate::engine::PendingMaterializationInput::Text(text),
+            EmbedInput::Multimodal { parts } => crate::engine::PendingMaterializationInput::Multimodal {
+                parts: parts
+                    .into_iter()
+                    .map(|part| match part {
+                        EmbedPart::Text(text) => {
+                            crate::engine::PendingMaterializationPart::Text { text }
+                        }
+                        EmbedPart::InlineData { mime_type, data } => {
+                            crate::engine::PendingMaterializationPart::InlineData {
+                                mime_type,
+                                data,
+                            }
+                        }
+                    })
+                    .collect(),
+            },
+        }
+    }
+
+    fn embed_input_from_pending_input(
+        input: crate::engine::PendingMaterializationInput,
+    ) -> EmbedInput {
+        match input {
+            crate::engine::PendingMaterializationInput::Text(text) => EmbedInput::Text(text),
+            crate::engine::PendingMaterializationInput::Multimodal { parts } => {
+                EmbedInput::Multimodal {
+                    parts: parts
+                        .into_iter()
+                        .map(|part| match part {
+                            crate::engine::PendingMaterializationPart::Text { text } => {
+                                EmbedPart::Text(text)
+                            }
+                            crate::engine::PendingMaterializationPart::InlineData {
+                                mime_type,
+                                data,
+                            } => EmbedPart::InlineData { mime_type, data },
+                        })
+                        .collect(),
+                }
+            }
+        }
+    }
+
+    async fn publish_materialization_job(
+        &self,
+        mut job: crate::engine::PendingMaterializationJob,
+    ) -> Result<bool> {
+        if let Some(existing) = self
+            .engine
+            .get_memory_unit_including_forgotten(&job.unit.user_id, job.unit.id)?
+        {
+            if existing.visible
+                && existing.materialization_state == memorose_common::MaterializationState::Published
+            {
+                self.run_post_publish_hooks_once(&existing, &job.post_publish_edges)
+                    .await?;
+                self.engine.delete_materialization_job(&job)?;
+                return Ok(true);
+            }
+        }
+
+        job.unit.visible = true;
+        job.unit.materialization_state = memorose_common::MaterializationState::Published;
+        job.unit.materialized_at = Some(chrono::Utc::now());
+
+        self.engine
+            .publish_materialized_memory_unit(&job.unit)
+            .await?;
+
+        self.run_post_publish_hooks_once(&job.unit, &job.post_publish_edges)
+            .await?;
+        self.engine.delete_materialization_job(&job)?;
+        Ok(true)
+    }
+
+    async fn run_post_publish_hooks_once(
+        &self,
+        unit: &MemoryUnit,
+        staged_edges: &[GraphEdge],
+    ) -> Result<()> {
+        if self.engine.materialization_post_publish_applied(unit.id)? {
+            return Ok(());
+        }
+
+        self.run_post_publish_hooks(std::slice::from_ref(unit), staged_edges)
+            .await?;
+        self.engine
+            .mark_materialization_post_publish_applied(unit.id)?;
+        Ok(())
+    }
+
+    async fn run_post_publish_hooks(
+        &self,
+        units: &[MemoryUnit],
+        staged_edges: &[GraphEdge],
+    ) -> Result<()> {
+        for unit in units {
+            self.engine
+                .run_published_memory_unit_side_effects(unit)
+                .await?;
+        }
+
+        for edge in staged_edges {
+            self.engine.graph().add_edge(edge).await?;
+        }
+
+        let mut l1_increase_by_user: HashMap<String, usize> = HashMap::new();
+        for unit in units {
+            if unit.level == 1 {
+                *l1_increase_by_user.entry(unit.user_id.clone()).or_insert(0) += 1;
+            }
+        }
+
+        let community_step = self.config.community_trigger_l1_step.max(1);
+        for (user_id, delta) in l1_increase_by_user {
+            if let Ok((before, after)) = self.engine.bump_l1_count_and_get_range(&user_id, delta).await {
+                if before / community_step < after / community_step && after >= community_step {
+                    let _ = self.engine.set_needs_community(&user_id);
+                }
+            }
+        }
+
+        if self.engine.task_reflection {
+            for unit in units {
+                if let Some(ref meta) = unit.task_metadata {
+                    if meta.status == memorose_common::TaskStatus::Completed {
+                        if let Ok(incoming) = self
+                            .engine
+                            .graph()
+                            .get_incoming_edges(&unit.user_id, unit.id)
+                            .await
+                        {
+                            for edge in incoming {
+                                if edge.relation == memorose_common::RelationType::IsSubTaskOf {
+                                    let _ = self
+                                        .update_parent_progress(&unit.user_id, edge.source_id)
+                                        .await;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn run_materialization_cycle(&self) -> Result<bool> {
+        let limit = self.config.consolidation_store_batch_size.max(1);
+        let mut jobs = self.engine.fetch_due_materialization_jobs(limit)?;
+        if jobs.is_empty() {
+            return Ok(false);
+        }
+
+        let mut any_published = false;
+        let mut ready_jobs = Vec::new();
+        let mut jobs_needing_embedding = Vec::new();
+
+        for job in jobs.drain(..) {
+            if let Some(existing) = self
+                .engine
+                .get_memory_unit_including_forgotten(&job.unit.user_id, job.unit.id)?
+            {
+                if existing.visible
+                    && existing.materialization_state
+                        == memorose_common::MaterializationState::Published
+                {
+                    ready_jobs.push(job);
+                    continue;
+                }
+            }
+
+            if job.unit.embedding.is_some() {
+                ready_jobs.push(job);
+            } else {
+                jobs_needing_embedding.push(job);
+            }
+        }
+
+        for mut job in ready_jobs {
+            match self.publish_materialization_job(job.clone()).await {
+                Ok(published) => any_published |= published,
+                Err(error) => {
+                    let error_message = format!("Materialization publish failed: {:?}", error);
+                    if job.attempts >= self.config.consolidation_max_retries {
+                        self.engine.fail_materialization_job(&mut job, &error_message)?;
+                    } else {
+                        self.engine
+                            .reschedule_materialization_job(&mut job, &error_message)?;
+                    }
+                }
+            }
+        }
+
+        if jobs_needing_embedding.is_empty() {
+            return Ok(any_published);
+        }
+
+        let Some(client) = self.llm_client.as_ref() else {
+            let max_retries = self.config.consolidation_max_retries;
+            for mut job in jobs_needing_embedding {
+                let error = "No LLM client available for materialization embedding";
+                if job.attempts >= max_retries {
+                    self.engine.fail_materialization_job(&mut job, error)?;
+                } else {
+                    self.engine.reschedule_materialization_job(&mut job, error)?;
+                }
+            }
+            return Ok(any_published);
+        };
+
+        let inputs_to_embed = jobs_needing_embedding
+            .iter()
+            .map(|job| {
+                job.embed_input
+                    .clone()
+                    .map(Self::embed_input_from_pending_input)
+                    .unwrap_or_else(|| EmbedInput::Text(job.unit.content.clone()))
+            })
+            .collect::<Vec<_>>();
+
+        match client.embed_content_batch(inputs_to_embed).await {
+            Ok(response) if response.data.len() == jobs_needing_embedding.len() => {
+                for (mut job, embedding) in jobs_needing_embedding
+                    .into_iter()
+                    .zip(response.data.into_iter())
+                {
+                    if embedding.is_empty() {
+                        let error = "Materialization embedding returned empty vector";
+                        if job.attempts >= self.config.consolidation_max_retries {
+                            self.engine.fail_materialization_job(&mut job, error)?;
+                        } else {
+                            self.engine.reschedule_materialization_job(&mut job, error)?;
+                        }
+                        continue;
+                    }
+
+                    job.unit.embedding = Some(embedding);
+                    match self.publish_materialization_job(job.clone()).await {
+                        Ok(published) => any_published |= published,
+                        Err(error) => {
+                            let error_message =
+                                format!("Materialization publish after embedding failed: {:?}", error);
+                            if job.attempts >= self.config.consolidation_max_retries {
+                                self.engine.fail_materialization_job(&mut job, &error_message)?;
+                            } else {
+                                self.engine
+                                    .reschedule_materialization_job(&mut job, &error_message)?;
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(response) => {
+                let max_retries = self.config.consolidation_max_retries;
+                let error = format!(
+                    "Materialization embedding size mismatch: expected={}, got={}",
+                    jobs_needing_embedding.len(),
+                    response.data.len()
+                );
+                for mut job in jobs_needing_embedding {
+                    if job.attempts >= max_retries {
+                        self.engine.fail_materialization_job(&mut job, &error)?;
+                    } else {
+                        self.engine.reschedule_materialization_job(&mut job, &error)?;
+                    }
+                }
+            }
+            Err(error) => {
+                let max_retries = self.config.consolidation_max_retries;
+                let error_message = format!("Materialization embedding failed: {:?}", error);
+                for mut job in jobs_needing_embedding {
+                    if job.attempts >= max_retries {
+                        self.engine.fail_materialization_job(&mut job, &error_message)?;
+                    } else {
+                        self.engine
+                            .reschedule_materialization_job(&mut job, &error_message)?;
+                    }
+                }
+            }
+        }
+
+        Ok(any_published)
     }
 
     /// Generates a semantic fingerprint by stripping numbers, punctuation, and converting to lowercase.
@@ -1376,82 +1709,17 @@ impl BackgroundWorker {
             return Ok(Vec::new());
         }
 
-        // Phase 2: Batch Embed
-        let mut inputs_to_embed = Vec::new();
-        let mut needs_embedding = Vec::new();
-
-        for (idx, (event_ids, _, _, summary, _, _, metadata, embed_input)) in
-            batch.iter().enumerate()
-        {
-            match Self::parse_metadata_embedding(metadata) {
-                Some(Some(_)) => continue,
-                Some(None) | None => {}
-            }
-            if summary.trim().is_empty() {
-                tracing::warn!("Skipping empty summary for packed events {:?}", event_ids);
-                continue;
-            }
-            // Use multimodal embed input if available, otherwise fall back to text
-            let input = embed_input
-                .clone()
-                .unwrap_or_else(|| EmbedInput::Text(summary.clone()));
-            inputs_to_embed.push(input);
-            needs_embedding.push(idx);
-        }
-
-        let embeddings = if !inputs_to_embed.is_empty() {
-            if let Some(client) = self.llm_client.as_ref() {
-                match client.embed_content_batch(inputs_to_embed.clone()).await {
-                    Ok(embs) if embs.data.len() == needs_embedding.len() => embs.data,
-                    Ok(_) | Err(_) => {
-                        // Fallback to individual calls
-                        let mut fallbacks = Vec::with_capacity(needs_embedding.len());
-                        for input in inputs_to_embed {
-                            let text = match input {
-                                EmbedInput::Text(t) => t,
-                                EmbedInput::Multimodal { parts } => {
-                                    let mut combined = String::new();
-                                    for part in parts {
-                                        if let crate::llm::EmbedPart::Text(t) = part {
-                                            combined.push_str(&t);
-                                            combined.push('\n');
-                                        }
-                                    }
-                                    combined
-                                }
-                            };
-                            let emb = client.embed(&text).await?;
-                            fallbacks.push(emb.data);
-                        }
-                        fallbacks
-                    }
-                }
-            } else {
-                vec![]
-            }
-        } else {
-            vec![]
-        };
-
-        let mut embeddings_by_idx = HashMap::new();
-        for (i, emb) in needs_embedding.into_iter().zip(embeddings.into_iter()) {
-            if !emb.is_empty() {
-                embeddings_by_idx.insert(i, emb);
-            }
-        }
-
-        // Phase 3: Store
-        let mut units_to_store = Vec::new();
+        let mut staged_units = Vec::new();
         let mut processed_ids = Vec::new();
 
         for (
-            idx,
-            (event_ids, user_id, stream_id, summary, valid_at, assets, metadata, _embed_input),
+            _idx,
+            (event_ids, user_id, stream_id, summary, valid_at, assets, metadata, embed_input),
         ) in batch.into_iter().enumerate()
         {
             let embedding = match Self::parse_metadata_embedding(&metadata) {
                 Some(Some(vec)) => Some(vec),
-                Some(None) | None => embeddings_by_idx.remove(&idx),
+                Some(None) | None => None,
             };
 
             let is_agent = metadata.get("role").and_then(|v| v.as_str()) == Some("assistant")
@@ -1517,18 +1785,33 @@ impl BackgroundWorker {
             }
 
             self.hydrate_extracted_facts(&mut unit).await;
-            units_to_store.push(unit);
+            let pending_input = if unit.embedding.is_some() {
+                None
+            } else {
+                Some(Self::pending_input_from_embed_input(
+                    embed_input.unwrap_or_else(|| EmbedInput::Text(unit.content.clone())),
+                ))
+            };
+            staged_units.push((unit, pending_input));
             for evt_id in event_ids {
                 processed_ids.push(evt_id.to_string());
             }
         }
 
-        if !units_to_store.is_empty() {
+        if !staged_units.is_empty() {
+            let mut pending_input_by_unit = staged_units
+                .iter()
+                .map(|(unit, pending_input)| (unit.id, pending_input.clone()))
+                .collect::<HashMap<_, _>>();
+            let mut units_to_stage = staged_units
+                .into_iter()
+                .map(|(unit, _)| unit)
+                .collect::<Vec<_>>();
             let staged_edges = self
-                .reconcile_staged_units_before_store(&mut units_to_store)
+                .reconcile_staged_units_before_store(&mut units_to_stage)
                 .await?;
 
-            for unit in &units_to_store {
+            for unit in &units_to_stage {
                 if unit.level == 1
                     && unit.memory_type == memorose_common::MemoryType::Factual
                     && matches!(
@@ -1546,62 +1829,23 @@ impl BackgroundWorker {
                 }
             }
 
-            self.engine
-                .store_memory_units_without_reconciliation(units_to_store.clone())
-                .await?;
-
+            let mut edges_by_source = HashMap::<uuid::Uuid, Vec<GraphEdge>>::new();
             for edge in staged_edges {
-                self.engine.graph().add_edge(&edge).await?;
+                edges_by_source.entry(edge.source_id).or_default().push(edge);
             }
 
-            let mut l1_increase_by_user: HashMap<String, usize> = HashMap::new();
-            for unit in &units_to_store {
-                if unit.level == 1 {
-                    *l1_increase_by_user.entry(unit.user_id.clone()).or_insert(0) += 1;
-                }
-            }
-
-            // Community Trigger
-            let community_step = self.config.community_trigger_l1_step.max(1);
-            for (user_id, delta) in l1_increase_by_user {
-                if let Ok((before, after)) = self
-                    .engine
-                    .bump_l1_count_and_get_range(&user_id, delta)
-                    .await
-                {
-                    if before / community_step < after / community_step && after >= community_step {
-                        let _ = self.engine.set_needs_community(&user_id);
-                    }
-                }
-            }
-
-            // Task Reflection
-            if self.engine.task_reflection {
-                // ... simplified task reflection trigger ...
-                for unit in &units_to_store {
-                    if let Some(ref meta) = unit.task_metadata {
-                        if meta.status == memorose_common::TaskStatus::Completed {
-                            // This part is complex to clone inside loop, maybe skip for pipeline simplification or re-implement
-                            // For now, let's keep it minimal or trigger async?
-                            // Re-implementing simplified version:
-                            if let Ok(incoming) = self
-                                .engine
-                                .graph()
-                                .get_incoming_edges(&unit.user_id, unit.id)
-                                .await
-                            {
-                                for edge in incoming {
-                                    if edge.relation == memorose_common::RelationType::IsSubTaskOf {
-                                        let _ = self
-                                            .update_parent_progress(&unit.user_id, edge.source_id)
-                                            .await;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            let jobs = units_to_stage
+                .into_iter()
+                .map(|unit| {
+                    let unit_id = unit.id;
+                    crate::engine::PendingMaterializationJob::new(
+                        unit,
+                        edges_by_source.remove(&unit_id).unwrap_or_default(),
+                        pending_input_by_unit.remove(&unit_id).flatten(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            self.engine.enqueue_materialization_jobs(jobs)?;
         }
 
         // Mark processed

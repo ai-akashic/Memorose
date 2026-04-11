@@ -269,7 +269,7 @@ fn generate_api_key() -> String {
         .take(36)
         .map(char::from)
         .collect();
-    format!("mrk_{secret}")
+    format!("sk_{secret}")
 }
 
 fn api_key_summary_from_record(record: &ApiKeyRecord) -> ApiKeySummary {
@@ -326,7 +326,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(created.org_id, "default");
-        assert!(created.key.starts_with("mrk_"));
+        assert!(created.key.starts_with("sk_"));
 
         let keys = registry.list_api_keys().await.unwrap();
         assert_eq!(keys.len(), 1);

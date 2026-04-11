@@ -2144,6 +2144,11 @@ async fn materialize_semantic_update_source(
     let Some(source_content) = plan.source_content.clone() else {
         anyhow::bail!("semantic update plan is missing source content");
     };
+    let Some(embedding) = embedding.filter(|embedding| !embedding.is_empty()) else {
+        anyhow::bail!(
+            "semantic update requires a valid embedding before materializing the source memory"
+        );
+    };
 
     let mut source_event = MemoryEvent::new(
         plan.org_id.clone(),
@@ -2162,7 +2167,7 @@ async fn materialize_semantic_update_source(
         source_event.stream_id,
         MemoryType::Factual,
         source_content,
-        embedding,
+        Some(embedding),
     );
     source_unit.transaction_time = source_event.transaction_time;
     source_unit.valid_time = source_event.valid_time;
