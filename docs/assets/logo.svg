@@ -1,0 +1,32 @@
+<svg width="200" height="200" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="memoroseLogoTitle">
+  <title id="memoroseLogoTitle">Memorose logo</title>
+  <defs>
+    <path id="outerPetal" d="M256 256C224 218 202 180 194 142C189 117 198 94 220 82C236 73 250 75 256 92C262 75 276 73 292 82C314 94 323 117 318 142C310 180 288 218 256 256Z"/>
+    <path id="innerPetal" d="M256 256C236 232 224 209 221 187C219 171 225 157 239 149C247 144 253 146 256 154C259 146 265 144 273 149C287 157 293 171 291 187C288 209 276 232 256 256Z"/>
+    <linearGradient id="outerFill" x1="256" y1="86" x2="256" y2="256" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#E6B8AA"/>
+      <stop offset="1" stop-color="#C97865"/>
+    </linearGradient>
+    <linearGradient id="innerFill" x1="256" y1="146" x2="256" y2="256" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F4DDD2"/>
+      <stop offset="1" stop-color="#D9A08D"/>
+    </linearGradient>
+  </defs>
+  <g opacity="0.98">
+    <g fill="url(#outerFill)">
+      <use href="#outerPetal"/>
+      <use href="#outerPetal" transform="rotate(72 256 256)"/>
+      <use href="#outerPetal" transform="rotate(144 256 256)"/>
+      <use href="#outerPetal" transform="rotate(216 256 256)"/>
+      <use href="#outerPetal" transform="rotate(288 256 256)"/>
+    </g>
+    <g fill="url(#innerFill)">
+      <use href="#innerPetal" transform="rotate(36 256 256)"/>
+      <use href="#innerPetal" transform="rotate(108 256 256)"/>
+      <use href="#innerPetal" transform="rotate(180 256 256)"/>
+      <use href="#innerPetal" transform="rotate(252 256 256)"/>
+      <use href="#innerPetal" transform="rotate(324 256 256)"/>
+    </g>
+    <circle cx="256" cy="256" r="28" fill="#4E5B54"/>
+  </g>
+</svg>

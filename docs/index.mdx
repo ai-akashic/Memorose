@@ -1,0 +1,79 @@
+---
+title: Introduction
+description: Memorose is a memory runtime for agents, with layered memory, shared organizational knowledge, tasks, multimodal ingest, and Raft-backed deployment.
+---
+
+# Memorose turns raw agent traffic into memory that compounds.
+
+Memorose ingests events, consolidates facts and procedures, previews semantic updates or forgetting before execution, projects shared organizational knowledge, tracks goals and tasks, and exposes the whole runtime through a Rust server, a dashboard, and Raft-backed deployment model.
+
+## Runtime map
+
+| Layer | What it holds |
+| --- | --- |
+| `L0` | Raw events: text, image, audio, video, and JSON |
+| `L1` | Stable memory: facts, preferences, procedural traces, and summaries |
+| `L2` | Insights: themes, graph-linked clusters, and organization knowledge |
+| `L3` | Goals and tasks: milestones, dependencies, progress, and outcomes |
+
+## What ships now
+
+- Stream-first HTTP API for ingest and retrieval
+- Hybrid recall across vector, text, graph, time, and organization knowledge
+- Semantic preview and execute flows for corrections and forgetting
+- Goal and task runtime with trees, readiness, and progress tracking
+- Dashboard APIs for memory inspection, graph views, and cluster operations
+- Single-node and Raft-backed deployment modes
+
+## Key routes
+
+- `POST /v1/users/:user_id/streams/:stream_id/events`
+- `POST /v1/users/:user_id/streams/:stream_id/retrieve`
+- `GET /v1/users/:user_id/tasks/tree`
+- `GET /v1/organizations/:org_id/knowledge`
+- `POST /v1/users/:user_id/memories/semantic/preview`
+- `POST /v1/users/:user_id/memories/semantic/execute`
+
+## How to read this docs set
+
+1. Start with [Quickstart](getting-started/quickstart) for a real ingest and retrieval round-trip.
+2. Read [Architecture Overview](architecture/overview) to understand L0-L3, domains, storage, and deployment.
+3. Use the [REST API reference](api/rest-api) when wiring your own client or agent runtime.
+4. Continue into [Guides](guides/basic-operations) for dashboard operations, hybrid search, organization knowledge, and distributed deployment.
+
+## Choose by job
+
+### I need to build
+
+Start with:
+
+- [Quickstart](getting-started/quickstart)
+- [REST API](api/rest-api)
+- [Hybrid Search](guides/hybrid-search)
+
+### I need to operate
+
+Start with:
+
+- [Dashboard](guides/dashboard)
+- [Organization Knowledge](guides/organization-knowledge)
+- [Distributed Deployment](guides/distributed-deployment)
+
+### I need to reason about the system
+
+Start with:
+
+- [Architecture Overview](architecture/overview)
+- [Memory Hierarchy](architecture/memory-hierarchy)
+- [Memory Scopes](architecture/memory-scopes)
+
+## Source of truth
+
+This documentation follows the current server model implemented in:
+
+- `README.md`
+- `config.example.toml`
+- `crates/memorose-server/src/main.rs`
+- `crates/memorose-core`
+
+Older CRUD-style examples centered on `add memory` and `search memories` are no longer the primary integration model.
