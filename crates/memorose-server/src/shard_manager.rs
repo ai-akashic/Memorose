@@ -507,4 +507,48 @@ mod tests {
             assert_eq!(status, "failed");
         }
     }
+
+    #[test]
+    fn test_shard_for_user_consistent() {
+        let shard_count = 4;
+        // Same user_id should always map to the same shard
+        let s1 = user_id_to_shard("user-abc-123", shard_count);
+        let s2 = user_id_to_shard("user-abc-123", shard_count);
+        assert_eq!(s1, s2, "Same user_id must always map to the same shard");
+        assert!(s1 < shard_count);
+
+        // Different user_ids should (likely) map to different shards
+        let sa = user_id_to_shard("alice", shard_count);
+        let sb = user_id_to_shard("bob", shard_count);
+        let sc = user_id_to_shard("charlie", shard_count);
+        // At least two of three should differ (extremely unlikely all collide with SHA-256)
+        assert!(
+            sa != sb || sb != sc,
+            "Different user_ids should distribute across shards"
+        );
+    }
+
+    #[test]
+    fn test_shard_for_user_distribution() {
+        let shard_count = 4u32;
+        let mut counts = [0u32; 4];
+
+        for i in 0..1000 {
+            let uid = format!("user-{}", i);
+            let shard = user_id_to_shard(&uid, shard_count);
+            assert!(shard < shard_count);
+            counts[shard as usize] += 1;
+        }
+
+        // Each shard should get roughly 250 out of 1000.
+        // Allow a generous range of [150, 350] to avoid flaky tests.
+        for (i, &count) in counts.iter().enumerate() {
+            assert!(
+                count >= 150 && count <= 350,
+                "Shard {} got {} assignments, expected roughly 250 (within [150, 350])",
+                i,
+                count
+            );
+        }
+    }
 }

@@ -27,6 +27,13 @@ impl SystemKvStore {
         self.inner.scan(prefix)
     }
 
+    /// Scan keys with the given prefix, returning at most `limit` key-value pairs.
+    /// More efficient than `scan()` when only a subset is needed, as it stops
+    /// iterating once the limit is reached.
+    pub fn scan_limited(&self, prefix: &[u8], limit: usize) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        self.inner.scan_limited(prefix, limit)
+    }
+
     pub fn scan_range(
         &self,
         start_key: &[u8],

@@ -94,7 +94,7 @@
   --radius-lg: 1.35rem;
   --radius-xl: 1.75rem;
 
-  --font-sans: "Avenir Next", "SF Pro Rounded", "SF Pro Display", "Segoe UI", var(--font-geist-sans), "Geist", system-ui, sans-serif;
+  --font-sans: var(--font-geist-sans), "Geist", "Avenir Next", "SF Pro Rounded", "SF Pro Display", "Segoe UI", system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), "Geist Mono", ui-monospace, monospace;
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22);
@@ -207,7 +207,7 @@
   }
 
   .dashboard-stat-label {
-    @apply text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80;
+    @apply text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80;
   }
 
   .dashboard-stat-value {
@@ -216,6 +216,10 @@
 
   .dashboard-soft-border {
     @apply border border-white/8 bg-white/[0.025];
+  }
+
+  .label-xs {
+    @apply text-[10px] font-semibold uppercase tracking-wider text-muted-foreground;
   }
 
   .blob-bg {

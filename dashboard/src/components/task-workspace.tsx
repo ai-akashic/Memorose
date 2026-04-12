@@ -43,7 +43,7 @@ function StatusBadge({ status }: { status: ReadyTask["status"] }) {
   return (
     <Badge
       variant="outline"
-      className={`min-h-6 rounded-full px-2.5 text-[11px] font-medium tracking-wide ${statusBadgeClass(status)}`}
+      className={`min-h-6 rounded-full px-2.5 text-xs font-medium tracking-wide ${statusBadgeClass(status)}`}
     >
       {label}
     </Badge>
@@ -106,13 +106,13 @@ function ReadyTaskRow({
 
         <div className="flex items-start justify-between gap-3 lg:min-w-[180px] lg:flex-col lg:items-end">
           <StatusBadge status={task.status} />
-          <div className="text-right text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+          <div className="text-right label-xs">
             {t("ready.label")}
           </div>
         </div>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+      <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 label-xs">
         <span className="inline-flex items-center gap-1.5">
           <Clock className="h-3.5 w-3.5" />
           {new Date(task.created_at).toLocaleString()}
@@ -146,7 +146,7 @@ function ReadyTaskRow({
             size="sm"
             variant="outline"
             disabled={busy}
-            className="h-10 min-w-[112px] gap-2 border-border bg-background/70 px-3 text-[10px] font-bold uppercase tracking-wider text-muted-foreground hover:border-destructive/20 hover:bg-destructive/10 hover:text-destructive"
+            className="h-10 min-w-[112px] gap-2 border-border bg-background/70 px-3 label-xs hover:border-destructive/20 hover:bg-destructive/10 hover:text-destructive"
             onClick={() => markStatus("Cancelled")}
           >
             <XCircle className="h-3.5 w-3.5" />
@@ -194,7 +194,7 @@ export function TaskWorkspace({
           <Zap className="w-3.5 h-3.5" />
           {tTasks("tabs.ready")}
           {ready && ready.length > 0 && (
-            <Badge className="ml-1 h-5 rounded-full bg-primary/80 px-1.5 text-[11px] text-primary-foreground">
+            <Badge className="ml-1 h-5 rounded-full bg-primary/80 px-1.5 text-xs text-primary-foreground">
               {ready.length}
             </Badge>
           )}
@@ -238,7 +238,7 @@ export function TaskWorkspace({
                   <CheckCircle2 className="h-6 w-6 opacity-20" />
                 </div>
                 <p className="text-sm font-medium text-muted-foreground/60">{tTasks("ready.empty")}</p>
-                <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                <p className="mt-1 label-xs">
                   {tTasks("ready.emptyDescription")}
                 </p>
               </div>

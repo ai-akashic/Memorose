@@ -51,7 +51,7 @@ export default function LoginPage() {
           <h1 className="text-[2.6rem] font-bold tracking-tighter mt-7 bg-clip-text text-transparent bg-gradient-to-b from-white via-white/90 to-white/40 leading-none">
             Memorose
           </h1>
-          <p className="text-muted-foreground/70 mt-2 text-[0.8rem] font-medium tracking-[0.2em] uppercase">
+          <p className="text-muted-foreground/70 mt-2 text-[0.8rem] font-medium tracking-widest uppercase">
             {t("tagline")}
           </p>
         </div>

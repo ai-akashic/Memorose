@@ -30,6 +30,12 @@ pub struct Claims {
     pub exp: usize,
 }
 
+/// Dashboard authentication state backed by local files.
+///
+/// **Note:** Auth data (JWT secret, password hash) is stored per-node on the local filesystem.
+/// In cluster mode, each node maintains independent auth state — a password change on one node
+/// will NOT propagate to other nodes. For multi-node deployments, consider using a shared
+/// auth backend or ensuring all nodes share the same `dashboard_auth.json` and `dashboard_secret.key`.
 pub struct DashboardAuth {
     pub auth_path: std::path::PathBuf,
     pub secret: Vec<u8>,

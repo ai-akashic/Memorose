@@ -76,6 +76,28 @@ impl KvStore {
         Ok(results)
     }
 
+    /// Scan keys with the given prefix, returning at most `limit` key-value pairs.
+    /// More efficient than `scan()` when only a subset is needed, as it stops
+    /// iterating once the limit is reached.
+    pub fn scan_limited(&self, prefix: &[u8], limit: usize) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        use rocksdb::{Direction, IteratorMode};
+        let iter = self
+            .db
+            .iterator(IteratorMode::From(prefix, Direction::Forward));
+        let mut results = Vec::with_capacity(limit.min(256));
+        for item in iter {
+            let (k, v) = item?;
+            if !k.starts_with(prefix) {
+                break;
+            }
+            results.push((k.to_vec(), v.to_vec()));
+            if results.len() >= limit {
+                break;
+            }
+        }
+        Ok(results)
+    }
+
     /// Count the number of keys with the given prefix without loading values.
     /// Avoids the deserialization cost of `scan` when only the count is needed.
     pub fn count_prefix(&self, prefix: &[u8]) -> Result<usize> {

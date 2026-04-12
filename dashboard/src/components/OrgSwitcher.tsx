@@ -84,7 +84,7 @@ export function OrgSwitcher({ collapsed }: { collapsed?: boolean }) {
           <Building2 className="h-3 w-3" />
         </div>
         <div className="min-w-0 text-left">
-          <p className="truncate text-[12px] font-semibold leading-none">{activeOrg.name}</p>
+          <p className="truncate text-xs font-semibold leading-none">{activeOrg.name}</p>
         </div>
       </div>
       <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -127,7 +127,7 @@ export function OrgSwitcher({ collapsed }: { collapsed?: boolean }) {
                     >
                       <div className="min-w-0">
                         <p className="truncate text-sm font-semibold">{organization.name}</p>
-                        <p className="truncate font-mono text-[11px] text-muted-foreground">
+                        <p className="truncate font-mono text-xs text-muted-foreground">
                           {organization.org_id}
                         </p>
                       </div>
@@ -150,7 +150,7 @@ export function OrgSwitcher({ collapsed }: { collapsed?: boolean }) {
             ) : (
               <div className="space-y-3 rounded-2xl border border-border/70 bg-background/50 p-4">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  <div className="flex items-center gap-2 label-xs">
                     <Plus className="h-3.5 w-3.5" />
                     {t("switcher.createTitle")}
                   </div>

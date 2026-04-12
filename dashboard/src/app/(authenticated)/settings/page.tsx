@@ -62,12 +62,12 @@ function ConfigSection({ title, data, delay }: { title: string; data: Record<str
       <div className="mb-8">
         <div className="mb-4 flex items-center gap-2">
           <Icon className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-[13px] font-semibold tracking-tight text-foreground">{t("sections.configTitle", { title })}</h2>
+          <h2 className="text-sm font-semibold tracking-tight text-foreground">{t("sections.configTitle", { title })}</h2>
         </div>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
           {Object.entries(data).map(([key, value]) => (
             <Card key={key} className="glass-card flex h-24 flex-col justify-between p-4 transition-colors hover:bg-muted/30">
-              <span className="truncate text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+              <span className="truncate label-xs">
                 {key.replace(/_/g, " ")}
               </span>
               <span className="mt-2 truncate font-mono text-sm text-foreground">
@@ -124,7 +124,7 @@ function PasswordForm({ onSuccess }: { onSuccess?: () => void }) {
         { id: "confirm-pw", label: t("security.confirmPassword"), value: confirm, onChange: setConfirm },
       ].map(({ id, label, value, onChange }) => (
         <div key={id} className="space-y-1.5">
-          <Label htmlFor={id} className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+          <Label htmlFor={id} className="label-xs">
             {label}
           </Label>
           <Input
@@ -265,21 +265,12 @@ export default function SettingsPage() {
 
   return (
     <div className="relative mx-auto max-w-4xl space-y-8 pb-12">
-      <div className="blob-bg pointer-events-none absolute top-0 right-0 -z-10 h-[300px] w-[500px] opacity-15" />
-
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-      >
-        <DashboardHero
-          icon={SettingsIcon}
-          kicker={t("title")}
-          title={t("title")}
-          description={t("subtitle")}
-        >
-        </DashboardHero>
-      </motion.div>
+      <DashboardHero
+        icon={SettingsIcon}
+        kicker={t("title")}
+        title={t("title")}
+        description={t("subtitle")}
+      />
 
       {mustChange && (
         <motion.div
@@ -300,7 +291,7 @@ export default function SettingsPage() {
       <div className="space-y-6">
         <div className="flex items-center gap-3 px-1">
           <div className="h-4 w-1 rounded-full bg-primary/40" />
-          <h2 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("configuration")}</h2>
+          <h2 className="label-xs">{t("configuration")}</h2>
         </div>
 
         <div className="space-y-5">
@@ -329,18 +320,18 @@ export default function SettingsPage() {
       >
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h2 className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-foreground/80">
+            <h2 className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-foreground/80">
               <Key className="h-4 w-4 text-muted-foreground/60" />
               {t("apiKeys.title")}
             </h2>
-            <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+            <p className="mt-1 label-xs">
               {t("apiKeys.subtitle")}
             </p>
           </div>
 
           <Dialog open={apiKeyDialogOpen} onOpenChange={setApiKeyDialogOpen}>
             <DialogTrigger asChild>
-              <Button variant="outline" size="sm" className="h-9 border-border bg-transparent px-4 text-[10px] font-bold uppercase tracking-wider text-muted-foreground hover:bg-card">
+              <Button variant="outline" size="sm" className="h-9 border-border bg-transparent px-4 label-xs hover:bg-card">
                 <Plus className="mr-2 h-3.5 w-3.5 opacity-60" />
                 {t("apiKeys.createButton")}
               </Button>
@@ -358,7 +349,7 @@ export default function SettingsPage() {
 
               <form onSubmit={handleCreateApiKey} className="space-y-4 py-2">
                 <div className="space-y-1.5">
-                  <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  <Label className="label-xs">
                     {t("apiKeys.orgLabel")}
                   </Label>
                   <Select value={createOrgId} onValueChange={setCreateOrgId}>
@@ -376,7 +367,7 @@ export default function SettingsPage() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label htmlFor="api-key-name" className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  <Label htmlFor="api-key-name" className="label-xs">
                     {t("apiKeys.nameLabel")}
                   </Label>
                   <Input
@@ -418,7 +409,7 @@ export default function SettingsPage() {
           <Card className="glass-card border-primary/20 bg-primary/5 p-5">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div className="space-y-2">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-primary">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-primary">
                   {t("apiKeys.createdTitle")}
                 </div>
                 <p className="text-sm text-muted-foreground">{t("apiKeys.createdDescription")}</p>
@@ -462,7 +453,7 @@ export default function SettingsPage() {
                   <div className="space-y-3">
                     <div className="flex flex-wrap items-center gap-2">
                       <div className="font-semibold text-foreground">{apiKey.name}</div>
-                      <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${
+                      <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider ${
                         apiKey.active
                           ? "bg-success/10 text-success"
                           : "bg-muted text-muted-foreground"
@@ -491,7 +482,7 @@ export default function SettingsPage() {
                     size="sm"
                     disabled={!apiKey.active || revokingKeyId === apiKey.key_id}
                     onClick={() => handleRevokeApiKey(apiKey.key_id)}
-                    className="h-9 border-border bg-transparent text-[10px] font-bold uppercase tracking-wider text-muted-foreground hover:bg-card"
+                    className="h-9 border-border bg-transparent label-xs hover:bg-card"
                   >
                     {revokingKeyId === apiKey.key_id ? (
                       <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
@@ -514,16 +505,16 @@ export default function SettingsPage() {
         className="mt-12 flex items-center justify-between border-t border-border pt-6"
       >
         <div>
-          <h3 className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-foreground/80">
+          <h3 className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-foreground/80">
             <Shield className="h-4 w-4 text-muted-foreground/60" />
             {t("security.title")}
           </h3>
-          <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("security.subtitle")}</p>
+          <p className="mt-1 label-xs">{t("security.subtitle")}</p>
         </div>
 
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
-            <Button variant="outline" size="sm" className="relative h-9 border-border bg-transparent px-4 text-[10px] font-bold uppercase tracking-wider text-muted-foreground hover:bg-card">
+            <Button variant="outline" size="sm" className="relative h-9 border-border bg-transparent px-4 label-xs hover:bg-card">
               <Key className="mr-2 h-3.5 w-3.5 opacity-50" />
               {t("security.button")}
               {mustChange && <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5 animate-pulse rounded-full bg-warning" />}

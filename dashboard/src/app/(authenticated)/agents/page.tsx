@@ -1,7 +1,6 @@
 "use client";
 
 import { useAgents } from "@/lib/hooks";
-import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -18,6 +17,7 @@ import { motion } from "framer-motion";
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 import { DashboardHero } from "@/components/dashboard-chrome";
+import { StatCard } from "@/components/stat-card";
 
 function formatRelativeTime(timestamp: number | null, now: number | null, t: ReturnType<typeof useTranslations>): string {
   if (!timestamp) return t("time.never");
@@ -30,43 +30,6 @@ function formatRelativeTime(timestamp: number | null, now: number | null, t: Ret
   if (hours < 24) return t("time.hoursAgo", { count: hours });
   const days = Math.floor(hours / 24);
   return t("time.daysAgo", { count: days });
-}
-
-function KpiCard({
-  label,
-  value,
-  icon: Icon,
-  color = "text-primary",
-  delay = 0,
-}: {
-  label: string;
-  value: number | string;
-  icon: React.ElementType;
-  color?: string;
-  delay?: number;
-}) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 15 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, delay, ease: "easeOut" }}
-      className="h-full"
-    >
-      <Card className="glass-card group relative overflow-hidden transition-all duration-500 h-full">
-        <CardContent className="p-5 flex flex-col gap-4 h-full relative z-10">
-          <div className="flex items-center gap-2">
-            <Icon className={`w-4 h-4 ${color} opacity-60 group-hover:opacity-100 transition-opacity shrink-0`} />
-            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground truncate">
-              {label}
-            </span>
-          </div>
-          <div className="text-3xl font-bold tracking-tighter font-mono text-foreground/90 group-hover:text-white transition-colors">
-            {typeof value === "number" ? formatNumber(value) : value}
-          </div>
-        </CardContent>
-      </Card>
-    </motion.div>
-  );
 }
 
 function AgentRow({ agent, index, now }: { agent: AgentSummary; index: number; now: number | null }) {
@@ -126,16 +89,12 @@ export default function AgentsPage() {
 
   return (
     <div className="space-y-8 relative pb-10">
-      <div className="absolute top-0 right-0 w-[500px] h-[300px] blob-bg opacity-20 pointer-events-none -z-10 mix-blend-screen" />
-
-      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
-        <DashboardHero
+      <DashboardHero
           icon={Bot}
           kicker={t("sectionLabel")}
           title={t("title")}
         >
         </DashboardHero>
-      </motion.div>
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -143,9 +102,9 @@ export default function AgentsPage() {
           [1, 2, 3].map((i) => <Skeleton key={i} className="h-28 glass-card rounded-xl opacity-10" />)
         ) : (
           <>
-            <KpiCard label={t("kpi.count")} value={data?.total_count ?? 0} icon={Bot} delay={0.1} />
-            <KpiCard label={t("kpi.memories")} value={totalMemories} icon={Database} color="text-success" delay={0.15} />
-            <KpiCard label={t("kpi.events")} value={totalEvents} icon={Activity} color="text-warning" delay={0.2} />
+            <StatCard label={t("kpi.count")} value={data?.total_count ?? 0} icon={Bot} delay={0.1} />
+            <StatCard label={t("kpi.memories")} value={totalMemories} icon={Database} color="text-success" delay={0.15} />
+            <StatCard label={t("kpi.events")} value={totalEvents} icon={Activity} color="text-warning" delay={0.2} />
           </>
         )}
       </div>
@@ -155,12 +114,12 @@ export default function AgentsPage() {
         <Table>
           <TableHeader className="bg-card">
             <TableRow className="border-border hover:bg-transparent">
-              <TableHead className="px-5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("table.agent")}</TableHead>
-              <TableHead className="text-center text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("table.memories")}</TableHead>
-              <TableHead className="text-center text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("table.l1")}</TableHead>
-              <TableHead className="text-center text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("table.l2")}</TableHead>
-              <TableHead className="text-center text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("table.events")}</TableHead>
-              <TableHead className="px-5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("table.lastActive")}</TableHead>
+              <TableHead className="px-5 label-xs">{t("table.agent")}</TableHead>
+              <TableHead className="text-center label-xs">{t("table.memories")}</TableHead>
+              <TableHead className="text-center label-xs">{t("table.l1")}</TableHead>
+              <TableHead className="text-center label-xs">{t("table.l2")}</TableHead>
+              <TableHead className="text-center label-xs">{t("table.events")}</TableHead>
+              <TableHead className="px-5 label-xs">{t("table.lastActive")}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -185,7 +144,7 @@ export default function AgentsPage() {
                     <div className="w-12 h-12 rounded-2xl bg-card border border-border flex items-center justify-center">
                       <Bot className="w-5 h-5 opacity-10" />
                     </div>
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("empty")}</p>
+                    <p className="label-xs">{t("empty")}</p>
                   </div>
                 </TableCell>
               </TableRow>

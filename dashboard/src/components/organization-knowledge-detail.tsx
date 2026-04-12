@@ -54,7 +54,7 @@ export function OrganizationKnowledgeDetail({
     <div className="space-y-5">
       {showHeader ? (
         <div>
-          <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+          <div className="label-xs">
             {t("knowledge.detailTitle")}
           </div>
           <div className="mt-2 flex items-start justify-between gap-3">
@@ -62,11 +62,11 @@ export function OrganizationKnowledgeDetail({
               <div className="text-lg font-semibold">
                 {knowledge.unit.keywords[0] || truncate(knowledge.unit.content, 64)}
               </div>
-              <div className="mt-1 font-mono text-[11px] text-muted-foreground">
+              <div className="mt-1 font-mono text-xs text-muted-foreground">
                 {knowledge.unit.id}
               </div>
             </div>
-            <Badge variant="outline" className="font-mono text-[11px]">
+            <Badge variant="outline" className="font-mono text-xs">
               {knowledge.knowledge.membership.membership_count}/
               {knowledge.knowledge.history.contribution_count}
             </Badge>
@@ -87,7 +87,7 @@ export function OrganizationKnowledgeDetail({
 
       {showPayload ? (
         <div className="rounded-2xl border border-border/70 bg-card p-4">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+          <div className="label-xs">
             {t("knowledge.payload")}
           </div>
           <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground/90">
@@ -98,7 +98,7 @@ export function OrganizationKnowledgeDetail({
 
       <div className="grid gap-3 md:grid-cols-2">
         <div className="rounded-xl border border-border/70 bg-card p-3 flex justify-between items-center">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+          <div className="label-xs">
             {t("knowledge.membershipCount")}
           </div>
           <div className="font-mono text-lg font-semibold">
@@ -106,7 +106,7 @@ export function OrganizationKnowledgeDetail({
           </div>
         </div>
         <div className="rounded-xl border border-border/70 bg-card p-3 flex justify-between items-center">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+          <div className="label-xs">
             {t("knowledge.totalContributions")}
           </div>
           <div className="font-mono text-lg font-semibold">
@@ -117,7 +117,7 @@ export function OrganizationKnowledgeDetail({
 
       <div className="grid gap-3 md:grid-cols-3">
         <div className="rounded-xl border border-border/70 bg-card p-3 flex flex-col justify-center">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+          <div className="label-xs">
             {t("knowledge.activeContributions")}
           </div>
           <div className="mt-1 font-mono text-lg font-semibold">
@@ -125,7 +125,7 @@ export function OrganizationKnowledgeDetail({
           </div>
         </div>
         <div className="rounded-xl border border-border/70 bg-card p-3 flex flex-col justify-center">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+          <div className="label-xs">
             {t("knowledge.candidateContributions")}
           </div>
           <div className="mt-1 font-mono text-lg font-semibold">
@@ -133,7 +133,7 @@ export function OrganizationKnowledgeDetail({
           </div>
         </div>
         <div className="rounded-xl border border-border/70 bg-card p-3 flex flex-col justify-center">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+          <div className="label-xs">
             {t("knowledge.revokedContributions")}
           </div>
           <div className="mt-1 font-mono text-lg font-semibold">
@@ -144,7 +144,7 @@ export function OrganizationKnowledgeDetail({
 
       <div className="grid gap-4 xl:grid-cols-2">
         <div className="rounded-2xl border border-border/70 bg-card p-4">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+          <div className="label-xs">
             {t("knowledge.membershipContributorGroups")}
           </div>
           <div className="mt-3 space-y-3">
@@ -155,7 +155,7 @@ export function OrganizationKnowledgeDetail({
               >
                 <div className="flex items-center justify-between gap-3">
                   <div className="font-mono text-sm">{summary.contributor_user_id}</div>
-                  <Badge variant="outline" className="font-mono text-[11px]">
+                  <Badge variant="outline" className="font-mono text-xs">
                     {summary.membership_count}
                   </Badge>
                 </div>
@@ -164,7 +164,7 @@ export function OrganizationKnowledgeDetail({
                     {summary.source_memory_types.map((sourceType) => (
                       <span
                         key={sourceType}
-                        className="rounded-full border border-border bg-card px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground"
+                        className="rounded-full border border-border bg-card px-2 py-0.5 label-xs"
                       >
                         {sourceType}
                       </span>
@@ -177,7 +177,7 @@ export function OrganizationKnowledgeDetail({
         </div>
 
         <div className="rounded-2xl border border-border/70 bg-card p-4">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+          <div className="label-xs">
             {t("knowledge.membershipSourceTypeGroups")}
           </div>
           <div className="mt-3 space-y-3">
@@ -190,7 +190,7 @@ export function OrganizationKnowledgeDetail({
                   <div className="font-mono text-sm uppercase">
                     {summary.source_memory_type}
                   </div>
-                  <Badge variant="outline" className="font-mono text-[11px]">
+                  <Badge variant="outline" className="font-mono text-xs">
                     {summary.membership_count}
                   </Badge>
                 </div>
@@ -199,7 +199,7 @@ export function OrganizationKnowledgeDetail({
                     {summary.contributor_user_ids.map((userId) => (
                       <span
                         key={userId}
-                        className="rounded-full border border-border bg-card px-2 py-0.5 font-mono text-[11px] text-muted-foreground"
+                        className="rounded-full border border-border bg-card px-2 py-0.5 font-mono text-xs text-muted-foreground"
                       >
                         {userId}
                       </span>
@@ -213,7 +213,7 @@ export function OrganizationKnowledgeDetail({
       </div>
 
       <div>
-        <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+        <div className="label-xs">
           {t("knowledge.membershipTitle")}
         </div>
         <div className="mt-3 space-y-3">
@@ -224,65 +224,65 @@ export function OrganizationKnowledgeDetail({
             >
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  <div className="label-xs">
                     {t("knowledge.source")}
                   </div>
-                  <div className="mt-1 break-all font-mono text-[11px] text-foreground/80">
+                  <div className="mt-1 break-all font-mono text-xs text-foreground/80">
                     {membership.source_id}
                   </div>
                 </div>
-                <Badge variant="outline" className="uppercase text-[11px]">
+                <Badge variant="outline" className="uppercase text-xs">
                   active
                 </Badge>
               </div>
               <div className="mt-3 grid gap-3 md:grid-cols-2">
                 <div>
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  <div className="label-xs">
                     {t("knowledge.contributor")}
                   </div>
-                  <div className="mt-1 font-mono text-[11px] text-foreground/80">
+                  <div className="mt-1 font-mono text-xs text-foreground/80">
                     {membership.contributor_user_id}
                   </div>
                 </div>
                 <div>
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  <div className="label-xs">
                     {t("knowledge.approval")}
                   </div>
-                  <div className="mt-1 font-mono text-[11px] text-foreground/80">
+                  <div className="mt-1 font-mono text-xs text-foreground/80">
                     {membership.approval_mode ?? "—"}
                   </div>
                 </div>
                 <div>
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  <div className="label-xs">
                     {t("knowledge.sourceType")}
                   </div>
-                  <div className="mt-1 font-mono text-[11px] text-foreground/80">
+                  <div className="mt-1 font-mono text-xs text-foreground/80">
                     {membership.source_memory_type ?? "—"}
                     {membership.source_level ? ` · L${membership.source_level}` : ""}
                   </div>
                 </div>
                 <div>
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  <div className="label-xs">
                     {t("knowledge.activatedAt")}
                   </div>
-                  <div className="mt-1 text-[11px] text-foreground/80">
+                  <div className="mt-1 text-xs text-foreground/80">
                     {membership.activated_at
                       ? formatKnowledgeTimestamp(membership.activated_at)
                       : "—"}
                   </div>
                 </div>
                 <div>
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  <div className="label-xs">
                     {t("knowledge.updatedAtLabel")}
                   </div>
-                  <div className="mt-1 text-[11px] text-foreground/80">
+                  <div className="mt-1 text-xs text-foreground/80">
                     {formatKnowledgeTimestamp(membership.updated_at)}
                   </div>
                 </div>
               </div>
               {membership.source_content_preview ? (
                 <div className="mt-3">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  <div className="label-xs">
                     {t("knowledge.sourcePreview")}
                   </div>
                   <div className="mt-1 text-sm leading-6 text-foreground/85">
@@ -292,14 +292,14 @@ export function OrganizationKnowledgeDetail({
               ) : null}
               {membership.source_keywords.length > 0 ? (
                 <div className="mt-3">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  <div className="label-xs">
                     {t("knowledge.sourceKeywords")}
                   </div>
                   <div className="mt-2 flex flex-wrap gap-2">
                     {membership.source_keywords.slice(0, 6).map((keyword) => (
                       <span
                         key={keyword}
-                        className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground"
+                        className="rounded-full border border-border bg-background px-2 py-0.5 label-xs"
                       >
                         {keyword}
                       </span>
@@ -309,10 +309,10 @@ export function OrganizationKnowledgeDetail({
               ) : null}
               {membership.approved_by ? (
                 <div className="mt-3">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  <div className="label-xs">
                     {t("knowledge.approvedBy")}
                   </div>
-                  <div className="mt-1 font-mono text-[11px] text-foreground/80">
+                  <div className="mt-1 font-mono text-xs text-foreground/80">
                     {membership.approved_by}
                   </div>
                 </div>
@@ -324,7 +324,7 @@ export function OrganizationKnowledgeDetail({
 
       <div className="grid gap-4 xl:grid-cols-2">
         <div className="rounded-2xl border border-border/70 bg-card p-4">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+          <div className="label-xs">
             {t("knowledge.historyContributorGroups")}
           </div>
           <div className="mt-3 space-y-3">
@@ -335,7 +335,7 @@ export function OrganizationKnowledgeDetail({
               >
                 <div className="flex items-center justify-between gap-3">
                   <div className="font-mono text-sm">{summary.contributor_user_id}</div>
-                  <Badge variant="outline" className="font-mono text-[11px]">
+                  <Badge variant="outline" className="font-mono text-xs">
                     {summary.active_contribution_count}/{summary.contribution_count}
                   </Badge>
                 </div>
@@ -344,7 +344,7 @@ export function OrganizationKnowledgeDetail({
                     {summary.source_memory_types.map((sourceType) => (
                       <span
                         key={sourceType}
-                        className="rounded-full border border-border bg-card px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground"
+                        className="rounded-full border border-border bg-card px-2 py-0.5 label-xs"
                       >
                         {sourceType}
                       </span>
@@ -357,7 +357,7 @@ export function OrganizationKnowledgeDetail({
         </div>
 
         <div className="rounded-2xl border border-border/70 bg-card p-4">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+          <div className="label-xs">
             {t("knowledge.historySourceTypeGroups")}
           </div>
           <div className="mt-3 space-y-3">
@@ -370,7 +370,7 @@ export function OrganizationKnowledgeDetail({
                   <div className="font-mono text-sm uppercase">
                     {summary.source_memory_type}
                   </div>
-                  <Badge variant="outline" className="font-mono text-[11px]">
+                  <Badge variant="outline" className="font-mono text-xs">
                     {summary.active_contribution_count}/{summary.contribution_count}
                   </Badge>
                 </div>
@@ -379,7 +379,7 @@ export function OrganizationKnowledgeDetail({
                     {summary.contributor_user_ids.map((userId) => (
                       <span
                         key={userId}
-                        className="rounded-full border border-border bg-card px-2 py-0.5 font-mono text-[11px] text-muted-foreground"
+                        className="rounded-full border border-border bg-card px-2 py-0.5 font-mono text-xs text-muted-foreground"
                       >
                         {userId}
                       </span>
@@ -394,14 +394,14 @@ export function OrganizationKnowledgeDetail({
 
       {showKeywords && knowledge.unit.keywords.length > 0 ? (
         <div>
-          <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+          <div className="label-xs">
             {t("knowledge.keywords")}
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
             {knowledge.unit.keywords.map((keyword) => (
               <span
                 key={keyword}
-                className="rounded-full border border-border bg-card px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground"
+                className="rounded-full border border-border bg-card px-2 py-0.5 label-xs"
               >
                 {keyword}
               </span>
@@ -411,7 +411,7 @@ export function OrganizationKnowledgeDetail({
       ) : null}
 
       <div>
-        <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+        <div className="label-xs">
           {t("knowledge.historyTitle")}
         </div>
         <div className="mt-3 space-y-3">
@@ -422,58 +422,58 @@ export function OrganizationKnowledgeDetail({
             >
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  <div className="label-xs">
                     {t("knowledge.source")}
                   </div>
-                  <div className="mt-1 break-all font-mono text-[11px] text-foreground/80">
+                  <div className="mt-1 break-all font-mono text-xs text-foreground/80">
                     {contribution.source_id}
                   </div>
                 </div>
-                <Badge variant="outline" className="uppercase text-[11px]">
+                <Badge variant="outline" className="uppercase text-xs">
                   {contribution.status}
                 </Badge>
               </div>
               <div className="mt-3 grid gap-3 md:grid-cols-2">
                 <div>
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  <div className="label-xs">
                     {t("knowledge.contributor")}
                   </div>
-                  <div className="mt-1 font-mono text-[11px] text-foreground/80">
+                  <div className="mt-1 font-mono text-xs text-foreground/80">
                     {contribution.contributor_user_id}
                   </div>
                 </div>
                 <div>
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  <div className="label-xs">
                     {t("knowledge.approval")}
                   </div>
-                  <div className="mt-1 font-mono text-[11px] text-foreground/80">
+                  <div className="mt-1 font-mono text-xs text-foreground/80">
                     {contribution.approval_mode ?? "—"}
                   </div>
                 </div>
                 <div>
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  <div className="label-xs">
                     {t("knowledge.sourceType")}
                   </div>
-                  <div className="mt-1 font-mono text-[11px] text-foreground/80">
+                  <div className="mt-1 font-mono text-xs text-foreground/80">
                     {contribution.source_memory_type ?? "—"}
                     {contribution.source_level ? ` · L${contribution.source_level}` : ""}
                   </div>
                 </div>
                 <div>
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  <div className="label-xs">
                     {t("knowledge.candidateAt")}
                   </div>
-                  <div className="mt-1 text-[11px] text-foreground/80">
+                  <div className="mt-1 text-xs text-foreground/80">
                     {formatKnowledgeTimestamp(
                       contribution.candidate_at ?? knowledge.unit.transaction_time
                     )}
                   </div>
                 </div>
                 <div>
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  <div className="label-xs">
                     {t("knowledge.activatedAt")}
                   </div>
-                  <div className="mt-1 text-[11px] text-foreground/80">
+                  <div className="mt-1 text-xs text-foreground/80">
                     {contribution.activated_at
                       ? formatKnowledgeTimestamp(contribution.activated_at)
                       : "—"}
@@ -482,7 +482,7 @@ export function OrganizationKnowledgeDetail({
               </div>
               {contribution.source_content_preview ? (
                 <div className="mt-3">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  <div className="label-xs">
                     {t("knowledge.sourcePreview")}
                   </div>
                   <div className="mt-1 text-sm leading-6 text-foreground/85">
@@ -492,14 +492,14 @@ export function OrganizationKnowledgeDetail({
               ) : null}
               {contribution.source_keywords.length > 0 ? (
                 <div className="mt-3">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  <div className="label-xs">
                     {t("knowledge.sourceKeywords")}
                   </div>
                   <div className="mt-2 flex flex-wrap gap-2">
                     {contribution.source_keywords.slice(0, 6).map((keyword) => (
                       <span
                         key={keyword}
-                        className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground"
+                        className="rounded-full border border-border bg-background px-2 py-0.5 label-xs"
                       >
                         {keyword}
                       </span>
@@ -509,10 +509,10 @@ export function OrganizationKnowledgeDetail({
               ) : null}
               {contribution.approved_by ? (
                 <div className="mt-3">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  <div className="label-xs">
                     {t("knowledge.approvedBy")}
                   </div>
-                  <div className="mt-1 font-mono text-[11px] text-foreground/80">
+                  <div className="mt-1 font-mono text-xs text-foreground/80">
                     {contribution.approved_by}
                   </div>
                 </div>

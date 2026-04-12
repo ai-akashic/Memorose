@@ -50,7 +50,7 @@ impl BatchCommunityDetector {
         user_id: &str,
         node_ids: &[Uuid],
     ) -> Result<CommunityResult> {
-        // 批量获取所有边
+        // Batch-fetch all edges
         let edges_map = self
             .batch_executor
             .batch_get_outgoing_edges(user_id, node_ids)

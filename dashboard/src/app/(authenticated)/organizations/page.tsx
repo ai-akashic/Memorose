@@ -193,12 +193,7 @@ export default function OrganizationsPage() {
         kicker={t("sectionLabel")}
         title={t("title")}
         description={t("description")}
-      >
-        <div className="mr-auto">
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">{t("title")}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">{t("description")}</p>
-        </div>
-      </DashboardHero>
+      />
 
       {message && !createDialogOpen ? (
         <div
@@ -309,7 +304,7 @@ export default function OrganizationsPage() {
                 { label: t("knowledge.metricMerged"), value: automationMetrics?.merged_publication_total }
               ].map((metric) => (
                 <div key={metric.label} className="flex flex-col justify-center rounded-xl border border-border/70 bg-card/40 p-4">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">{metric.label}</span>
+                  <span className="label-xs/80">{metric.label}</span>
                   <span className="mt-1.5 text-2xl font-semibold tracking-tight font-mono">{formatNumber(metric.value ?? 0)}</span>
                 </div>
               ))}
@@ -317,7 +312,7 @@ export default function OrganizationsPage() {
 
             {automationMetrics?.source_type_distribution.length ? (
               <div className="rounded-2xl border border-border/70 bg-card/40 p-4">
-                <div className="mb-3 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
+                <div className="mb-3 label-xs/80">
                   {t("knowledge.sourceDistribution")}
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -347,7 +342,7 @@ export default function OrganizationsPage() {
               </p>
             </div>
             <div className="shrink-0 self-start rounded-xl border border-border/70 bg-background/60 px-3 py-2 text-right">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+              <div className="label-xs">
                 {t("knowledge.title")}
               </div>
               <div className="font-mono text-lg font-bold">{formatNumber(knowledgeData?.total_count ?? 0)}</div>
@@ -447,7 +442,7 @@ export default function OrganizationsPage() {
                 </Button>
               </div>
 
-              <div className="mb-4 flex flex-wrap gap-4 text-[13px] text-muted-foreground/80">
+              <div className="mb-4 flex flex-wrap gap-4 text-sm text-muted-foreground/80">
                 <div className="flex items-center gap-1.5">
                   <span className="font-mono text-foreground font-medium">{formatNumber(knowledgeData?.summary.knowledge_count ?? 0)}</span> {t("knowledge.metricKnowledge")}
                 </div>
@@ -532,7 +527,7 @@ export default function OrganizationsPage() {
 
                         <div className="mt-4 grid gap-3 md:grid-cols-3">
                           <div>
-                            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                            <div className="label-xs">
                               {t("knowledge.activeMemberships")}
                             </div>
                             <div className="mt-1 font-mono text-sm">
@@ -540,7 +535,7 @@ export default function OrganizationsPage() {
                             </div>
                           </div>
                           <div>
-                            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                            <div className="label-xs">
                               {t("knowledge.totalContributions")}
                             </div>
                             <div className="mt-1 font-mono text-sm">
@@ -548,7 +543,7 @@ export default function OrganizationsPage() {
                             </div>
                           </div>
                           <div>
-                            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                            <div className="label-xs">
                               {t("knowledge.updatedAt")}
                             </div>
                             <div className="mt-1 text-sm">
@@ -558,7 +553,7 @@ export default function OrganizationsPage() {
                         </div>
                         {item.contributor_user_ids.length > 0 ? (
                           <div className="mt-4">
-                            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                            <div className="label-xs">
                               {t("knowledge.contributors")}
                             </div>
                             <div className="mt-2 flex flex-wrap gap-2">
@@ -575,7 +570,7 @@ export default function OrganizationsPage() {
                         ) : null}
                         <div className="mt-4 grid gap-3 md:grid-cols-2">
                           <div>
-                            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                            <div className="label-xs">
                               {t("knowledge.topContributor")}
                             </div>
                             <div className="mt-1 font-mono text-sm">
@@ -583,7 +578,7 @@ export default function OrganizationsPage() {
                             </div>
                           </div>
                           <div>
-                            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                            <div className="label-xs">
                               {t("knowledge.primarySourceType")}
                             </div>
                             <div className="mt-1 font-mono text-sm uppercase">

@@ -192,14 +192,15 @@ use memorose_common::sharding::{decode_raft_node_id, user_id_to_shard};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
 struct AppState {
     shard_count: u32,
     /// Maps physical_node_id -> HTTP address
     node_addresses: HashMap<u32, String>,
-    /// Maps shard_id -> leader physical_node_id (cached)
-    shard_leaders: RwLock<HashMap<u32, u32>>,
+    /// Maps shard_id -> (leader physical_node_id, insertion time) (cached with 30s TTL)
+    shard_leaders: RwLock<HashMap<u32, (u32, Instant)>>,
     http_client: reqwest::Client,
 }
 
@@ -213,14 +214,20 @@ fn max_body_bytes() -> usize {
 impl AppState {
     /// Resolve an HTTP address for a shard, preferring cached leader.
     async fn resolve_shard_addr(&self, shard_id: u32) -> Option<String> {
+        const LEADER_CACHE_TTL: Duration = Duration::from_secs(30);
+
         // Check cached leader first
         let leader = {
             let cache = self.shard_leaders.read().await;
             cache.get(&shard_id).cloned()
         };
 
-        if let Some(leader_node) = leader {
-            if let Some(addr) = self.node_addresses.get(&leader_node) {
+        if let Some((leader_node, inserted_at)) = leader {
+            if Instant::now().duration_since(inserted_at) > LEADER_CACHE_TTL {
+                // Stale entry — evict it
+                let mut cache = self.shard_leaders.write().await;
+                cache.remove(&shard_id);
+            } else if let Some(addr) = self.node_addresses.get(&leader_node) {
                 return Some(addr.clone());
             }
         }
@@ -429,7 +436,7 @@ async fn proxy_request_with_retry(
                                     && state.node_addresses.contains_key(&leader_node)
                                 {
                                     let mut cache = state.shard_leaders.write().await;
-                                    cache.insert(shard_id, leader_node);
+                                    cache.insert(shard_id, (leader_node, Instant::now()));
                                     target_addr = state.node_addresses.get(&leader_node).cloned();
                                     continue;
                                 }
@@ -443,7 +450,7 @@ async fn proxy_request_with_retry(
                                     && state.node_addresses.contains_key(&physical_node_id)
                                 {
                                     let mut cache = state.shard_leaders.write().await;
-                                    cache.insert(shard_id, physical_node_id);
+                                    cache.insert(shard_id, (physical_node_id, Instant::now()));
                                     target_addr =
                                         state.node_addresses.get(&physical_node_id).cloned();
                                     continue;

@@ -6,17 +6,14 @@ use axum::{
     routing::{delete, get, post, put},
     Json, Router,
 };
-use chrono::{DateTime, Utc};
 use memorose_common::sharding::decode_raft_node_id;
 use memorose_common::{
     config::AppConfig, tokenizer::count_tokens, Asset, Event, EventContent, GraphEdge, MemoryType,
-    MemoryUnit, RelationType, TimeRange,
+    MemoryUnit, TimeRange,
 };
 use memorose_core::{LLMClient, MemoroseEngine, SharedSearchHit};
 use moka::future::Cache;
-use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
-use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower::ServiceBuilder;
@@ -25,6 +22,15 @@ use uuid::Uuid;
 
 mod dashboard;
 mod shard_manager;
+pub mod types;
+
+use types::{
+    AddEdgeRequest, BatchIngestRequest, ContextCompressionTier, ContextFormat, GoalMemoryUnitView,
+    GoalTree, IngestRequest, JoinRequest, L3TaskTree, MemoryContextHitView, MemoryContextRequest,
+    MemoryContextResponse, RenderedMemoryContext, RetrievalMemoryUnitView,
+    RetrieveRequest, RetrieveResponse, RetrieveResultItem, UpdateTaskStatusRequest,
+    default_context_token_budget, public_asset_storage_key,
+};
 
 use shard_manager::ShardManager;
 
@@ -62,87 +68,6 @@ impl AppState {
         match self.runtime_mode {
             RuntimeMode::Standalone => "local_bypass",
             RuntimeMode::Cluster => "raft_consensus",
-        }
-    }
-}
-
-fn public_asset_storage_key(asset: &Asset) -> String {
-    let key = asset.storage_key.trim();
-    if key.starts_with("http://")
-        || key.starts_with("https://")
-        || key.starts_with("s3://")
-        || key.starts_with("local://")
-        || key.starts_with("inline://")
-    {
-        return key.to_string();
-    }
-
-    if key.is_empty() {
-        return "inline://asset".to_string();
-    }
-
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    asset.asset_type.hash(&mut hasher);
-    key.hash(&mut hasher);
-    format!("inline://{}/{:016x}", asset.asset_type, hasher.finish())
-}
-
-#[derive(Clone, Serialize)]
-struct RetrievalAssetView {
-    storage_key: String,
-    original_name: String,
-    asset_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-}
-
-impl From<&Asset> for RetrievalAssetView {
-    fn from(asset: &Asset) -> Self {
-        Self {
-            storage_key: public_asset_storage_key(asset),
-            original_name: asset.original_name.clone(),
-            asset_type: asset.asset_type.clone(),
-            description: asset.description.clone(),
-        }
-    }
-}
-
-#[derive(Clone, Serialize)]
-struct RetrievalMemoryUnitView {
-    id: Uuid,
-    memory_type: MemoryType,
-    content: String,
-    keywords: Vec<String>,
-    level: u8,
-    assets: Vec<RetrievalAssetView>,
-}
-
-impl From<&MemoryUnit> for RetrievalMemoryUnitView {
-    fn from(unit: &MemoryUnit) -> Self {
-        Self {
-            id: unit.id,
-            memory_type: unit.memory_type.clone(),
-            content: unit.content.clone(),
-            keywords: unit.keywords.clone(),
-            level: unit.level,
-            assets: unit.assets.iter().map(RetrievalAssetView::from).collect(),
-        }
-    }
-}
-
-#[derive(Clone, Serialize)]
-struct GoalMemoryUnitView {
-    id: Uuid,
-    content: String,
-    transaction_time: DateTime<Utc>,
-}
-
-impl From<&MemoryUnit> for GoalMemoryUnitView {
-    fn from(unit: &MemoryUnit) -> Self {
-        Self {
-            id: unit.id,
-            content: unit.content.clone(),
-            transaction_time: unit.transaction_time,
         }
     }
 }
@@ -761,14 +686,6 @@ async fn add_edge(
     }
 }
 
-#[derive(Deserialize, Serialize)]
-struct AddEdgeRequest {
-    source_id: Uuid,
-    target_id: Uuid,
-    relation: RelationType,
-    weight: Option<f32>,
-}
-
 async fn root() -> &'static str {
     "Memorose is running."
 }
@@ -786,32 +703,6 @@ async fn pending_count(State(state): State<Arc<AppState>>) -> Json<serde_json::V
         "pending": total_pending,
         "ready": total_pending == 0,
     }))
-}
-
-#[derive(Deserialize, Serialize)]
-struct IngestRequest {
-    content: String,
-    #[serde(default = "default_content_type")]
-    content_type: String,
-    #[serde(default)]
-    org_id: Option<String>,
-    #[serde(default)]
-    level: Option<u8>,
-    #[serde(default)]
-    parent_id: Option<String>,
-    #[serde(default)]
-    task_status: Option<String>,
-    #[serde(default)]
-    task_progress: Option<f32>,
-}
-
-#[derive(Deserialize, Serialize)]
-struct BatchIngestRequest {
-    events: Vec<IngestRequest>,
-}
-
-fn default_content_type() -> String {
-    "text".to_string()
 }
 
 fn parse_ingest_content(
@@ -1091,163 +982,6 @@ async fn ingest_events_batch(
                 .into_response()
         }
     }
-}
-
-#[derive(Deserialize)]
-struct RetrieveRequest {
-    query: String,
-    #[serde(default = "default_retrieve_limit")]
-    limit: usize,
-    #[serde(default)]
-    enable_arbitration: bool,
-    #[serde(default)]
-    min_score: Option<f32>,
-    #[serde(default)]
-    token_budget: Option<usize>,
-    #[serde(default = "default_graph_depth")]
-    graph_depth: usize,
-    #[serde(default)]
-    start_time: Option<DateTime<Utc>>,
-    #[serde(default)]
-    end_time: Option<DateTime<Utc>>,
-    #[serde(default)]
-    as_of: Option<DateTime<Utc>>,
-    #[serde(default)]
-    org_id: Option<String>,
-    #[serde(default)]
-    agent_id: Option<String>,
-    /// Base64-encoded image for cross-modal retrieval
-    #[serde(default)]
-    image: Option<String>,
-    /// Base64-encoded audio for cross-modal retrieval
-    #[serde(default)]
-    audio: Option<String>,
-    /// Base64-encoded video for cross-modal retrieval
-    #[serde(default)]
-    video: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct MemoryContextRequest {
-    user_id: String,
-    query: String,
-    #[serde(default = "default_context_limit")]
-    limit: usize,
-    #[serde(default)]
-    enable_arbitration: bool,
-    #[serde(default)]
-    min_score: Option<f32>,
-    #[serde(default)]
-    token_budget: Option<usize>,
-    #[serde(default = "default_graph_depth")]
-    graph_depth: usize,
-    #[serde(default)]
-    start_time: Option<DateTime<Utc>>,
-    #[serde(default)]
-    end_time: Option<DateTime<Utc>>,
-    #[serde(default)]
-    as_of: Option<DateTime<Utc>>,
-    #[serde(default)]
-    org_id: Option<String>,
-    #[serde(default)]
-    agent_id: Option<String>,
-    #[serde(default)]
-    format: Option<String>,
-    #[serde(default)]
-    image: Option<String>,
-    #[serde(default)]
-    audio: Option<String>,
-    #[serde(default)]
-    video: Option<String>,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ContextFormat {
-    Text,
-    Xml,
-}
-
-impl ContextFormat {
-    fn from_raw(raw: Option<&str>) -> Self {
-        match raw.map(str::trim) {
-            Some(value) if value.eq_ignore_ascii_case("xml") => Self::Xml,
-            _ => Self::Text,
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Text => "text",
-            Self::Xml => "xml",
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ContextCompressionTier {
-    Tiny,
-    Compact,
-    Detailed,
-}
-
-impl ContextCompressionTier {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Tiny => "dense_l2_l3",
-            Self::Compact => "adaptive_compact",
-            Self::Detailed => "detailed_l1_first",
-        }
-    }
-}
-
-#[derive(Clone, Serialize)]
-struct MemoryContextHitView {
-    id: Uuid,
-    level: u8,
-    memory_type: MemoryType,
-    domain: String,
-    score: f32,
-}
-
-#[derive(Serialize)]
-struct MemoryContextResponse {
-    query: String,
-    format: String,
-    strategy: String,
-    token_budget: usize,
-    used_token_estimate: usize,
-    matched_count: usize,
-    included_count: usize,
-    truncated: bool,
-    context: String,
-    hits: Vec<MemoryContextHitView>,
-    query_time_ms: u128,
-}
-
-struct RenderedMemoryContext {
-    context: String,
-    used_token_estimate: usize,
-    matched_count: usize,
-    included_count: usize,
-    truncated: bool,
-    strategy: &'static str,
-    hits: Vec<MemoryContextHitView>,
-}
-
-fn default_graph_depth() -> usize {
-    1
-}
-
-fn default_retrieve_limit() -> usize {
-    10
-}
-
-fn default_context_limit() -> usize {
-    12
-}
-
-fn default_context_token_budget() -> usize {
-    800
 }
 
 fn memory_budget_from_headers(
@@ -1800,20 +1534,6 @@ async fn retrieve_memory(
                 .await
             {
                 Ok(units) => {
-                    #[derive(Serialize)]
-                    struct RetrieveResultItem {
-                        unit: RetrievalMemoryUnitView,
-                        score: f32,
-                    }
-
-                    #[derive(Serialize)]
-                    struct RetrieveResponse {
-                        stream_id: Uuid,
-                        query: String,
-                        results: Vec<RetrieveResultItem>,
-                        query_time_ms: u128,
-                    }
-
                     let processed_units = units
                         .into_iter()
                         .map(|(u, score)| RetrieveResultItem {
@@ -2023,13 +1743,6 @@ async fn delete_memory_unit_hard(
     }
 }
 
-#[derive(Deserialize)]
-struct JoinRequest {
-    node_id: u32,
-    #[serde(default)]
-    address: String,
-}
-
 async fn initialize_cluster(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     if state.is_standalone_mode() {
         return Json(serde_json::json!({
@@ -2172,18 +1885,6 @@ async fn leave_cluster(
     }
 }
 
-#[derive(serde::Serialize)]
-struct GoalTree {
-    goal: GoalMemoryUnitView,
-    tasks: Vec<L3TaskTree>,
-}
-
-#[derive(serde::Serialize)]
-struct L3TaskTree {
-    task: memorose_common::L3Task,
-    children: Vec<L3TaskTree>,
-}
-
 async fn get_ready_tasks(
     State(state): State<Arc<AppState>>,
     Path(user_id): Path<String>,
@@ -2195,13 +1896,6 @@ async fn get_ready_tasks(
         Ok(tasks) => axum::response::Json(tasks).into_response(),
         Err(e) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
-}
-
-#[derive(serde::Deserialize)]
-struct UpdateTaskStatusRequest {
-    status: memorose_common::TaskStatus,
-    progress: Option<f32>,
-    result_summary: Option<String>,
 }
 
 async fn update_task_status(
@@ -2370,6 +2064,7 @@ async fn build_l3_task_tree(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
     use memorose_common::{ForgetMode, ForgetTargetKind, ForgettingTombstone, MemoryType};
     use tempfile::tempdir;
 

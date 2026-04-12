@@ -116,7 +116,7 @@ impl EnhancedCommunityDetector {
             all_nodes.insert(edge.target_id);
         }
 
-        // 初始化：每个节点是自己的社区
+        // Initialize: each node starts as its own community
         for node in &all_nodes {
             communities.insert(*node, *node);
         }

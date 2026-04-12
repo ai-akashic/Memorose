@@ -1,18 +1,18 @@
 "use client";
 
 import { useStats, useClusterStatus } from "@/lib/hooks";
-import { formatNumber } from "@/lib/utils";
+import { formatNumber, formatBytes } from "@/lib/utils";
 import {
   Activity,
-  Bot,
   Clock3,
   Database,
   GitBranch,
   Layers,
   Search,
   Share2,
-  User,
 } from "lucide-react";
+import { StatCard } from "@/components/stat-card";
+import { RuntimeModeBanner } from "@/components/runtime-mode-banner";
 import {
   AreaChart,
   Area,
@@ -29,87 +29,10 @@ import { api } from "@/lib/api";
 import { useOrgScope } from "@/lib/org-scope";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { ClusterStatus, GraphData } from "@/lib/types";
+import type { GraphData } from "@/lib/types";
 import { motion } from "framer-motion";
 import { useTranslations } from "next-intl";
 import { DashboardHero } from "@/components/dashboard-chrome";
-
-function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
-
-function NumberTicker({ value }: { value: number }) {
-  const [displayValue, setDisplayValue] = useState(0);
-
-  useEffect(() => {
-    let startTimestamp: number | null = null;
-    const duration = 1000;
-    const startValue = displayValue;
-
-    const step = (timestamp: number) => {
-      if (!startTimestamp) startTimestamp = timestamp;
-      const progress = Math.min((timestamp - startTimestamp) / duration, 1);
-
-      const easeOutQuart = 1 - Math.pow(1 - progress, 4);
-      const current = Math.floor(startValue + (value - startValue) * easeOutQuart);
-
-      setDisplayValue(current);
-
-      if (progress < 1) {
-        window.requestAnimationFrame(step);
-      }
-    };
-    window.requestAnimationFrame(step);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
-
-  return <span>{formatNumber(displayValue)}</span>;
-}
-
-function StatCard({
-  label,
-  value,
-  icon: Icon,
-  color = "text-primary",
-  className = "",
-  delay = 0,
-  compact = false,
-}: {
-  label: string;
-  value: string | number;
-  icon: React.ElementType;
-  color?: string;
-  className?: string;
-  delay?: number;
-  compact?: boolean;
-}) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 15 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, delay, ease: "easeOut" }}
-      className={`h-full ${className}`}
-    >
-      <Card className="glass-card group relative overflow-hidden transition-all duration-500 h-full">
-        <CardContent className={`relative z-10 flex h-full flex-col ${compact ? "gap-2.5 p-3.5" : "gap-4 p-5"}`}>
-          <div className={`flex items-center ${compact ? "gap-1.5" : "gap-2"}`}>
-            <Icon className={`${compact ? "h-3.5 w-3.5" : "h-4 w-4"} ${color} opacity-60 group-hover:opacity-100 transition-opacity shrink-0`} />
-            <span className={`${compact ? "text-[9px]" : "text-[10px]"} font-bold uppercase tracking-wider text-muted-foreground truncate`}>
-              {label}
-            </span>
-          </div>
-          <div className={`${compact ? "text-2xl xl:text-[1.65rem]" : "text-3xl"} font-bold tracking-tighter font-mono text-foreground/90 transition-colors group-hover:text-white`}>
-            {typeof value === "number" ? <NumberTicker value={value} /> : value}
-          </div>
-        </CardContent>
-
-      </Card>
-    </motion.div>
-  );
-}
 
 function RelationDistribution({ graphData, className = "" }: { graphData: GraphData | null, className?: string }) {
   const t = useTranslations("Metrics");
@@ -125,11 +48,11 @@ function RelationDistribution({ graphData, className = "" }: { graphData: GraphD
   return (
     <Card className={`glass-card flex flex-col border-white/[0.04] ${className}`}>
       <CardHeader className="pb-2 flex-shrink-0">
-        <CardTitle className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("pathways")}</CardTitle>
+        <CardTitle className="label-xs">{t("pathways")}</CardTitle>
       </CardHeader>
       <CardContent className="flex-1 flex flex-col justify-center items-center p-4">
         {data.length === 0 ? (
-          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("pathwaysEmpty")}</p>
+          <p className="label-xs">{t("pathwaysEmpty")}</p>
         ) : (
           <div className="h-full w-full min-h-[160px] flex-1">
             <ResponsiveContainer width="100%" height="100%">
@@ -195,7 +118,7 @@ function ImportanceHistogram({
   return (
     <Card className={`glass-card flex flex-col border-white/[0.04] ${className}`}>
       <CardHeader className="pb-0 flex-shrink-0">
-        <CardTitle className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("density")}</CardTitle>
+        <CardTitle className="label-xs">{t("density")}</CardTitle>
       </CardHeader>
       <CardContent className="flex-1 pt-6">
         <div className="h-full w-full">
@@ -241,7 +164,7 @@ function WorkerStatus({ config, className = "" }: { config: NonNullable<ReturnTy
       <CardHeader className="pb-4 border-b border-border">
         <div className="flex items-center gap-2">
           <div className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
-          <CardTitle className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("node.title")}</CardTitle>
+          <CardTitle className="label-xs">{t("node.title")}</CardTitle>
         </div>
       </CardHeader>
       <CardContent className="space-y-3 pt-4 px-5">
@@ -258,7 +181,7 @@ function WorkerStatus({ config, className = "" }: { config: NonNullable<ReturnTy
           { label: t("insight.batchCycles"), value: worker.insight_max_batches_per_cycle },
         ].map((item) => (
           <div key={item.label} className="flex flex-col gap-0.5">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{item.label}</span>
+            <span className="label-xs">{item.label}</span>
             <span className="font-mono text-[10px] text-foreground/70">{item.value}</span>
           </div>
         ))}
@@ -279,7 +202,7 @@ function BreakdownCard({
   return (
     <Card className={`glass-card border-white/[0.04] ${className}`}>
       <CardHeader className="pb-3">
-        <CardTitle className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+        <CardTitle className="label-xs">
           {title}
         </CardTitle>
       </CardHeader>
@@ -292,43 +215,6 @@ function BreakdownCard({
             </span>
           </div>
         ))}
-      </CardContent>
-    </Card>
-  );
-}
-
-function RuntimeModeBanner({
-  cluster,
-  t,
-}: {
-  cluster: ClusterStatus;
-  t: ReturnType<typeof useTranslations>;
-}) {
-  const standalone = cluster.runtime_mode === "standalone";
-
-  return (
-    <Card className="glass-card overflow-hidden border-white/[0.04]">
-      <CardContent className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
-        <div className="space-y-1">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-            {t("runtime.title")}
-          </div>
-          <div className="flex items-center gap-2">
-            <span
-              className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wider ${
-                standalone ? "bg-success/10 text-success" : "bg-primary/10 text-primary"
-              }`}
-            >
-              {standalone ? t("runtime.standalone") : t("runtime.cluster")}
-            </span>
-            <span className="rounded-full bg-card px-2 py-1 text-[10px] font-mono uppercase tracking-wider text-foreground/75">
-              {cluster.write_path}
-            </span>
-          </div>
-        </div>
-        <div className="max-w-xl text-sm text-muted-foreground">
-          {standalone ? t("runtime.standaloneDesc") : t("runtime.clusterDesc")}
-        </div>
       </CardContent>
     </Card>
   );
@@ -380,21 +266,15 @@ export default function MetricsPage() {
 
   return (
     <div className="relative min-h-full pb-10">
-      <div className="absolute top-[-20%] right-[-10%] w-[800px] h-[800px] blob-bg opacity-30 pointer-events-none -z-10 mix-blend-screen" />
 
       <div className="space-y-8">
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-        >
-          <DashboardHero
+        <DashboardHero
             icon={Activity}
             kicker={t("title")}
             title={t("title")}
             description={scopedOrgId ? t("subtitleOrg", { orgId: scopedOrgId }) : t("subtitle")}
           >
           </DashboardHero>
-        </motion.div>
 
         <motion.div
           initial={{ opacity: 0, scale: 0.98 }}
@@ -404,7 +284,7 @@ export default function MetricsPage() {
         >
           {cluster && <RuntimeModeBanner cluster={cluster} t={t} />}
 
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
             <StatCard label={t("stats.ingested")} value={stats?.total_events ?? 0} icon={Activity} delay={0.1} compact />
             <StatCard label={t("stats.pending")} value={stats?.pending_events ?? 0} icon={Activity} color="text-warning" delay={0.15} compact />
             <StatCard label={t("stats.localMemory")} value={stats?.memory_by_scope.local ?? 0} icon={Database} color="text-success" delay={0.2} compact />
@@ -564,11 +444,6 @@ export default function MetricsPage() {
                 },
               ]}
             />
-          </div>
-          <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
-            <StatCard label={t("stats.agentDomain")} value={stats?.memory_by_domain.agent ?? 0} icon={Bot} delay={0.35} />
-            <StatCard label={t("stats.userDomain")} value={stats?.memory_by_domain.user ?? 0} icon={User} color="text-success" delay={0.4} />
-            <StatCard label={t("stats.orgDomain")} value={stats?.memory_by_domain.organization ?? 0} icon={Database} delay={0.45} />
           </div>
         </motion.div>
       </div>

@@ -62,7 +62,7 @@ export function MemoryAssets({
               {asset.description}
             </p>
           ) : null}
-          <div className="mt-2 text-[11px] font-mono text-muted-foreground break-all">
+          <div className="mt-2 text-xs font-mono text-muted-foreground break-all">
             {isLinkableSource(asset.storage_key) ? (
               <a
                 href={asset.storage_key}

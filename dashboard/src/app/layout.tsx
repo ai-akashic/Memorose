@@ -28,7 +28,7 @@ export default async function RootLayout({
   return (
     <html lang={locale} className="dark" suppressHydrationWarning>
       <body
-        className={`${GeistSans.variable} ${GeistMono.variable} antialiased h-screen overflow-hidden`}
+        className={`${GeistSans.variable} ${GeistMono.variable} antialiased h-screen`}
       >
         <ClientIntlProvider locale={locale}>
           {children}

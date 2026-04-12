@@ -85,7 +85,7 @@ export default function AuthenticatedLayout({
           <aside
             className={cn(
               "flex flex-col shrink-0 border-r border-white/8 bg-[linear-gradient(180deg,rgba(34,20,18,0.94),rgba(18,12,12,0.94))] backdrop-blur-xl shadow-[10px_0_42px_rgba(0,0,0,0.28)] transition-all duration-300 z-30 h-full overflow-hidden",
-              collapsed ? "w-[64px] lg:w-[68px]" : "w-[204px] lg:w-[212px] xl:w-[220px]"
+              collapsed ? "w-16" : "w-52"
             )}
           >
             <div className={cn("border-b border-white/8", collapsed ? "px-2 py-2.5" : "px-2.5 py-3")}>
@@ -101,10 +101,10 @@ export default function AuthenticatedLayout({
                     <MemoroseLogo size={24} />
                   </div>
                   <div className="min-w-0">
-                    <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-muted-foreground/80">
+                    <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground/80">
                       Memorose
                     </p>
-                    <p className="truncate text-[15px] font-bold leading-5 tracking-tight text-foreground/90">
+                    <p className="truncate text-sm font-bold leading-5 tracking-tight text-foreground/90">
                       Control Plane
                     </p>
                   </div>
@@ -122,7 +122,7 @@ export default function AuthenticatedLayout({
                     key={item.href}
                     href={item.href}
                     className={cn(
-                      "group relative flex items-center gap-2 overflow-hidden rounded-[0.95rem] border px-2 py-2 text-[12.5px] transition-all duration-200",
+                      "group relative flex items-center gap-2 overflow-hidden rounded-[0.95rem] border px-2 py-2 text-xs transition-all duration-200",
                       isActive
                         ? "border-primary/25 bg-primary/10 text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_10px_25px_rgba(255,122,87,0.12)]"
                         : "border-transparent text-muted-foreground hover:border-white/10 hover:bg-white/[0.04] hover:text-foreground"
@@ -202,17 +202,16 @@ export default function AuthenticatedLayout({
                 )}
               >
                 <LogOut className="w-4 h-4 shrink-0 group-hover:-translate-x-0.5 transition-transform" />
-                {!collapsed && <span className="text-[12px] font-medium">{t("logout")}</span>}
+                {!collapsed && <span className="text-xs font-medium">{t("logout")}</span>}
               </Button>
             </div>
           </aside>
 
           <main className="flex-1 overflow-y-auto overflow-x-hidden h-full allow-select bg-transparent relative z-0 flex flex-col">
-            <div className="absolute inset-0 z-[-1] bg-grid-white/[0.02] bg-[size:50px_50px] pointer-events-none opacity-60" />
             <div className="absolute left-[-10%] top-[-8%] z-[-1] h-[28rem] w-[28rem] rounded-full bg-[radial-gradient(circle,rgba(255,128,92,0.18),transparent_65%)] blur-3xl pointer-events-none" />
             <div className="absolute right-[-8%] top-[10%] z-[-1] h-[24rem] w-[24rem] rounded-full bg-[radial-gradient(circle,rgba(255,188,110,0.12),transparent_65%)] blur-3xl pointer-events-none" />
             <div className="absolute inset-0 z-[-1] bg-gradient-to-b from-transparent via-background/24 to-background/72 pointer-events-none" />
-            <div className="mx-auto flex w-full max-w-[92rem] flex-1 flex-col px-5 py-5 md:px-7 md:py-7 openclaw-dashboard-enter relative">
+            <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-5 py-5 md:px-7 md:py-7 lg:px-10 openclaw-dashboard-enter relative">
               {children}
             </div>
           </main>
