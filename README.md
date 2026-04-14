@@ -31,9 +31,6 @@
   <br />
 </div>
 
-<p align="center">
-  <img src=".github/assets/hero-overview.svg" alt="Memorose dashboard and architecture overview" width="960" />
-</p>
 <p align="center"><sub>Memorose is not a vector wrapper. It is a memory runtime for agents: ingest, consolidate, retrieve, reflect, share, and forget in one system.</sub></p>
 
 ---
