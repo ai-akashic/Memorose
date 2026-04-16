@@ -11,7 +11,7 @@
   </p>
   <br />
   <p>
-    <a href="https://memorose.dev/docs"><b>文档</b></a> &nbsp;&bull;&nbsp;
+    <a href="https://docs.memorose.dev"><b>文档</b></a> &nbsp;&bull;&nbsp;
     <a href="https://memorose.dev"><b>官网</b></a> &nbsp;&bull;&nbsp;
     <a href="https://github.com/ai-akashic/Memorose/issues"><b>Issues</b></a> &nbsp;&bull;&nbsp;
     <a href="https://discord.gg/memorose"><b>Discord</b></a>
