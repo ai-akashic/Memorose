@@ -102,6 +102,8 @@
   --shadow-lg: 0 32px 70px rgba(0, 0, 0, 0.34);
   --shadow-xl: 0 40px 110px rgba(0, 0, 0, 0.5);
   --shadow-glow: 0 18px 48px rgba(255, 122, 87, 0.18);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.18), 0 8px 24px rgba(0, 0, 0, 0.14), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  --shadow-card-hover: 0 2px 4px rgba(0, 0, 0, 0.2), 0 12px 32px rgba(0, 0, 0, 0.18), 0 0 40px rgba(255, 122, 87, 0.06);
 }
 
 @layer base {
@@ -190,16 +192,55 @@
   tr:hover td {
     background-color: rgba(255,255,255,0.02);
   }
+
+  button:active:not(:disabled) {
+    transform: scale(0.97) !important;
+    transition: transform 0.1s ease !important;
+  }
 }
 
 @layer components {
   .glass-card {
-    @apply rounded-[1.6rem] border border-white/10 bg-card/60 backdrop-blur-xl transition-colors duration-200 ease-out;
+    @apply rounded-[1.6rem] border border-white/10 bg-card/60 backdrop-blur-xl transition-all duration-300 ease-out;
     position: relative;
+    box-shadow: var(--shadow-card);
+  }
+
+  .glass-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: conic-gradient(from 180deg at 50% 50%, rgba(255, 122, 87, 0.14), transparent 25%, rgba(255, 188, 110, 0.1), transparent 50%, rgba(255, 122, 87, 0.08), transparent 75%);
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+    -webkit-mask-composite: xor;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+  }
+
+  .glass-card::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 10%;
+    right: 10%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.12), transparent);
+    border-radius: inherit;
+    pointer-events: none;
   }
 
   .glass-card:hover {
-    @apply border-white/16 bg-card/64;
+    @apply border-white/16 bg-card/68;
+    box-shadow: var(--shadow-card-hover);
+    transform: translateY(-1px);
+  }
+
+  .glass-card:hover::before {
+    opacity: 1;
   }
 
   .dashboard-stat-pill {
@@ -231,6 +272,15 @@
   }
 }
 
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
 @keyframes rise {
   from {
     opacity: 0;
@@ -253,6 +303,30 @@
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+@keyframes tab-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes glow-pulse {
+  0%, 100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+[data-slot="tabs-content"][data-state="active"] {
+  animation: tab-fade-in 0.25s ease-out;
 }
 
 .openclaw-rise {

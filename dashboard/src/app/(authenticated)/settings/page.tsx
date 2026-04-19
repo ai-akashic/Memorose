@@ -440,7 +440,7 @@ export default function SettingsPage() {
         <div className="grid gap-3">
           {apiKeysLoading && apiKeys.length === 0 ? (
             [1, 2].map((index) => (
-              <div key={index} className="glass-card h-28 animate-pulse rounded-2xl opacity-20" />
+              <div key={index} className="glass-card h-28 rounded-2xl" />
             ))
           ) : apiKeys.length === 0 ? (
             <Card className="glass-card border-dashed border-border/80 p-5 text-sm text-muted-foreground">

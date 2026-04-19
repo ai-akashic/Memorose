@@ -18,6 +18,7 @@ import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 import { DashboardHero } from "@/components/dashboard-chrome";
 import { StatCard } from "@/components/stat-card";
+import { EmptyState } from "@/components/empty-state";
 
 function formatRelativeTime(timestamp: number | null, now: number | null, t: ReturnType<typeof useTranslations>): string {
   if (!timestamp) return t("time.never");
@@ -139,13 +140,8 @@ export default function AgentsPage() {
               ))
             ) : !data || data.agents.length === 0 ? (
               <TableRow className="border-border hover:bg-transparent">
-                <TableCell colSpan={6} className="py-24">
-                  <div className="flex flex-col items-center gap-3 text-center">
-                    <div className="w-12 h-12 rounded-2xl bg-card border border-border flex items-center justify-center">
-                      <Bot className="w-5 h-5 opacity-10" />
-                    </div>
-                    <p className="label-xs">{t("empty")}</p>
-                  </div>
+                <TableCell colSpan={6} className="p-0">
+                  <EmptyState icon={Bot} title={t("empty")} />
                 </TableCell>
               </TableRow>
             ) : (

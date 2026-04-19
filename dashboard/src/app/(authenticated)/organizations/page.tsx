@@ -199,7 +199,7 @@ export default function OrganizationsPage() {
         <div
           className={`rounded-2xl border px-4 py-3 text-sm ${
             messageTone === "success"
-              ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
+              ? "border-success/25 bg-success/10 text-success"
               : "border-destructive/30 bg-destructive/10 text-destructive"
           }`}
         >

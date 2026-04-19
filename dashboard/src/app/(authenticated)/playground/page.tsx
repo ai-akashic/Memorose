@@ -226,7 +226,7 @@ function ChatPanel() {
     }
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -301,7 +301,7 @@ function ChatPanel() {
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyPress={handleKeyPress}
+                onKeyDown={handleKeyDown}
                 placeholder={t("chat.placeholder")}
                 disabled={loading}
                 className="h-12 flex-1 border-none bg-transparent px-4 text-sm focus-visible:ring-0 placeholder:text-muted-foreground/35"
@@ -652,7 +652,7 @@ function ForgetPanel() {
       ) : null}
 
       {success ? (
-        <div className="text-sm text-emerald-300 bg-emerald-500/10 rounded-lg px-4 py-2 border border-emerald-500/20">
+        <div className="text-sm text-success bg-success/10 rounded-lg px-4 py-2 border border-success/20">
           {success}
         </div>
       ) : null}

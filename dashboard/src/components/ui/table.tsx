@@ -23,7 +23,7 @@ function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
   return (
     <thead
       data-slot="table-header"
-      className={cn("[&_tr]:border-b", className)}
+      className={cn("[&_tr]:border-b bg-gradient-to-r from-card/80 via-card to-card/80", className)}
       {...props}
     />
   )
@@ -57,7 +57,7 @@ function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
     <tr
       data-slot="table-row"
       className={cn(
-        "border-b border-white/6 hover:bg-white/[0.03] data-[state=selected]:bg-muted transition-colors",
+        "relative border-b border-white/6 hover:bg-white/[0.04] data-[state=selected]:bg-muted transition-all duration-200 before:absolute before:left-0 before:top-0 before:h-full before:w-[2px] before:rounded-r before:bg-primary/0 hover:before:bg-primary/60 before:transition-all before:duration-200",
         className
       )}
       {...props}
@@ -70,7 +70,7 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
     <th
       data-slot="table-head"
       className={cn(
-        "text-foreground h-11 px-3 text-left align-middle font-medium whitespace-nowrap [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+        "text-foreground/80 h-11 px-3 text-left align-middle text-[10px] font-bold uppercase tracking-wider whitespace-nowrap [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
         className
       )}
       {...props}

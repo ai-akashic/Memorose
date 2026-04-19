@@ -5,6 +5,7 @@ import { isShardedCluster } from "@/lib/types";
 import type { ClusterStatusSingle, ClusterStatusSharded, ShardStatus, TextIndexMetrics } from "@/lib/types";
 import { formatNumber, formatDuration, formatBytes } from "@/lib/utils";
 import { StatCard } from "@/components/stat-card";
+import { StatusDot } from "@/components/status-dot";
 import { RuntimeModeBanner } from "@/components/runtime-mode-banner";
 import { api } from "@/lib/api";
 import { useOrgScope } from "@/lib/org-scope";
@@ -79,7 +80,7 @@ function ShardRaftCard({ shard, t }: { shard: ShardStatus; t: ReturnType<typeof 
             <Layers className="w-4 h-4 text-primary opacity-60" />
             <span className="label-xs">S{shard.shard_id}</span>
           </div>
-          <div className={`w-2 h-2 rounded-full ${isHealthy ? 'bg-success shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-warning shadow-[0_0_8px_rgba(245,158,11,0.5)]'} animate-pulse`} />
+          <StatusDot status={isHealthy ? "healthy" : "warning"} />
         </div>
       </CardHeader>
       <CardContent className="p-4 pt-2">
@@ -100,7 +101,7 @@ function RaftStatusCard({ cluster, t }: { cluster: ClusterStatusSingle; t: Retur
             <GitBranch className="w-4 h-4 text-primary opacity-60" />
             <span className="label-xs">{t("raft.consensus")}</span>
           </div>
-          <div className={`w-2 h-2 rounded-full ${cluster.replication_lag <= 10 ? 'bg-success shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-warning shadow-[0_0_8px_rgba(245,158,11,0.5)]'} animate-pulse`} />
+          <StatusDot status={cluster.replication_lag <= 10 ? "healthy" : "warning"} />
         </div>
       </CardHeader>
       <CardContent className="p-4 pt-2">
@@ -147,7 +148,7 @@ function HeartbeatCard({ cluster, onRemoveNode, t }: { cluster: ClusterStatusSin
             return (
               <div key={nodeId} className="flex items-center justify-between py-1.5 px-2 rounded-md hover:bg-card transition-colors">
                 <div className="flex items-center gap-2">
-                  <div className={`w-1.5 h-1.5 rounded-full ${isHealthy ? 'bg-success shadow-[0_0_5px_rgba(34,197,94,0.5)]' : 'bg-warning shadow-[0_0_5px_rgba(245,158,11,0.5)]'} animate-pulse`} />
+                  <StatusDot status={isHealthy ? "healthy" : "warning"} size="sm" />
                   <span className="text-xs font-mono text-foreground/80">N{nodeId}</span>
                   {isSelf && <span className="ml-1 label-xs">({t("node.self")})</span>}
                 </div>
@@ -344,7 +345,7 @@ function SingleShardTopology({ cluster, t }: { cluster: ClusterStatusSingle; t: 
                   <div
                     className={`relative w-16 h-16 rounded-2xl flex items-center justify-center border-2 transition-all duration-300 mx-auto ${
                       isLeader
-                        ? "border-success bg-success/10 shadow-[0_0_20px_rgba(34,197,94,0.15)] group-hover:scale-105"
+                        ? "border-success bg-success/10 shadow-[0_0_20px_rgba(34,197,94,0.15)] group-hover:scale-105 ring-2 ring-success/20 ring-offset-2 ring-offset-background"
                         : "border-white/10 bg-black/40 group-hover:border-white/20"
                     }`}
                   >

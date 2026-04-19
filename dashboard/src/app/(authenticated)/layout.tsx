@@ -124,12 +124,12 @@ export default function AuthenticatedLayout({
                     className={cn(
                       "group relative flex items-center gap-2 overflow-hidden rounded-[0.95rem] border px-2 py-2 text-xs transition-all duration-200",
                       isActive
-                        ? "border-primary/25 bg-primary/10 text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_10px_25px_rgba(255,122,87,0.12)]"
+                        ? "border-primary/25 bg-gradient-to-r from-primary/12 via-primary/8 to-transparent text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_10px_25px_rgba(255,122,87,0.12)]"
                         : "border-transparent text-muted-foreground hover:border-white/10 hover:bg-white/[0.04] hover:text-foreground"
                     )}
                   >
                     {isActive && (
-                      <span className="absolute inset-y-2 left-0 w-1 rounded-r-full bg-primary shadow-[0_0_18px_rgba(255,122,87,0.8)]" />
+                      <span className="absolute inset-y-2 left-0 w-[3px] rounded-r-full bg-primary shadow-[0_0_18px_rgba(255,122,87,0.8)] animate-[glow-pulse_2s_ease-in-out_infinite]" />
                     )}
                     <div
                       className={cn(

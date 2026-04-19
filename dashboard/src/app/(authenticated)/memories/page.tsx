@@ -8,6 +8,7 @@ import { api } from "@/lib/api";
 import { useOrgScope } from "@/lib/org-scope";
 import { truncate } from "@/lib/utils";
 import type { DashboardMemoryDetail, SearchResult } from "@/lib/types";
+import { EmptyState } from "@/components/empty-state";
 import { TaskWorkspace } from "@/components/task-workspace";
 import { OrganizationKnowledgeDetail } from "@/components/organization-knowledge-detail";
 import { MemoryAssets } from "@/components/memory-assets";
@@ -209,7 +210,13 @@ function KnowledgeGraph({ userId, orgId }: { userId?: string; orgId?: string }) 
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const nodeColor = useCallback((node: any) => {
-    return node.level === 2 ? "hsl(142, 76%, 36%)" : "hsl(217, 91%, 60%)";
+    const LEVEL_COLORS: Record<number, string> = {
+      0: "hsl(38, 92%, 56%)",
+      1: "hsl(10, 95%, 67%)",
+      2: "hsl(142, 58%, 49%)",
+      3: "hsl(30, 82%, 63%)",
+    };
+    return LEVEL_COLORS[node.level] ?? "hsl(10, 95%, 67%)";
   }, []);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -227,16 +234,21 @@ function KnowledgeGraph({ userId, orgId }: { userId?: string; orgId?: string }) 
     ctx.moveTo(start.x, start.y);
     ctx.lineTo(end.x, end.y);
 
-    const isLevel2 = start.level === 2 || end.level === 2;
-    const color = isLevel2 ? 'rgba(34, 197, 94, 0.4)' : 'rgba(56, 125, 255, 0.4)';
-    const glowColor = isLevel2 ? 'rgba(34, 197, 94, 0.8)' : 'rgba(56, 125, 255, 0.8)';
+    const LEVEL_LINK_COLORS: Record<number, { color: string; glow: string }> = {
+      0: { color: 'rgba(245, 158, 11, 0.35)', glow: 'rgba(245, 158, 11, 0.7)' },
+      1: { color: 'rgba(255, 122, 87, 0.35)', glow: 'rgba(255, 122, 87, 0.7)' },
+      2: { color: 'rgba(34, 197, 94, 0.35)', glow: 'rgba(34, 197, 94, 0.7)' },
+      3: { color: 'rgba(255, 188, 110, 0.35)', glow: 'rgba(255, 188, 110, 0.7)' },
+    };
+    const maxLevel = Math.max(start.level ?? 0, end.level ?? 0);
+    const palette = LEVEL_LINK_COLORS[maxLevel] ?? LEVEL_LINK_COLORS[1];
 
-    ctx.strokeStyle = color;
+    ctx.strokeStyle = palette.color;
     ctx.lineWidth = ((link.weight ?? 0.5) * 2) / scale;
-    ctx.shadowColor = glowColor;
+    ctx.shadowColor = palette.glow;
     ctx.shadowBlur = 8 / scale;
     ctx.stroke();
-    ctx.shadowBlur = 0; // reset
+    ctx.shadowBlur = 0;
   }, []);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -574,13 +586,8 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
               ))
             ) : memories?.items.length === 0 ? (
               <TableRow className="border-border hover:bg-transparent">
-                <TableCell colSpan={7} className="text-center text-muted-foreground py-16">
-                  <div className="flex flex-col items-center gap-3">
-                    <div className="w-12 h-12 rounded-2xl bg-card border border-border flex items-center justify-center">
-                      <List className="w-6 h-6 opacity-20" />
-                    </div>
-                    <p className="text-sm font-medium">{t("empty")}</p>
-                  </div>
+                <TableCell colSpan={7} className="p-0">
+                  <EmptyState icon={List} title={t("empty")} />
                 </TableCell>
               </TableRow>
             ) : (

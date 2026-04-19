@@ -33,12 +33,28 @@ import type { GraphData } from "@/lib/types";
 import { motion } from "framer-motion";
 import { useTranslations } from "next-intl";
 import { DashboardHero } from "@/components/dashboard-chrome";
+import { StatusDot } from "@/components/status-dot";
+
+const CHART_TOOLTIP_STYLE = {
+  background: "rgba(0, 0, 0, 0.85)",
+  backdropFilter: "blur(16px)",
+  border: "1px solid rgba(255,255,255,0.08)",
+  borderRadius: "12px",
+  boxShadow: "0 8px 32px rgba(0,0,0,0.3)",
+};
+
+const CHART_TOOLTIP_ITEM_STYLE = {
+  color: "hsl(0 0% 90%)",
+  fontSize: "10px",
+  fontWeight: "bold" as const,
+  textTransform: "uppercase" as const,
+};
 
 function RelationDistribution({ graphData, className = "" }: { graphData: GraphData | null, className?: string }) {
   const t = useTranslations("Metrics");
   if (!graphData) return null;
 
-  const COLORS = ["hsl(220 70% 50%)", "hsl(160 60% 45%)", "hsl(30 80% 55%)", "hsl(280 65% 60%)", "hsl(340 75% 55%)", "hsl(200 80% 60%)"];
+  const COLORS = ["hsl(10 95% 67%)", "hsl(34 88% 62%)", "hsl(212 78% 63%)", "hsl(154 51% 52%)", "hsl(286 58% 68%)", "hsl(38 92% 56%)"];
 
   const data = Object.entries(graphData.stats.relation_distribution).map(([name, value]) => ({
     name,
@@ -73,8 +89,8 @@ function RelationDistribution({ graphData, className = "" }: { graphData: GraphD
                   ))}
                 </Pie>
                 <Tooltip
-                  contentStyle={{ background: "rgba(0, 0, 0, 0.8)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "8px" }}
-                  itemStyle={{ color: "hsl(0 0% 90%)", fontSize: "10px", fontWeight: "bold", textTransform: "uppercase" }}
+                  contentStyle={CHART_TOOLTIP_STYLE}
+                  itemStyle={CHART_TOOLTIP_ITEM_STYLE}
                 />
               </PieChart>
             </ResponsiveContainer>
@@ -126,25 +142,25 @@ function ImportanceHistogram({
             <AreaChart data={histData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
               <defs>
                 <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="hsl(217 91% 60%)" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="hsl(217 91% 60%)" stopOpacity={0} />
+                  <stop offset="5%" stopColor="hsl(10 95% 67%)" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="hsl(10 95% 67%)" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <XAxis dataKey="range" hide />
               <YAxis hide />
               <Tooltip
-                contentStyle={{ background: "rgba(0, 0, 0, 0.8)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "8px" }}
-                itemStyle={{ color: "hsl(0 0% 90%)", fontSize: "10px", fontFamily: "monospace" }}
+                contentStyle={CHART_TOOLTIP_STYLE}
+                itemStyle={{ ...CHART_TOOLTIP_ITEM_STYLE, fontFamily: "monospace" }}
                 cursor={{ stroke: 'rgba(255,255,255,0.1)', strokeWidth: 1 }}
               />
               <Area
                 type="monotone"
                 dataKey="count"
-                stroke="hsl(217 91% 60%)"
+                stroke="hsl(10 95% 67%)"
                 strokeWidth={2}
                 fillOpacity={1}
                 fill="url(#colorCount)"
-                activeDot={{ r: 4, strokeWidth: 0, fill: "hsl(217 91% 70%)" }}
+                activeDot={{ r: 4, strokeWidth: 0, fill: "hsl(10 95% 72%)" }}
               />
             </AreaChart>
           </ResponsiveContainer>
@@ -163,7 +179,7 @@ function WorkerStatus({ config, className = "" }: { config: NonNullable<ReturnTy
     <Card className={`glass-card flex flex-col border-white/[0.04] ${className}`}>
       <CardHeader className="pb-4 border-b border-border">
         <div className="flex items-center gap-2">
-          <div className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
+          <StatusDot status="healthy" size="sm" />
           <CardTitle className="label-xs">{t("node.title")}</CardTitle>
         </div>
       </CardHeader>
