@@ -63,10 +63,11 @@ ENV HOSTNAME=0.0.0.0
 COPY --from=frontend-builder /usr/src/app/dashboard/.next/standalone ./
 COPY --from=frontend-builder /usr/src/app/dashboard/.next/static ./.next/static
 COPY --from=frontend-builder /usr/src/app/dashboard/public ./public
+COPY dashboard/server ./server
 
 EXPOSE 3100
 
-CMD ["node", "server.js"]
+CMD ["node", "server/standalone-server.js"]
 
 # ---- Unified Runner (Default for `docker run`) ----
 FROM node:20-bookworm-slim AS unified-runner
@@ -84,6 +85,7 @@ COPY --from=backend-builder /usr/src/app/target/release/memorose-gateway /app/
 COPY --from=frontend-builder /usr/src/app/dashboard/.next/standalone /app/dashboard/
 COPY --from=frontend-builder /usr/src/app/dashboard/.next/static /app/dashboard/.next/static
 COPY --from=frontend-builder /usr/src/app/dashboard/public /app/dashboard/public
+COPY dashboard/server /app/dashboard/server
 
 # Setup environment variables
 ENV RUST_LOG=info
@@ -103,7 +105,7 @@ echo "Starting Memorose API Server on port 3000..."\n\
 SERVER_PID=$!\n\
 \n\
 echo "Starting Memorose Dashboard on port 3100..."\n\
-cd /app/dashboard && node server.js &\n\
+cd /app/dashboard && node server/standalone-server.js &\n\
 DASHBOARD_PID=$!\n\
 \n\
 # Wait for any process to exit\n\

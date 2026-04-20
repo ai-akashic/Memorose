@@ -177,7 +177,7 @@ main() {
     log_success "Dashboard build complete!"
     echo ""
     echo "  Build output: ${DASHBOARD_DIR}/.next"
-    echo "  Start app:     cd ${DASHBOARD_DIR} && PORT=3100 HOSTNAME=127.0.0.1 node .next/standalone/server.js"
+    echo "  Start app:     cd ${DASHBOARD_DIR} && PORT=3100 HOSTNAME=127.0.0.1 node server/standalone-server.js"
     echo "  Dashboard URL: http://localhost:3100/dashboard"
     echo ""
 }

@@ -15,6 +15,7 @@ readonly SERVER_BIN="${ROOT_DIR}/target/debug/memorose-server"
 readonly DASHBOARD_DIR="${ROOT_DIR}/dashboard"
 readonly BUILD_DASHBOARD_SCRIPT="${SCRIPT_DIR}/build_dashboard.sh"
 readonly DASHBOARD_SERVER_ENTRY="${DASHBOARD_DIR}/.next/standalone/server.js"
+readonly DASHBOARD_STANDALONE_WRAPPER="${DASHBOARD_DIR}/server/standalone-server.js"
 readonly LOG_DIR="${ROOT_DIR}/logs"
 readonly DATA_DIR="${ROOT_DIR}/data"
 readonly PID_DIR="${ROOT_DIR}/.pids"
@@ -508,7 +509,7 @@ start_dashboard() {
 
     (
         cd "${DASHBOARD_DIR}"
-        exec nohup env PORT="${DASHBOARD_PORT}" HOSTNAME="127.0.0.1" node ".next/standalone/server.js"
+        exec nohup env PORT="${DASHBOARD_PORT}" HOSTNAME="127.0.0.1" node "${DASHBOARD_STANDALONE_WRAPPER}"
     ) >"${log_file}" 2>&1 </dev/null &
 
     local pid=$!
