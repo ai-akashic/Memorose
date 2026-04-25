@@ -37,6 +37,39 @@ fn build_bounded_context<'a>(
     (context, included, total)
 }
 
+fn normalize_community_summary(summary: &str) -> String {
+    let trimmed = summary.trim();
+    let prefixes = [
+        "This community ",
+        "This community's ",
+        "This group ",
+        "This group's ",
+        "These memories ",
+        "The user ",
+        "The user's ",
+    ];
+
+    for prefix in prefixes {
+        if let Some(rest) = trimmed.strip_prefix(prefix) {
+            let normalized = if prefix.ends_with("'s ") {
+                rest.to_string()
+            } else {
+                format!(
+                    "{}{}",
+                    rest.chars()
+                        .next()
+                        .map(|c| c.to_uppercase().to_string())
+                        .unwrap_or_default(),
+                    rest.chars().skip(1).collect::<String>()
+                )
+            };
+            return normalized.trim().to_string();
+        }
+    }
+
+    trimmed.to_string()
+}
+
 #[derive(serde::Serialize)]
 struct PromptMemoryFact {
     subject: &'static str,
@@ -843,12 +876,16 @@ impl Arbitrator {
         if included < total {
             tracing::warn!("summarize_community: truncated context to {}/{} memories to stay within token budget", included, total);
         }
-        let system_prompt = "You are a Community Insight Generator. \
-            Analyze the following group of related memories (a 'Community'). \
-            Identify the common theme that binds them together. \
+        let system_prompt = "You are a memory abstraction engine. \
+            Analyze the following group of related memories and extract the shared pattern. \
+            The summary must be dense, concrete, and immediately useful. \
+            Write only direct conclusions, preferences, habits, facts, or recurring patterns. \
+            Do not add framing language, scene-setting, or commentary. \
+            Do not start the summary with phrases like 'This community', 'This group', 'These memories', or 'The user'. \
+            Avoid vague filler such as 'overall', 'in general', 'it seems', or 'appears to'. \
             \
             Output ONLY valid JSON: \
-            {\"name\": \"Short Title (3-5 words)\", \"summary\": \"Comprehensive summary (1-2 paragraphs)\", \"keywords\": [\"k1\", \"k2\", \"k3\"]}";
+            {\"name\": \"Short Title (3-5 words)\", \"summary\": \"Direct factual summary without filler\", \"keywords\": [\"k1\", \"k2\", \"k3\"]}";
 
         let user_prompt = format!("Community Memories:\n{}", memory_block);
 
@@ -863,12 +900,14 @@ impl Arbitrator {
             .trim_end_matches("```")
             .trim();
 
-        let insight: CommunityInsight =
+        let mut insight: CommunityInsight =
             serde_json::from_str(clean_json).unwrap_or_else(|_| CommunityInsight {
                 name: "Parsing Error".to_string(),
                 summary: result.data,
                 keywords: Vec::new(),
             });
+
+        insight.summary = normalize_community_summary(&insight.summary);
 
         Ok(insight)
     }
@@ -2039,5 +2078,25 @@ mod tests {
         assert_eq!(parse_error.name, "Parsing Error");
         assert_eq!(parse_error.summary, "plain text summary");
         assert!(parse_error.keywords.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_summarize_community_strips_filler_prefixes() {
+        let insight = Arbitrator::with_client(Arc::new(MockLLM {
+            response: r#"{
+                "name": "Shared Preferences",
+                "summary": "This community prefers concise technical writing and direct examples.",
+                "keywords": ["writing", "examples"]
+            }"#
+            .into(),
+        }))
+        .summarize_community(vec!["Prefer concise technical writing.".into(), "Examples should be direct.".into()])
+        .await
+        .unwrap();
+
+        assert_eq!(
+            insight.summary,
+            "Prefers concise technical writing and direct examples."
+        );
     }
 }
