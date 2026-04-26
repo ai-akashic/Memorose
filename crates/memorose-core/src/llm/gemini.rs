@@ -1,4 +1,4 @@
-use super::{EmbedInput, EmbedPart, LLMClient};
+use super::{EmbedInput, EmbedPart, LLMClient, LANGUAGE_PRESERVATION_INSTRUCTION};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use base64::{engine::general_purpose, Engine as _};
@@ -396,7 +396,8 @@ impl LLMClient for GeminiClient {
     ) -> Result<super::LLMResponse<super::CompressionOutput>> {
         let system_prompt = if is_agent {
             // PROCEDURAL (Agent) PROMPT
-            "You are an expert at extracting and summarizing Agent execution trajectories and experiences. \
+            format!(
+                "You are an expert at extracting and summarizing Agent execution trajectories and experiences. \
             Your task is to produce a comprehensive summary of the agent's actions, logic, and outcomes. \
             \
             CRITICAL RULES: \
@@ -404,12 +405,16 @@ impl LLMClient for GeminiClient {
             - PRESERVE ERRORS: If an API call failed, record exactly what failed and the stated reason. \
             - BE VERBOSE ON LOGIC: Do not just give the final answer. The step-by-step logic and tool usage is the core of this memory. \
             - OMIT USER CHITCHAT: Focus purely on the agent's internal workings. \
+            - {} \
             \
             Output ONLY valid JSON: \
-            {\"content\": \"detailed agent trajectory and reflection\", \"valid_at\": null}"
+            {{\"content\": \"detailed agent trajectory and reflection\", \"valid_at\": null}}",
+                LANGUAGE_PRESERVATION_INSTRUCTION
+            )
         } else {
             // FACTUAL (User) PROMPT
-            "You are an expert at extracting core facts, preferences, and profiles about a HUMAN user from text. \
+            format!(
+                "You are an expert at extracting core facts, preferences, and profiles about a HUMAN user from text. \
             Compress the following event into a concise, high-density factual statement. \
             \
             CRITICAL RULES: \
@@ -417,14 +422,17 @@ impl LLMClient for GeminiClient {
             - EXTRACT PREFERENCES: e.g., 'User likes X', 'User is allergic to Y'. \
             - OMIT AGENT/SYSTEM TEXT: Disregard anything the AI assistant said. Focus 100% on the human. \
             - Keep the first-person perspective (use 'I' if the original uses it) when referring to the user. \
+            - {} \
             \
             If the text contains specific time references (e.g., 'last week'), extract the estimated UTC timestamp. \
             \
             Output ONLY valid JSON: \
-            {\"content\": \"compressed factual summary\", \"valid_at\": \"ISO8601 timestamp or null\"}"
+            {{\"content\": \"compressed factual summary\", \"valid_at\": \"ISO8601 timestamp or null\"}}",
+                LANGUAGE_PRESERVATION_INSTRUCTION
+            )
         };
 
-        let response = self.call_generate(Some(system_prompt), text).await?;
+        let response = self.call_generate(Some(&system_prompt), text).await?;
 
         let clean_json = trim_json_fence(&response.data);
 

@@ -10,6 +10,9 @@ use memorose_common::config::{LLMConfig, LLMProvider};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+pub const LANGUAGE_PRESERVATION_INSTRUCTION: &str =
+    "LANGUAGE PRESERVATION: Respond in the dominant language of the input memories, events, or tasks. Do not translate unless the user explicitly requested translation. Preserve code, identifiers, proper nouns, file names, API names, and technical terms as written.";
+
 /// Represents embedding input that can be text or multimodal content.
 #[derive(Debug, Clone)]
 pub enum EmbedInput {

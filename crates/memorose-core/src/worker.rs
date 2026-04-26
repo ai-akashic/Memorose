@@ -1,4 +1,4 @@
-use crate::llm::{EmbedInput, EmbedPart, LLMClient};
+use crate::llm::{EmbedInput, EmbedPart, LLMClient, LANGUAGE_PRESERVATION_INSTRUCTION};
 use crate::MemoroseEngine;
 use anyhow::Result;
 use memorose_common::{
@@ -621,7 +621,12 @@ impl BackgroundWorker {
 
                 // If we have an LLM client, generate an insight for the milestone
                 if let Some(client) = &self.llm_client {
-                    let prompt = format!("You are an autonomous agent executing a planned milestone.\nTask: {}\nDescription: {}\nPlease provide a brief, professional summary of the simulated execution of this task.", task.title, task.description);
+                    let prompt = format!(
+                        "You are an autonomous agent executing a planned milestone.\n{}\nTask: {}\nDescription: {}\nPlease provide a brief, professional summary of the simulated execution of this task.",
+                        LANGUAGE_PRESERVATION_INSTRUCTION,
+                        task.title,
+                        task.description
+                    );
                     if let Ok(res) = client.generate(&prompt).await {
                         summary = res.data.clone();
                     }
@@ -2108,6 +2113,7 @@ mod tests {
     use chrono::Utc;
     use memorose_common::{Event, EventContent, L3Task, MemoryType, TaskStatus};
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
     use tempfile::tempdir;
     use uuid::Uuid;
 
@@ -2116,6 +2122,11 @@ mod tests {
     struct MockLLM {
         fail_compress: bool,
         generate_response: Option<String>,
+    }
+
+    struct PromptCaptureGenerateLLM {
+        response: String,
+        prompts: Arc<Mutex<Vec<String>>>,
     }
 
     struct ContextAwareCorrectionLLM;
@@ -2161,6 +2172,63 @@ mod tests {
             if self.fail_compress {
                 return Err(anyhow::anyhow!("LLM Error"));
             }
+            Ok(crate::llm::LLMResponse {
+                data: CompressionOutput {
+                    content: text.to_string(),
+                    valid_at: None,
+                },
+                usage: Default::default(),
+            })
+        }
+        async fn summarize_group(
+            &self,
+            _texts: Vec<String>,
+        ) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "summary".into(),
+                usage: Default::default(),
+            })
+        }
+        async fn describe_image(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "image".into(),
+                usage: Default::default(),
+            })
+        }
+        async fn describe_video(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "video".into(),
+                usage: Default::default(),
+            })
+        }
+        async fn transcribe(&self, _url: &str) -> Result<crate::llm::LLMResponse<String>> {
+            Ok(crate::llm::LLMResponse {
+                data: "audio".into(),
+                usage: Default::default(),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl crate::llm::LLMClient for PromptCaptureGenerateLLM {
+        async fn generate(&self, prompt: &str) -> Result<crate::llm::LLMResponse<String>> {
+            self.prompts.lock().unwrap().push(prompt.to_string());
+            Ok(crate::llm::LLMResponse {
+                data: self.response.clone(),
+                usage: Default::default(),
+            })
+        }
+        async fn embed(&self, _text: &str) -> Result<crate::llm::LLMResponse<Vec<f32>>> {
+            Ok(crate::llm::LLMResponse {
+                data: vec![0.0; 384],
+                usage: Default::default(),
+            })
+        }
+        async fn compress(
+            &self,
+            text: &str,
+            _is_agent: bool,
+        ) -> Result<crate::llm::LLMResponse<CompressionOutput>> {
             Ok(crate::llm::LLMResponse {
                 data: CompressionOutput {
                     content: text.to_string(),
@@ -3268,6 +3336,54 @@ mod tests {
             EventContent::Text(content)
                 if content.contains("Completed Milestone 'Ready task': LLM summary")
         ));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_l3_task_cycle_prompt_preserves_input_language() -> Result<()> {
+        const LANGUAGE_PRESERVATION_SNIPPET: &str = "Respond in the dominant language";
+
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        engine
+            .store_memory_unit(MemoryUnit::new(
+                None,
+                TEST_USER.into(),
+                None,
+                stream_id,
+                MemoryType::Factual,
+                "用户主要使用中文讨论 memory 机制".into(),
+                None,
+            ))
+            .await?;
+
+        let ready = L3Task::new(
+            None,
+            TEST_USER.into(),
+            None,
+            "保持记忆语言".into(),
+            "总结时不要随意改成英文".into(),
+        );
+        engine.store_l3_task(&ready).await?;
+
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.llm_client = Some(Arc::new(PromptCaptureGenerateLLM {
+            response: "已保持中文总结".into(),
+            prompts: prompts.clone(),
+        }));
+
+        worker.run_l3_task_cycle().await?;
+
+        let captured = prompts.lock().unwrap();
+        let prompt = captured
+            .last()
+            .expect("expected L3 task cycle to generate a prompt");
+        assert!(prompt.contains(LANGUAGE_PRESERVATION_SNIPPET));
 
         Ok(())
     }

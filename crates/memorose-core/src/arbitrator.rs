@@ -1,5 +1,5 @@
 use crate::fact_extraction::{self, MemoryFactDescriptor};
-use crate::llm::LLMClient;
+use crate::llm::{LLMClient, LANGUAGE_PRESERVATION_INSTRUCTION};
 use anyhow::Result;
 use memorose_common::config::AppConfig;
 use memorose_common::{GraphEdge, MemoryUnit, RelationType};
@@ -579,7 +579,8 @@ impl Arbitrator {
             );
         }
 
-        let system_prompt = "You are a Memory Management System (Prospective Reflection). \
+        let system_prompt = format!(
+            "You are a Memory Management System (Prospective Reflection). \
             Analyze the following dialogue segments/memories from a recent session. \
             Your goal is to extract 'Topics' that summarize the key information. \
             \
@@ -587,10 +588,14 @@ impl Arbitrator {
             1. A concise summary of the topic (e.g., 'User is allergic to penicillin'). \
             2. The original memory IDs that belong to this topic. \
             \
-            Output format (JSON): \
-            [{\"summary\": \"topic summary\", \"source_ids\": [\"uuid1\", \"uuid2\"]}] \
+            {} \
             \
-            Focus on extracting facts, preferences, and long-term insights. Skip trivial chitchat.";
+            Output format (JSON): \
+            [{{\"summary\": \"topic summary\", \"source_ids\": [\"uuid1\", \"uuid2\"]}}] \
+            \
+            Focus on extracting facts, preferences, and long-term insights. Skip trivial chitchat.",
+            LANGUAGE_PRESERVATION_INSTRUCTION
+        );
 
         let combined_prompt = format!("{}\n\n{}", system_prompt, memories_str);
         let result = match client.generate(&combined_prompt).await {
@@ -876,16 +881,20 @@ impl Arbitrator {
         if included < total {
             tracing::warn!("summarize_community: truncated context to {}/{} memories to stay within token budget", included, total);
         }
-        let system_prompt = "You are a memory abstraction engine. \
+        let system_prompt = format!(
+            "You are a memory abstraction engine. \
             Analyze the following group of related memories and extract the shared pattern. \
             The summary must be dense, concrete, and immediately useful. \
             Write only direct conclusions, preferences, habits, facts, or recurring patterns. \
             Do not add framing language, scene-setting, or commentary. \
             Do not start the summary with phrases like 'This community', 'This group', 'These memories', or 'The user'. \
             Avoid vague filler such as 'overall', 'in general', 'it seems', or 'appears to'. \
+            {} \
             \
             Output ONLY valid JSON: \
-            {\"name\": \"Short Title (3-5 words)\", \"summary\": \"Direct factual summary without filler\", \"keywords\": [\"k1\", \"k2\", \"k3\"]}";
+            {{\"name\": \"Short Title (3-5 words)\", \"summary\": \"Direct factual summary without filler\", \"keywords\": [\"k1\", \"k2\", \"k3\"]}}",
+            LANGUAGE_PRESERVATION_INSTRUCTION
+        );
 
         let user_prompt = format!("Community Memories:\n{}", memory_block);
 
@@ -1691,6 +1700,51 @@ mod tests {
             .await
             .unwrap();
         assert!(llm_error.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_l2_generation_prompts_preserve_input_language() {
+        const LANGUAGE_PRESERVATION_SNIPPET: &str = "Respond in the dominant language";
+
+        let stream_id = uuid::Uuid::new_v4();
+        let source = MemoryUnit::new(
+            None,
+            "test-user".into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "我主要使用中文讨论 memory 机制".into(),
+            None,
+        );
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let topic_client = Arc::new(PromptCaptureLLM {
+            response: format!(
+                r#"[{{"summary":"用户主要使用中文讨论 memory 机制","source_ids":["{}"]}}]"#,
+                source.id
+            ),
+            prompts: prompts.clone(),
+        });
+
+        Arbitrator::with_client(topic_client)
+            .extract_topics("test-user", stream_id, vec![source])
+            .await
+            .unwrap();
+
+        let community_client = Arc::new(PromptCaptureLLM {
+            response: r#"{"name":"语言偏好","summary":"用户主要使用中文讨论 memory 机制","keywords":["中文","memory"]}"#
+                .into(),
+            prompts: prompts.clone(),
+        });
+
+        Arbitrator::with_client(community_client)
+            .summarize_community(vec!["用户主要使用中文讨论 memory 机制".into()])
+            .await
+            .unwrap();
+
+        let captured = prompts.lock().unwrap();
+        assert_eq!(captured.len(), 2);
+        assert!(captured[0].contains(LANGUAGE_PRESERVATION_SNIPPET));
+        assert!(captured[1].contains(LANGUAGE_PRESERVATION_SNIPPET));
     }
 
     #[tokio::test]

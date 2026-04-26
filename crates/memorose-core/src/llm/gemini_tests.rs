@@ -11,6 +11,7 @@ mod tests {
 
     const TEST_MODEL: &str = "test-model";
     const TEST_EMBEDDING_MODEL: &str = "test-embedding-model";
+    const LANGUAGE_PRESERVATION_SNIPPET: &str = "Respond in the dominant language";
 
     #[tokio::test]
     async fn test_generate_success() {
@@ -79,6 +80,61 @@ mod tests {
         let err_msg = result.unwrap_err().to_string();
         // Our client wraps the error
         assert!(err_msg.contains("Gemini API error (403 Forbidden)"));
+    }
+
+    #[tokio::test]
+    async fn test_compress_prompts_preserve_input_language() {
+        let mock_server = MockServer::start().await;
+
+        let expected_response = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{ "text": r#"{"content":"summary","valid_at":null}"# }]
+                }
+            }]
+        });
+
+        Mock::given(method("POST"))
+            .and(path(format!(
+                "/v1beta/models/{}:generateContent",
+                TEST_MODEL
+            )))
+            .and(query_param("key", "test-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(expected_response))
+            .mount(&mock_server)
+            .await;
+
+        let client = GeminiClient::with_base_url(
+            "test-key".to_string(),
+            TEST_MODEL.to_string(),
+            TEST_EMBEDDING_MODEL.to_string(),
+            mock_server.uri(),
+            None,
+            None,
+        );
+
+        client
+            .compress("用户主要使用中文，不要翻译成英文", false)
+            .await
+            .unwrap();
+        client
+            .compress("Agent fixed crates/memorose-core/src/worker.rs", true)
+            .await
+            .unwrap();
+
+        let requests = mock_server
+            .received_requests()
+            .await
+            .expect("request recording should be enabled");
+        assert_eq!(requests.len(), 2);
+
+        for request in requests {
+            let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+            let system_prompt = body["systemInstruction"]["parts"][0]["text"]
+                .as_str()
+                .expect("system prompt should be present");
+            assert!(system_prompt.contains(LANGUAGE_PRESERVATION_SNIPPET));
+        }
     }
 
     #[tokio::test]
