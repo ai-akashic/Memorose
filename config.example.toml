@@ -66,14 +66,9 @@ temperature = 0.3
 # Active Forgetting
 # ============================================
 [forgetting]
-# Enable automatic forgetting
-enabled = true
-# Memory importance decays by half every N days
-decay_half_life_days = 30
-# Delete memories below this importance threshold
-min_importance = 0.1
-# Run pruning every N seconds
-prune_interval_secs = 3600
+# Enable automatic physical pruning. Disabled by default so long-term
+# memories are not silently deleted; explicit forget APIs still work.
+enabled = false
 
 # ============================================
 # Knowledge Graph (L2)

@@ -679,6 +679,11 @@ decay_factor = 0.9
 prune_threshold = 0.1
 auto_link_similarity_threshold = 0.6
 
+[forgetting]
+# 默认关闭后台物理裁剪，避免长期记忆被静默删除。
+# 显式 forget / hard delete API 不受影响。
+enabled = false
+
 [raft]
 node_id = 1
 raft_addr = "127.0.0.1:5001"

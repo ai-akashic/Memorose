@@ -24,6 +24,7 @@ pub const DEFAULT_WORKER_LLM_CONCURRENCY: usize = 5;
 pub const DEFAULT_WORKER_DECAY_INTERVAL_SECS: u64 = 60;
 pub const DEFAULT_WORKER_DECAY_FACTOR: f32 = 0.9;
 pub const DEFAULT_WORKER_PRUNE_THRESHOLD: f32 = 0.1;
+pub const DEFAULT_FORGETTING_ENABLED: bool = false;
 pub const DEFAULT_WORKER_CONSOLIDATION_INTERVAL_MS: u64 = 1000;
 pub const DEFAULT_WORKER_CONSOLIDATION_BATCH_SIZE: usize = 200;
 pub const DEFAULT_WORKER_CONSOLIDATION_FETCH_MULTIPLIER: usize = 20;
@@ -180,6 +181,8 @@ fn default_auto_initialize() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkerConfig {
     pub llm_concurrency: usize,
+    #[serde(default)]
+    pub forgetting_enabled: bool,
     pub decay_interval_secs: u64,
     pub decay_factor: f32,
     pub prune_threshold: f32,
@@ -248,11 +251,27 @@ impl Default for ShardingConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForgettingConfig {
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+impl Default for ForgettingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: DEFAULT_FORGETTING_ENABLED,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub llm: LLMConfig,
     pub storage: StorageConfig,
     pub raft: RaftConfig,
     pub worker: WorkerConfig,
+    #[serde(default)]
+    pub forgetting: ForgettingConfig,
     #[serde(default)]
     pub sharding: Option<ShardingConfig>,
     #[serde(default)]
@@ -336,6 +355,7 @@ impl Default for WorkerConfig {
     fn default() -> Self {
         Self {
             llm_concurrency: DEFAULT_WORKER_LLM_CONCURRENCY,
+            forgetting_enabled: DEFAULT_FORGETTING_ENABLED,
             decay_interval_secs: DEFAULT_WORKER_DECAY_INTERVAL_SECS,
             decay_factor: DEFAULT_WORKER_DECAY_FACTOR,
             prune_threshold: DEFAULT_WORKER_PRUNE_THRESHOLD,
@@ -375,6 +395,7 @@ impl Default for AppConfig {
             storage: StorageConfig::default(),
             raft: RaftConfig::default(),
             worker: WorkerConfig::default(),
+            forgetting: ForgettingConfig::default(),
             sharding: None,
             reranker: RerankerConfig::default(),
         }
@@ -455,6 +476,8 @@ impl AppConfig {
                 "worker.llm_concurrency",
                 DEFAULT_WORKER_LLM_CONCURRENCY as i64,
             )?
+            .set_default("worker.forgetting_enabled", DEFAULT_FORGETTING_ENABLED)?
+            .set_default("forgetting.enabled", DEFAULT_FORGETTING_ENABLED)?
             .set_default(
                 "worker.decay_interval_secs",
                 DEFAULT_WORKER_DECAY_INTERVAL_SECS,
@@ -571,7 +594,10 @@ impl AppConfig {
             .set_override_option("raft.raft_addr", env::var("RAFT_ADDR").ok())?
             .build()?;
 
-        s.try_deserialize().and_then(|config: AppConfig| {
+        s.try_deserialize().and_then(|mut config: AppConfig| {
+            config.worker.forgetting_enabled =
+                config.worker.forgetting_enabled || config.forgetting.enabled;
+
             // Validate Raft timing invariants to prevent permanent leader-election loops.
             if config.raft.heartbeat_interval_ms >= config.raft.election_timeout_min_ms {
                 return Err(ConfigError::Message(format!(
@@ -694,6 +720,12 @@ mod tests {
         assert!(config.is_bootstrap_seed_node());
         assert!(config.should_auto_initialize_raft());
         assert!(!config.needs_explicit_bootstrap_seed());
+    }
+
+    #[test]
+    fn test_forgetting_is_disabled_by_default() {
+        let config = AppConfig::default();
+        assert!(!config.worker.forgetting_enabled);
     }
 
     #[test]

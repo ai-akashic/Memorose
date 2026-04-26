@@ -653,6 +653,10 @@ impl BackgroundWorker {
     }
 
     async fn run_decay_cycle(&self) -> Result<()> {
+        if !self.config.forgetting_enabled {
+            return Ok(());
+        }
+
         let decay_interval = Duration::from_secs(self.config.decay_interval_secs.max(1));
         let should_decay = {
             let last = self.last_decay.lock().await;
@@ -3132,6 +3136,7 @@ mod tests {
             .put(format!("active_user:{TEST_USER}").as_bytes(), b"1")?;
 
         let mut worker = BackgroundWorker::new(engine.clone());
+        worker.config.forgetting_enabled = true;
         worker.config.decay_interval_secs = 1;
         worker.config.decay_factor = 0.5;
         worker.config.prune_threshold = 0.1;
@@ -3140,6 +3145,46 @@ mod tests {
         worker.run_decay_cycle().await?;
 
         assert!(engine.get_memory_unit(TEST_USER, unit_id).await?.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_decay_cycle_skips_when_forgetting_disabled() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut unit = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            MemoryType::Factual,
+            "Low importance memory retained by default".into(),
+            None,
+        );
+        unit.importance = 0.15;
+        let unit_id = unit.id;
+        engine.store_memory_unit(unit).await?;
+        engine
+            .system_kv()
+            .put(format!("active_user:{TEST_USER}").as_bytes(), b"1")?;
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.config.forgetting_enabled = false;
+        worker.config.decay_interval_secs = 1;
+        worker.config.decay_factor = 0.5;
+        worker.config.prune_threshold = 0.1;
+        *worker.last_decay.lock().await = std::time::Instant::now() - Duration::from_secs(2);
+
+        worker.run_decay_cycle().await?;
+
+        let retained = engine
+            .get_memory_unit(TEST_USER, unit_id)
+            .await?
+            .expect("memory should be retained when forgetting is disabled");
+        assert_eq!(retained.importance, 0.15);
         Ok(())
     }
 

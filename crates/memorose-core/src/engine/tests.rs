@@ -110,6 +110,46 @@ const TEST_USER: &str = "test_user";
     }
 
     #[tokio::test]
+    async fn test_prune_preserves_l1_referenced_by_l2() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+        let stream_id = Uuid::new_v4();
+
+        let mut source = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "Low importance source memory with evidence".into(),
+            None,
+        );
+        source.importance = 0.01;
+        let source_id = source.id;
+
+        let mut insight = MemoryUnit::new(
+            None,
+            TEST_USER.into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "L2 insight derived from the source memory".into(),
+            None,
+        );
+        insight.level = 2;
+        insight.references.push(source_id);
+
+        engine.store_memory_units(vec![source, insight]).await?;
+
+        let pruned_count = engine.prune_memories(TEST_USER, 0.1).await?;
+
+        assert_eq!(pruned_count, 0);
+        assert!(engine.get_memory_unit(TEST_USER, source_id).await?.is_some());
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_auto_linking() -> Result<()> {
         let temp_dir = tempdir()?;
         let engine =

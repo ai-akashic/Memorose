@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use memorose_common::{ForgettingTombstone, MaterializationState, MemoryDomain, MemoryUnit};
+use std::collections::HashSet;
 use uuid::Uuid;
 use super::types::{PendingMaterializationJob, PendingMaterializationJobStatus};
 
@@ -325,7 +326,8 @@ impl super::MemoroseEngine {
     }
 
     /// Remove memories with importance below the threshold for a specific user.
-    /// Deletes from KV, LanceDB vector store, and Tantivy text index.
+    /// L1 units referenced by visible L2/L3 units are retained for provenance.
+    /// Pruned units are deleted from KV, LanceDB vector store, and Tantivy text index.
     pub async fn prune_memories(&self, user_id: &str, threshold: f32) -> Result<usize> {
         let prefix = format!("u:{}:unit:", user_id);
         let kv = self.kv_store.clone();
@@ -337,13 +339,34 @@ impl super::MemoroseEngine {
         })
         .await??;
 
+        let decoded_units = pairs
+            .into_iter()
+            .filter_map(|(key, val)| {
+                serde_json::from_slice::<MemoryUnit>(&val)
+                    .ok()
+                    .map(|unit| (key, unit))
+            })
+            .collect::<Vec<_>>();
+
+        let l2_referenced_l1_ids = decoded_units
+            .iter()
+            .filter(|(_, unit)| {
+                unit.level >= 2
+                    && Self::is_local_domain(&unit.domain)
+                    && self.is_visible_memory_unit(unit).unwrap_or(false)
+            })
+            .flat_map(|(_, unit)| unit.references.iter().copied())
+            .collect::<HashSet<_>>();
+
         // Collect units to prune first, then delete from all stores.
         let mut to_prune: Vec<(Vec<u8>, MemoryUnit)> = Vec::new();
-        for (key, val) in pairs {
-            if let Ok(unit) = serde_json::from_slice::<MemoryUnit>(&val) {
-                if unit.importance < threshold {
-                    to_prune.push((key, unit));
-                }
+        for (key, unit) in decoded_units {
+            if unit.level == 1 && l2_referenced_l1_ids.contains(&unit.id) {
+                continue;
+            }
+
+            if unit.importance < threshold {
+                to_prune.push((key, unit));
             }
         }
 
