@@ -71,6 +71,25 @@ temperature = 0.3
 enabled = false
 
 # ============================================
+# Vector / Lance-backed Index
+# ============================================
+[vector]
+# Disable this to start without opening LanceDB. RocksDB primary storage
+# remains available, but semantic vector search and graph expansion degrade.
+enabled = true
+# Continue startup when LanceDB cannot be opened within the timeout.
+degrade_on_startup_failure = true
+startup_timeout_secs = 10
+rebuild_on_missing = false
+rebuild_batch_size = 128
+max_index_size_gb = 5
+schema_version = 2
+# Conservative Lance runtime defaults for small containers.
+io_core_reservation = 0
+cpu_threads = 1
+io_threads = 1
+
+# ============================================
 # Knowledge Graph (L2)
 # ============================================
 [graph]

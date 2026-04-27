@@ -1,9 +1,12 @@
+use super::types::{PendingMaterializationJob, PendingMaterializationJobStatus};
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use memorose_common::{ForgettingTombstone, MaterializationState, MemoryDomain, MemoryUnit};
 use std::collections::HashSet;
 use uuid::Uuid;
-use super::types::{PendingMaterializationJob, PendingMaterializationJobStatus};
+
+const PRUNE_SCAN_BATCH_SIZE: usize = 512;
+const PRUNE_DELETE_BATCH_SIZE: usize = 128;
 
 impl super::MemoroseEngine {
     // ── Forgetting ──────────────────────────────────────────────────
@@ -50,7 +53,11 @@ impl super::MemoroseEngine {
 
         for unit in units {
             if Self::requires_materialized_embedding(unit)
-                && unit.embedding.as_ref().map(|embedding| embedding.is_empty()) != Some(false)
+                && unit
+                    .embedding
+                    .as_ref()
+                    .map(|embedding| embedding.is_empty())
+                    != Some(false)
             {
                 return Err(anyhow!(
                     "memory unit {} (level {}) cannot be published without an embedding",
@@ -88,10 +95,7 @@ impl super::MemoroseEngine {
         Ok(())
     }
 
-    pub fn enqueue_materialization_jobs(
-        &self,
-        jobs: Vec<PendingMaterializationJob>,
-    ) -> Result<()> {
+    pub fn enqueue_materialization_jobs(&self, jobs: Vec<PendingMaterializationJob>) -> Result<()> {
         let system_kv = self.system_kv();
         for job in jobs {
             let job_key = Self::materialization_job_key(job.job_id);
@@ -185,8 +189,8 @@ impl super::MemoroseEngine {
             4 => 600,
             _ => 1800,
         };
-        job.next_attempt_at_micros = (Utc::now() + chrono::Duration::seconds(backoff_secs))
-            .timestamp_micros();
+        job.next_attempt_at_micros =
+            (Utc::now() + chrono::Duration::seconds(backoff_secs)).timestamp_micros();
 
         self.save_materialization_job(job)
     }
@@ -329,55 +333,86 @@ impl super::MemoroseEngine {
     /// L1 units referenced by visible L2/L3 units are retained for provenance.
     /// Pruned units are deleted from KV, LanceDB vector store, and Tantivy text index.
     pub async fn prune_memories(&self, user_id: &str, threshold: f32) -> Result<usize> {
-        let prefix = format!("u:{}:unit:", user_id);
         let kv = self.kv_store.clone();
+        let prefix_bytes = format!("u:{}:unit:", user_id).into_bytes();
 
-        let prefix_bytes = prefix.into_bytes();
-        let pairs = tokio::task::spawn_blocking({
-            let kv = kv.clone();
-            move || kv.scan(&prefix_bytes)
-        })
-        .await??;
-
-        let decoded_units = pairs
-            .into_iter()
-            .filter_map(|(key, val)| {
-                serde_json::from_slice::<MemoryUnit>(&val)
-                    .ok()
-                    .map(|unit| (key, unit))
+        let mut l2_referenced_l1_ids = HashSet::new();
+        let mut after: Option<Vec<u8>> = None;
+        loop {
+            let page = tokio::task::spawn_blocking({
+                let kv = kv.clone();
+                let prefix = prefix_bytes.clone();
+                let after = after.clone();
+                move || kv.scan_prefix_after(&prefix, after.as_deref(), PRUNE_SCAN_BATCH_SIZE)
             })
-            .collect::<Vec<_>>();
-
-        let l2_referenced_l1_ids = decoded_units
-            .iter()
-            .filter(|(_, unit)| {
-                unit.level >= 2
-                    && Self::is_local_domain(&unit.domain)
-                    && self.is_visible_memory_unit(unit).unwrap_or(false)
-            })
-            .flat_map(|(_, unit)| unit.references.iter().copied())
-            .collect::<HashSet<_>>();
-
-        // Collect units to prune first, then delete from all stores.
-        let mut to_prune: Vec<(Vec<u8>, MemoryUnit)> = Vec::new();
-        for (key, unit) in decoded_units {
-            if unit.level == 1 && l2_referenced_l1_ids.contains(&unit.id) {
-                continue;
+            .await??;
+            if page.is_empty() {
+                break;
             }
 
-            if unit.importance < threshold {
-                to_prune.push((key, unit));
+            for (_, val) in &page {
+                if let Ok(unit) = serde_json::from_slice::<MemoryUnit>(val) {
+                    if unit.level >= 2
+                        && Self::is_local_domain(&unit.domain)
+                        && self.is_visible_memory_unit(&unit).unwrap_or(false)
+                    {
+                        l2_referenced_l1_ids.extend(unit.references.iter().copied());
+                    }
+                }
             }
+            after = page.last().map(|(key, _)| key.clone());
         }
 
-        let count = to_prune.len();
-        if count == 0 {
+        let mut total_pruned = 0;
+        let mut to_prune: Vec<(Vec<u8>, MemoryUnit)> = Vec::with_capacity(PRUNE_DELETE_BATCH_SIZE);
+        let mut after: Option<Vec<u8>> = None;
+        loop {
+            let page = tokio::task::spawn_blocking({
+                let kv = kv.clone();
+                let prefix = prefix_bytes.clone();
+                let after = after.clone();
+                move || kv.scan_prefix_after(&prefix, after.as_deref(), PRUNE_SCAN_BATCH_SIZE)
+            })
+            .await??;
+            if page.is_empty() {
+                break;
+            }
+
+            for (key, val) in &page {
+                let Ok(unit) = serde_json::from_slice::<MemoryUnit>(val) else {
+                    continue;
+                };
+                if unit.level == 1 && l2_referenced_l1_ids.contains(&unit.id) {
+                    continue;
+                }
+                if unit.importance < threshold {
+                    to_prune.push((key.clone(), unit));
+                    if to_prune.len() >= PRUNE_DELETE_BATCH_SIZE {
+                        total_pruned += self.delete_pruned_units(user_id, &mut to_prune).await?;
+                    }
+                }
+            }
+            after = page.last().map(|(key, _)| key.clone());
+        }
+
+        total_pruned += self.delete_pruned_units(user_id, &mut to_prune).await?;
+        Ok(total_pruned)
+    }
+
+    async fn delete_pruned_units(
+        &self,
+        user_id: &str,
+        to_prune: &mut Vec<(Vec<u8>, MemoryUnit)>,
+    ) -> Result<usize> {
+        if to_prune.is_empty() {
             return Ok(0);
         }
+        let batch = std::mem::take(to_prune);
+        let count = batch.len();
 
         // 1. Delete from KV + L1 secondary index
-        let kv_clone = kv.clone();
-        let keys_and_levels: Vec<(Vec<u8>, String, u8, String)> = to_prune
+        let kv_clone = self.kv_store.clone();
+        let keys_and_levels: Vec<(Vec<u8>, String, u8, String)> = batch
             .iter()
             .map(|(k, u)| {
                 (
@@ -403,23 +438,21 @@ impl super::MemoroseEngine {
         .await??;
 
         // 2. Delete from LanceDB vector store
-        for (_, unit) in &to_prune {
-            if let Err(e) = self
-                .vector
-                .delete_by_id("memories", &unit.id.to_string())
-                .await
-            {
-                tracing::warn!(
-                    "Failed to delete unit {} from vector store during pruning: {:?}",
-                    unit.id,
-                    e
-                );
+        if let Some(vector) = &self.vector {
+            for (_, unit) in &batch {
+                if let Err(e) = vector.delete_by_id("memories", &unit.id.to_string()).await {
+                    tracing::warn!(
+                        "Failed to delete unit {} from vector store during pruning: {:?}",
+                        unit.id,
+                        e
+                    );
+                }
             }
         }
 
         // 3. Delete from Tantivy text index
         let index = self.index.clone();
-        let ids: Vec<String> = to_prune.iter().map(|(_, u)| u.id.to_string()).collect();
+        let ids: Vec<String> = batch.iter().map(|(_, u)| u.id.to_string()).collect();
         tokio::task::spawn_blocking(move || {
             for id in &ids {
                 index.delete_unit(id)?;
@@ -430,5 +463,4 @@ impl super::MemoroseEngine {
 
         Ok(count)
     }
-
 }

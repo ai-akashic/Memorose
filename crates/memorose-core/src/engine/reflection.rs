@@ -1,8 +1,8 @@
+use super::types::{PendingMaterializationJob, ReflectionBatchOutcome, ReflectionMarker};
 use anyhow::Result;
 use memorose_common::tokenizer::count_tokens;
 use memorose_common::{GraphEdge, MemoryUnit, RelationType};
 use uuid::Uuid;
-use super::types::{PendingMaterializationJob, ReflectionBatchOutcome, ReflectionMarker};
 
 impl super::MemoroseEngine {
     pub fn set_needs_reflect(&self, user_id: &str) -> Result<()> {
@@ -488,7 +488,11 @@ impl super::MemoroseEngine {
     }
 
     /// Internal method to increase edge weights between memories that were useful together.
-    pub(crate) async fn reinforce_associations(&self, user_id: &str, cited_ids: Vec<String>) -> Result<()> {
+    pub(crate) async fn reinforce_associations(
+        &self,
+        user_id: &str,
+        cited_ids: Vec<String>,
+    ) -> Result<()> {
         let uid = user_id.to_string();
 
         let uuids: Vec<Uuid> = cited_ids
@@ -512,5 +516,4 @@ impl super::MemoroseEngine {
 
         Ok(())
     }
-
 }

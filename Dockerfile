@@ -16,7 +16,7 @@ COPY dashboard/ ./
 RUN pnpm run build
 
 # ---- Backend Builder ----
-FROM rust:1.88 AS backend-builder
+FROM rust:1.91 AS backend-builder
 
 # Install dependencies needed for compiling C/C++ libraries and Protobuf
 RUN apt-get update && apt-get install -y protobuf-compiler cmake libclang-dev && rm -rf /var/lib/apt/lists/*

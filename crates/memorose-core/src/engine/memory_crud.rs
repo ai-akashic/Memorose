@@ -1,19 +1,20 @@
+use super::types::SharedSearchHit;
 use anyhow::Result;
-use memorose_common::{
-    tokenizer::count_tokens, GraphEdge, MemoryDomain, MemoryUnit,
-    RelationType,
-};
+use memorose_common::{tokenizer::count_tokens, GraphEdge, MemoryDomain, MemoryUnit, RelationType};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use uuid::Uuid;
-use super::types::SharedSearchHit;
 
 impl super::MemoroseEngine {
     pub async fn store_memory_unit(&self, unit: MemoryUnit) -> Result<()> {
         self.store_memory_unit_with_depth(unit, 0).await
     }
 
-    pub(crate) async fn store_memory_unit_with_depth(&self, unit: MemoryUnit, depth: usize) -> Result<()> {
+    pub(crate) async fn store_memory_unit_with_depth(
+        &self,
+        unit: MemoryUnit,
+        depth: usize,
+    ) -> Result<()> {
         let is_goal = unit.level == 3;
         let unit_id = unit.id;
         let user_id = unit.user_id.clone();
@@ -174,8 +175,10 @@ impl super::MemoroseEngine {
             .collect();
 
         if !units_with_embeddings.is_empty() {
-            self.vector.ensure_table("memories").await?;
-            self.vector.add("memories", units_with_embeddings).await?;
+            if let Some(vector) = &self.vector {
+                vector.ensure_table("memories").await?;
+                vector.add("memories", units_with_embeddings).await?;
+            }
         }
 
         // 3. Index Text in Tantivy
@@ -240,7 +243,11 @@ impl super::MemoroseEngine {
 
     // ── Memory Retrieval ────────────────────────────────────────────
 
-    pub(crate) fn get_memory_unit_raw(&self, user_id: &str, id: Uuid) -> Result<Option<MemoryUnit>> {
+    pub(crate) fn get_memory_unit_raw(
+        &self,
+        user_id: &str,
+        id: Uuid,
+    ) -> Result<Option<MemoryUnit>> {
         let key = format!("u:{}:unit:{}", user_id, id);
         let val = self.kv_store.get(key.as_bytes())?;
         match val {
@@ -636,5 +643,4 @@ impl super::MemoroseEngine {
 
         Ok(units)
     }
-
 }

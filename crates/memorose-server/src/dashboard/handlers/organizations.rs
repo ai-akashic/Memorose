@@ -135,7 +135,6 @@ pub async fn revoke_api_key(
     }
 }
 
-
 #[derive(Serialize)]
 struct OrganizationKnowledgeListSummary {
     knowledge_count: usize,
@@ -150,7 +149,6 @@ struct OrganizationKnowledgeListResponse {
     total_count: usize,
     summary: OrganizationKnowledgeListSummary,
 }
-
 
 #[derive(Deserialize)]
 pub struct OrganizationKnowledgeListQuery {

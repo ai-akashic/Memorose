@@ -64,7 +64,10 @@ async fn test_ingest_mark_processed_clears_pending() {
         .await
         .unwrap();
     let pending = engine.fetch_pending_events().await.unwrap();
-    assert!(pending.is_empty(), "Pending should be empty after mark_event_processed");
+    assert!(
+        pending.is_empty(),
+        "Pending should be empty after mark_event_processed"
+    );
 }
 
 #[tokio::test]

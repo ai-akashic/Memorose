@@ -4,7 +4,9 @@ use axum::{
     Json,
 };
 use memorose_common::{Event as MemoryEvent, MemoryDomain, MemoryUnit};
-use memorose_core::engine::{RacDecisionRecord, RacMetricHistoryPoint, RacMetricSnapshot};
+use memorose_core::engine::{
+    DerivedIndexStatus, RacDecisionRecord, RacMetricHistoryPoint, RacMetricSnapshot,
+};
 use memorose_core::storage::index::TextIndexMetricSnapshot;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -18,6 +20,7 @@ pub async fn cluster_status(State(state): State<Arc<crate::AppState>>) -> Json<s
 
     for (shard_id, shard) in state.shard_manager.all_shards() {
         let index_metrics = shard.engine.get_text_index_metric_snapshot();
+        let storage_status = storage_status_json(shard.engine.vector_status(), &index_metrics);
         if let Some(raft) = shard.raft.as_ref() {
             let metrics = raft.metrics().borrow().clone();
 
@@ -49,6 +52,7 @@ pub async fn cluster_status(State(state): State<Arc<crate::AppState>>) -> Json<s
                 "replication_lag": last_log_index.saturating_sub(last_applied),
                 "voters": voters,
                 "learners": learners,
+                "storage": storage_status,
                 "text_index_metrics": index_metrics,
             }));
         } else {
@@ -63,6 +67,7 @@ pub async fn cluster_status(State(state): State<Arc<crate::AppState>>) -> Json<s
                 "replication_lag": 0,
                 "voters": [node_id],
                 "learners": [],
+                "storage": storage_status,
                 "text_index_metrics": index_metrics,
             }));
         }
@@ -120,6 +125,41 @@ pub async fn cluster_status(State(state): State<Arc<crate::AppState>>) -> Json<s
             }
         }
     }))
+}
+
+fn storage_status_json(
+    vector_status: &DerivedIndexStatus,
+    index_metrics: &TextIndexMetricSnapshot,
+) -> serde_json::Value {
+    serde_json::json!({
+        "rocksdb": {
+            "status": "available",
+        },
+        "vector": vector_status_json(vector_status),
+        "text": {
+            "status": "available",
+            "metrics": index_metrics,
+        },
+    })
+}
+
+fn vector_status_json(status: &DerivedIndexStatus) -> serde_json::Value {
+    match status {
+        DerivedIndexStatus::Available => serde_json::json!({
+            "status": "available",
+            "can_rebuild": false,
+        }),
+        DerivedIndexStatus::DisabledByConfig => serde_json::json!({
+            "status": "disabled",
+            "reason": "disabled by configuration",
+            "can_rebuild": true,
+        }),
+        DerivedIndexStatus::Degraded { reason } => serde_json::json!({
+            "status": "degraded",
+            "reason": reason,
+            "can_rebuild": true,
+        }),
+    }
 }
 
 // ── Stats ─────────────────────────────────────────────────────────

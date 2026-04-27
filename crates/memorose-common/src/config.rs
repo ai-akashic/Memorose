@@ -48,6 +48,15 @@ pub const DEFAULT_WORKER_INSIGHT_MAX_L1_PER_BATCH: usize = 32;
 pub const DEFAULT_WORKER_INSIGHT_MAX_BATCHES_PER_CYCLE: usize = 4;
 pub const DEFAULT_AUTO_LINK_SIMILARITY_THRESHOLD: f32 = 0.6;
 pub const DEFAULT_WORKER_TICK_INTERVAL_MS: u64 = 100;
+pub const DEFAULT_VECTOR_ENABLED: bool = true;
+pub const DEFAULT_VECTOR_DEGRADE_ON_STARTUP_FAILURE: bool = true;
+pub const DEFAULT_VECTOR_STARTUP_TIMEOUT_SECS: u64 = 10;
+pub const DEFAULT_VECTOR_REBUILD_BATCH_SIZE: usize = 128;
+pub const DEFAULT_VECTOR_MAX_INDEX_SIZE_GB: u64 = 5;
+pub const DEFAULT_VECTOR_SCHEMA_VERSION: u32 = 2;
+pub const DEFAULT_VECTOR_IO_CORE_RESERVATION: u32 = 0;
+pub const DEFAULT_VECTOR_CPU_THREADS: u32 = 1;
+pub const DEFAULT_VECTOR_IO_THREADS: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum LLMProvider {
@@ -265,6 +274,83 @@ impl Default for ForgettingConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VectorConfig {
+    #[serde(default = "default_vector_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_vector_degrade_on_startup_failure")]
+    pub degrade_on_startup_failure: bool,
+    #[serde(default = "default_vector_startup_timeout_secs")]
+    pub startup_timeout_secs: u64,
+    #[serde(default)]
+    pub rebuild_on_missing: bool,
+    #[serde(default = "default_vector_rebuild_batch_size")]
+    pub rebuild_batch_size: usize,
+    #[serde(default = "default_vector_max_index_size_gb")]
+    pub max_index_size_gb: Option<u64>,
+    #[serde(default = "default_vector_schema_version")]
+    pub schema_version: u32,
+    #[serde(default = "default_vector_io_core_reservation")]
+    pub io_core_reservation: Option<u32>,
+    #[serde(default = "default_vector_cpu_threads")]
+    pub cpu_threads: Option<u32>,
+    #[serde(default = "default_vector_io_threads")]
+    pub io_threads: Option<u32>,
+}
+
+fn default_vector_enabled() -> bool {
+    DEFAULT_VECTOR_ENABLED
+}
+
+fn default_vector_degrade_on_startup_failure() -> bool {
+    DEFAULT_VECTOR_DEGRADE_ON_STARTUP_FAILURE
+}
+
+fn default_vector_startup_timeout_secs() -> u64 {
+    DEFAULT_VECTOR_STARTUP_TIMEOUT_SECS
+}
+
+fn default_vector_rebuild_batch_size() -> usize {
+    DEFAULT_VECTOR_REBUILD_BATCH_SIZE
+}
+
+fn default_vector_max_index_size_gb() -> Option<u64> {
+    Some(DEFAULT_VECTOR_MAX_INDEX_SIZE_GB)
+}
+
+fn default_vector_schema_version() -> u32 {
+    DEFAULT_VECTOR_SCHEMA_VERSION
+}
+
+fn default_vector_io_core_reservation() -> Option<u32> {
+    Some(DEFAULT_VECTOR_IO_CORE_RESERVATION)
+}
+
+fn default_vector_cpu_threads() -> Option<u32> {
+    Some(DEFAULT_VECTOR_CPU_THREADS)
+}
+
+fn default_vector_io_threads() -> Option<u32> {
+    Some(DEFAULT_VECTOR_IO_THREADS)
+}
+
+impl Default for VectorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: DEFAULT_VECTOR_ENABLED,
+            degrade_on_startup_failure: DEFAULT_VECTOR_DEGRADE_ON_STARTUP_FAILURE,
+            startup_timeout_secs: DEFAULT_VECTOR_STARTUP_TIMEOUT_SECS,
+            rebuild_on_missing: false,
+            rebuild_batch_size: DEFAULT_VECTOR_REBUILD_BATCH_SIZE,
+            max_index_size_gb: Some(DEFAULT_VECTOR_MAX_INDEX_SIZE_GB),
+            schema_version: DEFAULT_VECTOR_SCHEMA_VERSION,
+            io_core_reservation: Some(DEFAULT_VECTOR_IO_CORE_RESERVATION),
+            cpu_threads: Some(DEFAULT_VECTOR_CPU_THREADS),
+            io_threads: Some(DEFAULT_VECTOR_IO_THREADS),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub llm: LLMConfig,
     pub storage: StorageConfig,
@@ -272,6 +358,8 @@ pub struct AppConfig {
     pub worker: WorkerConfig,
     #[serde(default)]
     pub forgetting: ForgettingConfig,
+    #[serde(default)]
+    pub vector: VectorConfig,
     #[serde(default)]
     pub sharding: Option<ShardingConfig>,
     #[serde(default)]
@@ -396,6 +484,7 @@ impl Default for AppConfig {
             raft: RaftConfig::default(),
             worker: WorkerConfig::default(),
             forgetting: ForgettingConfig::default(),
+            vector: VectorConfig::default(),
             sharding: None,
             reranker: RerankerConfig::default(),
         }
@@ -578,6 +667,34 @@ impl AppConfig {
                 DEFAULT_AUTO_LINK_SIMILARITY_THRESHOLD as f64,
             )?
             .set_default("worker.tick_interval_ms", DEFAULT_WORKER_TICK_INTERVAL_MS)?
+            .set_default("vector.enabled", DEFAULT_VECTOR_ENABLED)?
+            .set_default(
+                "vector.degrade_on_startup_failure",
+                DEFAULT_VECTOR_DEGRADE_ON_STARTUP_FAILURE,
+            )?
+            .set_default(
+                "vector.startup_timeout_secs",
+                DEFAULT_VECTOR_STARTUP_TIMEOUT_SECS,
+            )?
+            .set_default("vector.rebuild_on_missing", false)?
+            .set_default(
+                "vector.rebuild_batch_size",
+                DEFAULT_VECTOR_REBUILD_BATCH_SIZE as i64,
+            )?
+            .set_default(
+                "vector.max_index_size_gb",
+                DEFAULT_VECTOR_MAX_INDEX_SIZE_GB as i64,
+            )?
+            .set_default(
+                "vector.schema_version",
+                DEFAULT_VECTOR_SCHEMA_VERSION as i64,
+            )?
+            .set_default(
+                "vector.io_core_reservation",
+                DEFAULT_VECTOR_IO_CORE_RESERVATION as i64,
+            )?
+            .set_default("vector.cpu_threads", DEFAULT_VECTOR_CPU_THREADS as i64)?
+            .set_default("vector.io_threads", DEFAULT_VECTOR_IO_THREADS as i64)?
             // File: config.toml
             .add_source(File::with_name("config").required(false))
             // Environment: MEMOROSE_LLM__PROVIDER=openai -> llm.provider=openai
@@ -726,6 +843,42 @@ mod tests {
     fn test_forgetting_is_disabled_by_default() {
         let config = AppConfig::default();
         assert!(!config.worker.forgetting_enabled);
+    }
+
+    #[test]
+    fn test_vector_config_is_enabled_by_default() {
+        let config = AppConfig::default();
+        assert!(config.vector.enabled);
+        assert!(config.vector.degrade_on_startup_failure);
+        assert_eq!(config.vector.startup_timeout_secs, 10);
+        assert_eq!(config.vector.io_core_reservation, Some(0));
+        assert_eq!(config.vector.cpu_threads, Some(1));
+        assert_eq!(config.vector.io_threads, Some(1));
+        assert_eq!(config.vector.max_index_size_gb, Some(5));
+        assert_eq!(config.vector.schema_version, 2);
+    }
+
+    #[test]
+    fn test_vector_config_can_be_disabled_from_environment() {
+        std::env::set_var("MEMOROSE__VECTOR__ENABLED", "false");
+        std::env::set_var("MEMOROSE__VECTOR__STARTUP_TIMEOUT_SECS", "3");
+        std::env::set_var("MEMOROSE__VECTOR__IO_THREADS", "2");
+        std::env::set_var("MEMOROSE__VECTOR__MAX_INDEX_SIZE_GB", "7");
+        std::env::set_var("MEMOROSE__VECTOR__SCHEMA_VERSION", "3");
+
+        let config = AppConfig::load().expect("config should load with vector env overrides");
+
+        std::env::remove_var("MEMOROSE__VECTOR__ENABLED");
+        std::env::remove_var("MEMOROSE__VECTOR__STARTUP_TIMEOUT_SECS");
+        std::env::remove_var("MEMOROSE__VECTOR__IO_THREADS");
+        std::env::remove_var("MEMOROSE__VECTOR__MAX_INDEX_SIZE_GB");
+        std::env::remove_var("MEMOROSE__VECTOR__SCHEMA_VERSION");
+
+        assert!(!config.vector.enabled);
+        assert_eq!(config.vector.startup_timeout_secs, 3);
+        assert_eq!(config.vector.io_threads, Some(2));
+        assert_eq!(config.vector.max_index_size_gb, Some(7));
+        assert_eq!(config.vector.schema_version, 3);
     }
 
     #[test]

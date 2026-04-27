@@ -2144,7 +2144,10 @@ mod tests {
             }"#
             .into(),
         }))
-        .summarize_community(vec!["Prefer concise technical writing.".into(), "Examples should be direct.".into()])
+        .summarize_community(vec![
+            "Prefer concise technical writing.".into(),
+            "Examples should be direct.".into(),
+        ])
         .await
         .unwrap();
 

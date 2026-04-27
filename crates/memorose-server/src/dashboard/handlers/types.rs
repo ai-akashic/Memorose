@@ -1,7 +1,5 @@
 use axum::{response::IntoResponse, Json};
-use memorose_common::{
-    Asset, EventContent, MemoryDomain, MemoryType, MemoryUnit,
-};
+use memorose_common::{Asset, EventContent, MemoryDomain, MemoryType, MemoryUnit};
 use memorose_core::engine::{
     OrganizationAutomationCounterSnapshot, OrganizationKnowledgeContributionRecord,
     OrganizationKnowledgeContributionStatus, OrganizationKnowledgeDetailRecord,
@@ -728,7 +726,11 @@ pub fn format_memory_unit_context(unit: &MemoryUnit) -> String {
     lines.join("\n")
 }
 
-pub fn append_context_with_budget(context_text: &mut String, block: &str, budget_chars: usize) -> bool {
+pub fn append_context_with_budget(
+    context_text: &mut String,
+    block: &str,
+    budget_chars: usize,
+) -> bool {
     let used = context_text.chars().count();
     if used >= budget_chars {
         return false;
@@ -1117,7 +1119,6 @@ pub fn dashboard_organization_list_item_from_detail(
     }
 }
 
-
 #[cfg(test)]
 mod test_aggregates {
     use super::*;
@@ -1225,10 +1226,10 @@ mod test_aggregates {
     fn test_validate_registry_id() {
         assert!(validate_registry_id("valid-id", "field_name").is_ok());
         assert!(validate_registry_id("  valid-id  ", "field_name").is_ok());
-        
+
         let err = validate_registry_id("", "field_name").unwrap_err();
         assert_eq!(err.status(), axum::http::StatusCode::BAD_REQUEST);
-        
+
         let err = validate_registry_id("   ", "field_name").unwrap_err();
         assert_eq!(err.status(), axum::http::StatusCode::BAD_REQUEST);
     }

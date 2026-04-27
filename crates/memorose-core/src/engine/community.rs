@@ -1,8 +1,8 @@
+use super::types::PendingMaterializationJob;
 use anyhow::Result;
 use memorose_common::{GraphEdge, MemoryUnit, RelationType};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
-use super::types::PendingMaterializationJob;
 
 impl super::MemoroseEngine {
     // ── Community Detection ─────────────────────────────────────────

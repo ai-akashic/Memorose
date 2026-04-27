@@ -1,9 +1,9 @@
+use super::helpers::{cosine_similarity, escape_sql_string, validate_id};
+use super::types::SharedSearchHit;
 use anyhow::Result;
 use memorose_common::{MemoryDomain, MemoryUnit, RelationType, TimeRange};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
-use super::helpers::{cosine_similarity, escape_sql_string, validate_id};
-use super::types::SharedSearchHit;
 
 impl super::MemoroseEngine {
     // ── Search ──────────────────────────────────────────────────────
@@ -15,7 +15,11 @@ impl super::MemoroseEngine {
         limit: usize,
         filter: Option<String>,
     ) -> Result<Vec<(MemoryUnit, f32)>> {
-        let results = match self.vector.search("memories", vector, limit, filter).await {
+        let Some(vector_store) = &self.vector else {
+            return Ok(Vec::new());
+        };
+
+        let results = match vector_store.search("memories", vector, limit, filter).await {
             Ok(res) => res,
             Err(_) => return Ok(Vec::new()),
         };
@@ -148,28 +152,30 @@ impl super::MemoroseEngine {
         vector: &[f32],
         limit: usize,
     ) -> Result<Vec<(MemoryUnit, f32)>> {
-        let mut extra_filter =
-            "(domain = 'agent' OR domain = 'user') AND memory_type = 'procedural'".to_string();
+        let mut extra_filter = "(domain = 'agent' OR domain = 'user')".to_string();
         if let Some(aid) = agent_id {
             extra_filter.push_str(&format!(" AND agent_id = '{}'", escape_sql_string(aid)));
         }
 
         let vec_filter = self.build_user_filter(user_id, Some(extra_filter));
-        let vector_future = self
-            .vector
-            .search("memories", vector, limit * 2, vec_filter);
-
         // Skip Tantivy full-text for procedural, vector is better for behavior trajectories, or we can use it
         // Let's stick to vector-only for now, to ensure tight behavioral trajectory matches.
-        let vector_hits = match vector_future.await {
-            Ok(hits) => hits,
-            Err(e) => {
-                if e.to_string().contains("not found") {
-                    Vec::new()
-                } else {
-                    return Err(e);
+        let vector_hits = if let Some(vector_store) = &self.vector {
+            match vector_store
+                .search("memories", vector, limit * 2, vec_filter)
+                .await
+            {
+                Ok(hits) => hits,
+                Err(e) => {
+                    if e.to_string().contains("not found") {
+                        Vec::new()
+                    } else {
+                        return Err(e);
+                    }
                 }
             }
+        } else {
+            Vec::new()
         };
 
         if vector_hits.is_empty() {
@@ -195,7 +201,10 @@ impl super::MemoroseEngine {
 
         // We can do chronological trajectory tracking here in the future
         // For now, rerank and return
-        let final_results = self.reranker.rerank(query_text, &self.kv_store, seeds).await?;
+        let final_results = self
+            .reranker
+            .rerank(query_text, &self.kv_store, seeds)
+            .await?;
 
         Ok(final_results.into_iter().take(limit).collect())
     }
@@ -247,8 +256,12 @@ impl super::MemoroseEngine {
         token_budget: Option<usize>,
     ) -> Result<Vec<(MemoryUnit, f32)>> {
         validate_id(user_id)?;
-        if let Some(oid) = org_id { validate_id(oid)?; }
-        if let Some(aid) = agent_id { validate_id(aid)?; }
+        if let Some(oid) = org_id {
+            validate_id(oid)?;
+        }
+        if let Some(aid) = agent_id {
+            validate_id(aid)?;
+        }
         let time_filter = self.build_time_filter(valid_time.clone());
         let agent_filter = agent_id.map(|aid| format!("agent_id = '{}'", escape_sql_string(aid)));
         let org_filter = org_id.map(|oid| format!("org_id = '{}'", escape_sql_string(oid)));
@@ -264,10 +277,6 @@ impl super::MemoroseEngine {
         }
         let extra = Some(filters.join(" AND "));
         let vec_filter = self.build_user_filter(user_id, extra);
-
-        let vector_future = self
-            .vector
-            .search("memories", vector, limit * 2, vec_filter);
 
         let index = self.index.clone();
         let q_text = query_text.to_string();
@@ -290,6 +299,16 @@ impl super::MemoroseEngine {
                 None,
             )
         });
+
+        let vector_future = async {
+            if let Some(vector_store) = &self.vector {
+                vector_store
+                    .search("memories", vector, limit * 2, vec_filter)
+                    .await
+            } else {
+                Ok(Vec::new())
+            }
+        };
 
         let (vector_results, text_results) = tokio::join!(vector_future, text_future);
 
@@ -496,20 +515,25 @@ impl super::MemoroseEngine {
             self.build_time_filter(valid_time),
         );
 
-        let hits = match self
-            .vector
-            .search("memories", vector, limit * 2, filter)
-            .await
-        {
-            Ok(hits) => hits,
-            Err(error) => {
-                let msg = error.to_string().to_lowercase();
-                if (msg.contains("table") || msg.contains("no such")) && msg.contains("not found") {
-                    Vec::new()
-                } else {
-                    return Err(error);
+        let hits = if let Some(vector_store) = &self.vector {
+            match vector_store
+                .search("memories", vector, limit * 2, filter)
+                .await
+            {
+                Ok(hits) => hits,
+                Err(error) => {
+                    let msg = error.to_string().to_lowercase();
+                    if (msg.contains("table") || msg.contains("no such"))
+                        && msg.contains("not found")
+                    {
+                        Vec::new()
+                    } else {
+                        return Err(error);
+                    }
                 }
             }
+        } else {
+            Vec::new()
         };
 
         if hits.is_empty() {

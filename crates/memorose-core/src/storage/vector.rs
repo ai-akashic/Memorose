@@ -5,9 +5,12 @@ use arrow_array::{
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
 use futures::StreamExt;
 use lancedb::query::{ExecutableQuery, QueryBase};
+use lancedb::table::OptimizeAction;
 use lancedb::{connect, Connection};
 use memorose_common::MemoryUnit;
 use std::sync::Arc;
+
+pub const VECTOR_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone)]
 pub struct VectorStore {
@@ -15,18 +18,21 @@ pub struct VectorStore {
     dim: i32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VectorOptimizeReport {
+    pub compaction_ran: bool,
+    pub prune_ran: bool,
+}
+
 impl VectorStore {
-    fn expected_columns(&self) -> Vec<&'static str> {
+    pub fn expected_columns() -> Vec<&'static str> {
         vec![
             "id",
-            "org_id",
             "user_id",
+            "org_id",
             "agent_id",
-            "stream_id",
-            "memory_type",
             "domain",
             "namespace_key",
-            "content",
             "level",
             "transaction_time",
             "valid_time",
@@ -39,6 +45,37 @@ impl VectorStore {
         Ok(Self { conn, dim })
     }
 
+    pub async fn table_schema_status(
+        &self,
+        table_name: &str,
+    ) -> Result<(Vec<String>, Option<u32>, String)> {
+        let table = self.conn.open_table(table_name).execute().await?;
+        let schema = table.schema().await?;
+        let actual_columns: Vec<String> = schema
+            .fields()
+            .iter()
+            .map(|field| field.name().to_string())
+            .collect();
+        let expected_columns: Vec<String> = Self::expected_columns()
+            .into_iter()
+            .map(|name| name.to_string())
+            .collect();
+
+        let has_legacy_columns = actual_columns
+            .iter()
+            .any(|column| matches!(column.as_str(), "content" | "memory_type" | "stream_id"));
+
+        let (version, status) = if actual_columns == expected_columns {
+            (Some(VECTOR_SCHEMA_VERSION), "current".to_string())
+        } else if has_legacy_columns {
+            (Some(1), "legacy".to_string())
+        } else {
+            (None, "mismatch".to_string())
+        };
+
+        Ok((actual_columns, version, status))
+    }
+
     pub async fn ensure_table(&self, table_name: &str) -> Result<()> {
         let tables = self.conn.table_names().execute().await?;
         if tables.contains(&table_name.to_string()) {
@@ -49,8 +86,7 @@ impl VectorStore {
                 .iter()
                 .map(|field| field.name().to_string())
                 .collect();
-            let expected_columns: Vec<String> = self
-                .expected_columns()
+            let expected_columns: Vec<String> = Self::expected_columns()
                 .into_iter()
                 .map(|name| name.to_string())
                 .collect();
@@ -61,7 +97,7 @@ impl VectorStore {
                     actual_columns,
                     expected_columns
                 );
-                self.conn.drop_table(table_name).await?;
+                self.conn.drop_table(table_name, &[]).await?;
             } else {
                 return Ok(());
             }
@@ -69,14 +105,11 @@ impl VectorStore {
 
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
-            Field::new("org_id", DataType::Utf8, true),
             Field::new("user_id", DataType::Utf8, false),
+            Field::new("org_id", DataType::Utf8, true),
             Field::new("agent_id", DataType::Utf8, true),
-            Field::new("stream_id", DataType::Utf8, false),
-            Field::new("memory_type", DataType::Utf8, false),
             Field::new("domain", DataType::Utf8, false),
             Field::new("namespace_key", DataType::Utf8, false),
-            Field::new("content", DataType::Utf8, false),
             Field::new("level", DataType::UInt8, false),
             Field::new(
                 "transaction_time",
@@ -113,14 +146,11 @@ impl VectorStore {
         let table = self.conn.open_table(table_name).execute().await?;
 
         let mut ids = Vec::new();
-        let mut org_ids: Vec<Option<String>> = Vec::new();
         let mut user_ids = Vec::new();
+        let mut org_ids: Vec<Option<String>> = Vec::new();
         let mut agent_ids: Vec<Option<String>> = Vec::new();
-        let mut stream_ids = Vec::new();
-        let mut memory_types = Vec::new();
         let mut domains = Vec::new();
         let mut namespace_keys = Vec::new();
-        let mut contents = Vec::new();
         let mut levels = Vec::new();
         let mut transaction_times = Vec::new();
         let mut valid_ats = Vec::new();
@@ -128,20 +158,12 @@ impl VectorStore {
 
         for unit in &units {
             ids.push(unit.id.to_string());
-            org_ids.push(unit.org_id.clone());
             user_ids.push(unit.user_id.clone());
+            org_ids.push(unit.org_id.clone());
             agent_ids.push(unit.agent_id.clone());
-            stream_ids.push(unit.stream_id.to_string());
-
-            let m_type = match unit.memory_type {
-                memorose_common::MemoryType::Factual => "factual",
-                memorose_common::MemoryType::Procedural => "procedural",
-            };
-            memory_types.push(m_type.to_string());
             domains.push(unit.domain.as_str().to_string());
             namespace_keys.push(unit.namespace_key.clone());
 
-            contents.push(unit.content.clone());
             levels.push(unit.level);
             transaction_times.push(unit.transaction_time.timestamp_micros());
             valid_ats.push(unit.valid_time.map(|t| t.timestamp_micros()));
@@ -160,14 +182,11 @@ impl VectorStore {
         }
 
         let id_array = Arc::new(StringArray::from(ids));
-        let org_id_array = Arc::new(StringArray::from(org_ids));
         let user_id_array = Arc::new(StringArray::from(user_ids));
+        let org_id_array = Arc::new(StringArray::from(org_ids));
         let agent_id_array = Arc::new(StringArray::from(agent_ids));
-        let stream_id_array = Arc::new(StringArray::from(stream_ids));
-        let memory_type_array = Arc::new(StringArray::from(memory_types));
         let domain_array = Arc::new(StringArray::from(domains));
         let namespace_key_array = Arc::new(StringArray::from(namespace_keys));
-        let content_array = Arc::new(StringArray::from(contents));
         let level_array = Arc::new(arrow_array::UInt8Array::from(levels));
         let transaction_time_array =
             Arc::new(TimestampMicrosecondArray::from(transaction_times).with_timezone("UTC"));
@@ -183,14 +202,11 @@ impl VectorStore {
             schema.clone(),
             vec![
                 id_array as Arc<dyn Array>,
-                org_id_array as Arc<dyn Array>,
                 user_id_array as Arc<dyn Array>,
+                org_id_array as Arc<dyn Array>,
                 agent_id_array as Arc<dyn Array>,
-                stream_id_array as Arc<dyn Array>,
-                memory_type_array as Arc<dyn Array>,
                 domain_array as Arc<dyn Array>,
                 namespace_key_array as Arc<dyn Array>,
-                content_array as Arc<dyn Array>,
                 level_array as Arc<dyn Array>,
                 transaction_time_array as Arc<dyn Array>,
                 valid_time_array as Arc<dyn Array>,
@@ -198,18 +214,36 @@ impl VectorStore {
             ],
         )?;
 
-        let batch_iter = arrow_array::RecordBatchIterator::new(
-            vec![Ok(batch)].into_iter(),
-            table.schema().await?,
-        );
-
-        table.add(batch_iter).execute().await?;
+        table.add(vec![batch]).execute().await?;
 
         Ok(())
     }
 
-    pub async fn compact_files(&self, _table_name: &str) -> Result<()> {
-        tracing::warn!("Compaction skipped: API unstable");
+    pub async fn optimize_table(&self, table_name: &str) -> Result<VectorOptimizeReport> {
+        let table = match self.conn.open_table(table_name).execute().await {
+            Ok(table) => table,
+            Err(error) if error.to_string().to_lowercase().contains("not found") => {
+                return Ok(VectorOptimizeReport {
+                    compaction_ran: false,
+                    prune_ran: false,
+                });
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let stats = table.optimize(OptimizeAction::All).await?;
+        Ok(VectorOptimizeReport {
+            compaction_ran: stats.compaction.is_some(),
+            prune_ran: stats.prune.is_some(),
+        })
+    }
+
+    pub async fn compact_files(&self, table_name: &str) -> Result<()> {
+        let stats = self.optimize_table(table_name).await?;
+        tracing::info!(
+            compaction_ran = stats.compaction_ran,
+            prune_ran = stats.prune_ran,
+            "LanceDB table optimized"
+        );
         Ok(())
     }
 
@@ -226,7 +260,7 @@ impl VectorStore {
     }
 
     pub async fn delete_table(&self, table_name: &str) -> Result<()> {
-        match self.conn.drop_table(table_name).await {
+        match self.conn.drop_table(table_name, &[]).await {
             Ok(_) => Ok(()),
             Err(e) => {
                 let msg = e.to_string();
@@ -237,6 +271,11 @@ impl VectorStore {
                 }
             }
         }
+    }
+
+    pub async fn count_rows(&self, table_name: &str) -> Result<usize> {
+        let table = self.conn.open_table(table_name).execute().await?;
+        Ok(table.count_rows(None).await?)
     }
 
     pub async fn search(
@@ -331,6 +370,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_vector_store_uses_slim_schema() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let db_path = temp_dir.path().to_str().unwrap();
+
+        let store = VectorStore::new(db_path, 384).await?;
+        store.ensure_table("memories").await?;
+
+        let table = store.conn.open_table("memories").execute().await?;
+        let schema = table.schema().await?;
+        let columns: Vec<&str> = schema
+            .fields()
+            .iter()
+            .map(|field| field.name().as_str())
+            .collect();
+
+        assert_eq!(
+            columns,
+            vec![
+                "id",
+                "user_id",
+                "org_id",
+                "agent_id",
+                "domain",
+                "namespace_key",
+                "level",
+                "transaction_time",
+                "valid_time",
+                "vector",
+            ]
+        );
+        assert!(!columns.contains(&"content"));
+        assert!(!columns.contains(&"memory_type"));
+        assert!(!columns.contains(&"stream_id"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_temporal_search() -> Result<()> {
         let temp_dir = tempdir()?;
         let db_path = temp_dir.path().to_str().unwrap();
@@ -379,6 +456,38 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, u2.id.to_string());
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_vector_store_optimize_table_runs_lancedb_maintenance() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let db_path = temp_dir.path().to_str().unwrap();
+
+        let store = VectorStore::new(db_path, 4).await?;
+        store.ensure_table("memories").await?;
+
+        let stream_id = Uuid::new_v4();
+        let unit = MemoryUnit::new(
+            None,
+            "u1".into(),
+            None,
+            stream_id,
+            memorose_common::MemoryType::Factual,
+            "optimize me".into(),
+            Some(vec![1.0, 0.0, 0.0, 0.0]),
+        );
+        store.add("memories", vec![unit.clone()]).await?;
+
+        let stats = store.optimize_table("memories").await?;
+
+        assert!(stats.compaction_ran);
+        assert!(stats.prune_ran);
+
+        let results = store
+            .search("memories", &[1.0, 0.0, 0.0, 0.0], 5, None)
+            .await?;
+        assert_eq!(results[0].0, unit.id.to_string());
         Ok(())
     }
 }

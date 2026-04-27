@@ -1,21 +1,22 @@
-pub mod types;
+mod community;
+mod correction;
+mod forgetting;
 pub(crate) mod helpers;
 mod ingest;
-mod reflection;
-mod snapshot;
 mod memory_crud;
-mod task;
 mod organization;
-mod correction;
-mod search;
-mod forgetting;
-mod community;
 mod query_cache;
+mod reflection;
+mod search;
+mod snapshot;
+mod task;
+pub mod types;
 
 #[cfg(test)]
 mod tests;
 
 // Re-export public types
+pub(crate) use types::ValidatedCorrectionDecision;
 pub use types::{
     OrganizationAutomationCounterSnapshot, OrganizationKnowledgeContributionEntry,
     OrganizationKnowledgeContributionRecord, OrganizationKnowledgeContributionStatus,
@@ -26,7 +27,6 @@ pub use types::{
     RacDecisionEffect, RacDecisionRecord, RacMetricHistoryPoint, RacMetricSnapshot,
     RacReviewRecord, RacReviewStatus, ReflectionBatchOutcome, ReflectionMarker, SharedSearchHit,
 };
-pub(crate) use types::ValidatedCorrectionDecision;
 
 use crate::arbitrator::Arbitrator;
 use crate::reranker::Reranker;
@@ -37,15 +37,24 @@ use crate::storage::system_kv::SystemKvStore;
 use crate::storage::vector::VectorStore;
 use anyhow::Result;
 use dashmap::DashMap;
+use memorose_common::config::VectorConfig;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+#[derive(Debug, Clone)]
+pub enum DerivedIndexStatus {
+    Available,
+    DisabledByConfig,
+    Degraded { reason: String },
+}
+
 #[derive(Clone)]
 pub struct MemoroseEngine {
     pub(crate) kv_store: KvStore,
-    pub(crate) vector: VectorStore,
+    pub(crate) vector: Option<VectorStore>,
+    pub(crate) vector_status: DerivedIndexStatus,
     pub(crate) index: TextIndex,
     pub(crate) graph: GraphStore,
     pub(crate) arbitrator: Arbitrator,
@@ -74,7 +83,10 @@ impl MemoroseEngine {
             .as_ref()
             .map(|c| c.llm.embedding_dim)
             .unwrap_or(768);
-        let mut storage_config = app_config.map(|c| c.storage).unwrap_or_default();
+        let mut storage_config = app_config
+            .as_ref()
+            .map(|c| c.storage.clone())
+            .unwrap_or_default();
         storage_config.index_commit_interval_ms = commit_interval_ms;
         storage_config.index_commit_min_interval_ms = commit_interval_ms.max(1);
         storage_config.index_commit_max_interval_ms = commit_interval_ms.max(1);
@@ -124,6 +136,10 @@ impl MemoroseEngine {
         use lancedb::connect;
 
         let app_config = memorose_common::config::AppConfig::load().ok();
+        let vector_config = app_config
+            .as_ref()
+            .map(|config| config.vector.clone())
+            .unwrap_or_default();
         let root_path = path.into();
         std::fs::create_dir_all(&root_path)?;
         let root_path = root_path.canonicalize()?;
@@ -133,10 +149,53 @@ impl MemoroseEngine {
 
         let vector_path = root_path.join("lancedb");
         let vector_uri = vector_path.to_str().unwrap().to_string();
-        let vector = VectorStore::new(&vector_uri, embedding_dim).await?;
+        Self::apply_lance_runtime_env(&vector_config);
+        let (vector, graph, vector_status) = if vector_config.enabled {
+            let startup_timeout =
+                std::time::Duration::from_secs(vector_config.startup_timeout_secs.max(1));
+            let vector_uri_for_open = vector_uri.clone();
+            let open_result = tokio::time::timeout(startup_timeout, async move {
+                let vector = VectorStore::new(&vector_uri_for_open, embedding_dim).await?;
+                let db = Arc::new(connect(&vector_uri_for_open).execute().await?);
+                let graph = GraphStore::new(db).await?;
+                Ok::<_, anyhow::Error>((vector, graph))
+            })
+            .await;
 
-        let db = Arc::new(connect(&vector_uri).execute().await?);
-        let graph = GraphStore::new(db).await?;
+            match open_result {
+                Ok(Ok((vector, graph))) => (Some(vector), graph, DerivedIndexStatus::Available),
+                Ok(Err(error)) if vector_config.degrade_on_startup_failure => {
+                    let reason = error.to_string();
+                    tracing::warn!("Vector/graph index degraded during startup: {}", reason);
+                    (
+                        None,
+                        GraphStore::disabled(),
+                        DerivedIndexStatus::Degraded { reason },
+                    )
+                }
+                Err(_elapsed) if vector_config.degrade_on_startup_failure => {
+                    let reason = format!(
+                        "timed out after {}s opening LanceDB",
+                        vector_config.startup_timeout_secs.max(1)
+                    );
+                    tracing::warn!("Vector/graph index degraded during startup: {}", reason);
+                    (
+                        None,
+                        GraphStore::disabled(),
+                        DerivedIndexStatus::Degraded { reason },
+                    )
+                }
+                Ok(Err(error)) => return Err(error),
+                Err(elapsed) => return Err(elapsed.into()),
+            }
+        } else {
+            tracing::warn!("Vector/graph index disabled by configuration");
+            (
+                None,
+                GraphStore::disabled(),
+                DerivedIndexStatus::DisabledByConfig,
+            )
+        };
 
         let index_path = root_path.join("tantivy");
         let index_config = TextIndexConfig::from_storage_config(&storage_config);
@@ -145,20 +204,20 @@ impl MemoroseEngine {
                 .await??;
 
         let arbitrator = Arbitrator::new();
-        let reranker: Arc<dyn crate::reranker::Reranker> =
-            if let Some(config) = app_config.as_ref() {
-                if config.reranker.r#type == memorose_common::config::RerankerType::Http
-                    && config.reranker.endpoint.is_some()
-                {
-                    Arc::new(crate::reranker::HttpReranker::new(
-                        config.reranker.endpoint.clone().unwrap(),
-                    ))
-                } else {
-                    Arc::new(crate::reranker::WeightedReranker::new())
-                }
+        let reranker: Arc<dyn crate::reranker::Reranker> = if let Some(config) = app_config.as_ref()
+        {
+            if config.reranker.r#type == memorose_common::config::RerankerType::Http
+                && config.reranker.endpoint.is_some()
+            {
+                Arc::new(crate::reranker::HttpReranker::new(
+                    config.reranker.endpoint.clone().unwrap(),
+                ))
             } else {
                 Arc::new(crate::reranker::WeightedReranker::new())
-            };
+            }
+        } else {
+            Arc::new(crate::reranker::WeightedReranker::new())
+        };
 
         // Initialize query optimization components
         let query_cache = Arc::new(crate::graph::QueryCache::new(crate::graph::CacheConfig {
@@ -171,6 +230,7 @@ impl MemoroseEngine {
         let engine = Self {
             kv_store: kv,
             vector,
+            vector_status,
             index,
             graph,
             arbitrator,
@@ -246,9 +306,27 @@ impl MemoroseEngine {
         &self.graph
     }
 
+    pub fn vector_status(&self) -> &DerivedIndexStatus {
+        &self.vector_status
+    }
+
     pub async fn compact_vector_store(&self) -> Result<()> {
-        self.vector.compact_files("memories").await?;
+        if let Some(vector) = &self.vector {
+            vector.compact_files("memories").await?;
+        }
         Ok(())
+    }
+
+    fn apply_lance_runtime_env(config: &VectorConfig) {
+        if let Some(value) = config.io_core_reservation {
+            std::env::set_var("LANCE_IO_CORE_RESERVATION", value.to_string());
+        }
+        if let Some(value) = config.cpu_threads {
+            std::env::set_var("LANCE_CPU_THREADS", value.to_string());
+        }
+        if let Some(value) = config.io_threads {
+            std::env::set_var("LANCE_IO_THREADS", value.to_string());
+        }
     }
 
     pub fn get_org_share_policy(
@@ -294,11 +372,7 @@ impl MemoroseEngine {
         }
     }
 
-    pub async fn disable_org_contribution(
-        &self,
-        user_id: &str,
-        org_id: &str,
-    ) -> Result<usize> {
+    pub async fn disable_org_contribution(&self, user_id: &str, org_id: &str) -> Result<usize> {
         let knowledge_records = self
             .find_org_knowledge_records_for_contributor(user_id, org_id)
             .await?;
@@ -340,8 +414,7 @@ impl MemoroseEngine {
                         .ok_or_else(|| {
                             anyhow::anyhow!("failed to rebuild organization knowledge")
                         })?;
-                    let rebuilt_unit =
-                        Self::materialize_organization_read_view(&rebuilt_record);
+                    let rebuilt_unit = Self::materialize_organization_read_view(&rebuilt_record);
                     let unit_id = rebuilt_record.id;
                     let topic_relations = Self::organization_topic_relations(
                         org_id,
@@ -386,10 +459,8 @@ impl MemoroseEngine {
                         if !membership_keys.contains(&stale_relation_key)
                             && !topic_relation_keys.contains(&stale_relation_key)
                         {
-                            self.delete_organization_relation_by_primary_key(
-                                &stale_relation_key,
-                            )
-                            .ok();
+                            self.delete_organization_relation_by_primary_key(&stale_relation_key)
+                                .ok();
                         }
                     }
                 } else {
@@ -416,6 +487,11 @@ impl MemoroseEngine {
         user_id: &str,
         scope_id: &str,
     ) -> String {
-        format!("share_backfill:{}:{}:{}", domain.as_str(), user_id, scope_id)
+        format!(
+            "share_backfill:{}:{}:{}",
+            domain.as_str(),
+            user_id,
+            scope_id
+        )
     }
 }

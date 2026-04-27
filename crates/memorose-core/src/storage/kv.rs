@@ -98,6 +98,82 @@ impl KvStore {
         Ok(results)
     }
 
+    /// Scan a bounded page of keys with the given prefix after an exclusive key.
+    /// This keeps repair/rebuild jobs from materializing an entire prefix at once.
+    pub fn scan_prefix_after(
+        &self,
+        prefix: &[u8],
+        after: Option<&[u8]>,
+        limit: usize,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        use rocksdb::{Direction, IteratorMode};
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let start_key = after.unwrap_or(prefix);
+        let iter = self
+            .db
+            .iterator(IteratorMode::From(start_key, Direction::Forward));
+        let mut results = Vec::with_capacity(limit.min(256));
+        for item in iter {
+            let (k, v) = item?;
+            if !k.starts_with(prefix) {
+                break;
+            }
+            if let Some(after_key) = after {
+                if k.as_ref() <= after_key {
+                    continue;
+                }
+            }
+            results.push((k.to_vec(), v.to_vec()));
+            if results.len() >= limit {
+                break;
+            }
+        }
+        Ok(results)
+    }
+
+    /// Scan a bounded page of keys with the given prefix after an exclusive key.
+    /// Uses a raw iterator so values are not copied into memory.
+    pub fn scan_keys_prefix_after(
+        &self,
+        prefix: &[u8],
+        after: Option<&[u8]>,
+        limit: usize,
+    ) -> Result<Vec<Vec<u8>>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let start_key = after.unwrap_or(prefix);
+        let mut iter = self.db.raw_iterator();
+        iter.seek(start_key);
+
+        let mut results = Vec::with_capacity(limit.min(256));
+        while iter.valid() {
+            let Some(key) = iter.key() else {
+                break;
+            };
+            if !key.starts_with(prefix) {
+                break;
+            }
+            if let Some(after_key) = after {
+                if key <= after_key {
+                    iter.next();
+                    continue;
+                }
+            }
+            results.push(key.to_vec());
+            if results.len() >= limit {
+                break;
+            }
+            iter.next();
+        }
+        iter.status()?;
+        Ok(results)
+    }
+
     /// Count the number of keys with the given prefix without loading values.
     /// Avoids the deserialization cost of `scan` when only the count is needed.
     pub fn count_prefix(&self, prefix: &[u8]) -> Result<usize> {

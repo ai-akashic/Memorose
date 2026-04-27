@@ -26,6 +26,10 @@ fn default_graph_limit() -> usize {
     500
 }
 
+fn graph_edge_fetch_limit(node_limit: usize) -> usize {
+    node_limit.saturating_mul(4).clamp(100, 5_000)
+}
+
 pub async fn graph_data(
     State(state): State<Arc<crate::AppState>>,
     Query(params): Query<GraphQuery>,
@@ -33,6 +37,19 @@ pub async fn graph_data(
     let limit = params.limit.min(1000);
     let user_id_filter = params.user_id.clone();
     let org_id_filter = params.org_id.clone();
+
+    if limit == 0 {
+        return Json(serde_json::json!({
+            "nodes": [],
+            "edges": [],
+            "stats": {
+                "node_count": 0,
+                "edge_count": 0,
+                "relation_distribution": {},
+            }
+        }))
+        .into_response();
+    }
 
     // Determine which shards to scan
     let shard_ids: Vec<u32> = if let Some(ref uid) = user_id_filter {
@@ -42,11 +59,10 @@ pub async fn graph_data(
     } else {
         state.shard_manager.all_shards().map(|(id, _)| id).collect()
     };
+    let edge_fetch_limit = graph_edge_fetch_limit(limit);
 
     let mut all_nodes = Vec::new();
     let mut all_edge_data = Vec::new();
-    let mut all_relation_dist: HashMap<String, usize> = HashMap::new();
-    let mut total_edge_count = 0usize;
 
     for shard_id in shard_ids {
         let shard = match state.shard_manager.shard(shard_id) {
@@ -56,14 +72,18 @@ pub async fn graph_data(
         let engine = shard.engine.clone();
         let uid_filter = user_id_filter.clone();
         let org_filter = org_id_filter.clone();
+        let shard_edge_fetch_limit = edge_fetch_limit;
+        let shard_node_limit = limit;
 
         let result: anyhow::Result<serde_json::Value> = async move {
             let graph = engine.graph();
 
             let edges = if let Some(ref uid) = uid_filter {
-                graph.get_all_edges_for_user(uid).await?
+                graph
+                    .get_edges_for_user_limited(uid, shard_edge_fetch_limit)
+                    .await?
             } else {
-                graph.scan_all_edges().await?
+                graph.scan_edges_limited(shard_edge_fetch_limit).await?
             };
 
             let mut node_ids = std::collections::HashSet::new();
@@ -76,6 +96,9 @@ pub async fn graph_data(
             let mut nodes = Vec::new();
             let mut retained_node_ids = std::collections::HashSet::new();
             for unit_id in node_ids_vec {
+                if nodes.len() >= shard_node_limit {
+                    break;
+                }
                 if let Some(hit) = engine.get_shared_search_hit_by_index(unit_id).await? {
                     let unit = hit.memory_unit();
                     if !matches_dashboard_org_scope(unit.org_id.as_deref(), org_filter.as_deref()) {
@@ -108,7 +131,6 @@ pub async fn graph_data(
                 }
             }
 
-            let mut relation_dist: HashMap<String, usize> = HashMap::new();
             let edge_data: Vec<serde_json::Value> = edges
                 .iter()
                 .filter(|e| {
@@ -119,7 +141,6 @@ pub async fn graph_data(
                 })
                 .map(|e| {
                     let rel = format!("{:?}", e.relation);
-                    *relation_dist.entry(rel.clone()).or_default() += 1;
                     serde_json::json!({
                         "source": e.source_id,
                         "target": e.target_id,
@@ -128,13 +149,9 @@ pub async fn graph_data(
                     })
                 })
                 .collect();
-            let edge_count = edge_data.len();
-
             Ok(serde_json::json!({
                 "nodes": nodes,
                 "edges": edge_data,
-                "edge_count": edge_count,
-                "relation_distribution": relation_dist,
             }))
         }
         .await;
@@ -145,13 +162,6 @@ pub async fn graph_data(
             }
             if let Some(edges) = data["edges"].as_array() {
                 all_edge_data.extend(edges.clone());
-            }
-            total_edge_count += data["edge_count"].as_u64().unwrap_or(0) as usize;
-            if let Some(dist) = data["relation_distribution"].as_object() {
-                for (k, v) in dist {
-                    *all_relation_dist.entry(k.clone()).or_default() +=
-                        v.as_u64().unwrap_or(0) as usize;
-                }
             }
         }
     }
@@ -173,14 +183,24 @@ pub async fn graph_data(
                 && retained.contains(e["target"].as_str().unwrap_or(""))
         })
         .collect();
+    let mut relation_distribution: HashMap<String, usize> = HashMap::new();
+    for edge in &filtered_edges {
+        if let Some(relation) = edge["relation"].as_str() {
+            *relation_distribution
+                .entry(relation.to_string())
+                .or_default() += 1;
+        }
+    }
 
     Json(serde_json::json!({
         "nodes": nodes,
         "edges": filtered_edges,
         "stats": {
             "node_count": nodes.len(),
-            "edge_count": total_edge_count,
-            "relation_distribution": all_relation_dist,
+            "edge_count": filtered_edges.len(),
+            "sampled": true,
+            "edge_fetch_limit": edge_fetch_limit,
+            "relation_distribution": relation_distribution,
         }
     }))
     .into_response()

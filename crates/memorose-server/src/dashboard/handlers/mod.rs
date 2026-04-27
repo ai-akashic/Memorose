@@ -1,36 +1,34 @@
 pub mod types;
 
-mod auth;
-mod stats;
-mod memories;
-mod search;
-mod graph;
-mod forget;
-mod corrections;
-mod organizations;
-mod config;
-mod chat;
 mod agents;
+mod auth;
+mod chat;
+mod config;
+mod corrections;
+mod forget;
+mod graph;
+mod memories;
+mod organizations;
+mod search;
+mod stats;
 
 // Re-export all public handler functions so main.rs paths don't change
-pub use auth::{login, change_password};
-pub use stats::{cluster_status, stats};
-pub use memories::{list_memories, get_memory};
-pub use search::search;
-pub use graph::graph_data;
-pub use forget::{forget_preview, forget_execute};
-pub use corrections::{
-    semantic_memory_preview, user_semantic_memory_preview,
-    semantic_memory_execute, user_semantic_memory_execute,
-    apply_manual_correction,
-    list_rac_reviews, approve_rac_review, reject_rac_review,
-};
-pub use organizations::{
-    list_organizations, create_organization,
-    list_api_keys, create_api_key, revoke_api_key,
-    list_organization_knowledge, get_organization_knowledge,
-    get_organization_knowledge_metrics,
-};
-pub use config::get_config;
-pub use chat::chat;
 pub use agents::list_agents;
+pub use auth::{change_password, login};
+pub use chat::chat;
+pub use config::get_config;
+pub use corrections::{
+    apply_manual_correction, approve_rac_review, list_rac_reviews, reject_rac_review,
+    semantic_memory_execute, semantic_memory_preview, user_semantic_memory_execute,
+    user_semantic_memory_preview,
+};
+pub use forget::{forget_execute, forget_preview};
+pub use graph::graph_data;
+pub use memories::{get_memory, list_memories};
+pub use organizations::{
+    create_api_key, create_organization, get_organization_knowledge,
+    get_organization_knowledge_metrics, list_api_keys, list_organization_knowledge,
+    list_organizations, revoke_api_key,
+};
+pub use search::search;
+pub use stats::{cluster_status, stats};

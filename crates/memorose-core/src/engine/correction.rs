@@ -1,15 +1,15 @@
-use anyhow::{anyhow, Result};
-use chrono::{DateTime, Timelike, Utc};
-use memorose_common::{
-    ForgettingTombstone, GraphEdge, MemoryType, MemoryUnit, RelationType,
+use super::helpers::{
+    cosine_similarity, OBSOLETE_ACTION_MIN_CONFIDENCE, OBSOLETE_ACTION_RELATION_ONLY_MIN_CONFIDENCE,
 };
-use std::collections::{HashMap, HashSet};
-use uuid::Uuid;
+use super::types::*;
 use crate::arbitrator::{ExtractedMemoryFact, MemoryCorrectionAction, MemoryCorrectionKind};
 use crate::fact_extraction::{self, MemoryFactChangeType, MemoryFactDescriptor};
 use crate::storage::index::TextIndexMetricSnapshot;
-use super::helpers::{OBSOLETE_ACTION_MIN_CONFIDENCE, OBSOLETE_ACTION_RELATION_ONLY_MIN_CONFIDENCE, cosine_similarity};
-use super::types::*;
+use anyhow::{anyhow, Result};
+use chrono::{DateTime, Timelike, Utc};
+use memorose_common::{ForgettingTombstone, GraphEdge, MemoryType, MemoryUnit, RelationType};
+use std::collections::{HashMap, HashSet};
+use uuid::Uuid;
 
 impl super::MemoroseEngine {
     pub(crate) fn detect_memory_fact(unit: &MemoryUnit) -> Option<MemoryFactDescriptor> {
@@ -31,7 +31,11 @@ impl super::MemoroseEngine {
         fact_extraction::build_memory_correction_focus_terms_with_fact(unit, fact)
     }
 
-    pub(crate) fn keyword_overlap_score(query_text: &str, content: &str, keywords: &[String]) -> f32 {
+    pub(crate) fn keyword_overlap_score(
+        query_text: &str,
+        content: &str,
+        keywords: &[String],
+    ) -> f32 {
         fact_extraction::keyword_overlap_score(query_text, content, keywords)
     }
 
@@ -48,7 +52,9 @@ impl super::MemoroseEngine {
         fact_extraction::subject_keys_compatible(left, right)
     }
 
-    pub(crate) fn descriptor_from_extracted_fact(fact: ExtractedMemoryFact) -> Option<MemoryFactDescriptor> {
+    pub(crate) fn descriptor_from_extracted_fact(
+        fact: ExtractedMemoryFact,
+    ) -> Option<MemoryFactDescriptor> {
         fact_extraction::descriptor_from_extracted_fact(fact)
     }
 
@@ -451,7 +457,11 @@ impl super::MemoroseEngine {
         format!("rac_metric_bucket:{}:{}", bucket_start, metric)
     }
 
-    pub(crate) fn rac_decision_key(created_at: DateTime<Utc>, source_unit_id: Uuid, nonce: Uuid) -> String {
+    pub(crate) fn rac_decision_key(
+        created_at: DateTime<Utc>,
+        source_unit_id: Uuid,
+        nonce: Uuid,
+    ) -> String {
         format!(
             "rac_decision:{:020}:{}:{}",
             created_at.timestamp_micros(),
@@ -499,7 +509,11 @@ impl super::MemoroseEngine {
         Ok(())
     }
 
-    pub(crate) fn get_organization_metric_counter(&self, org_id: &str, metric: &str) -> Result<usize> {
+    pub(crate) fn get_organization_metric_counter(
+        &self,
+        org_id: &str,
+        metric: &str,
+    ) -> Result<usize> {
         let key = Self::organization_metric_counter_key(org_id, metric);
         Ok(self
             .system_kv()
@@ -1241,5 +1255,4 @@ impl super::MemoroseEngine {
         self.store_rac_review(&review)?;
         Ok(Some(review))
     }
-
 }

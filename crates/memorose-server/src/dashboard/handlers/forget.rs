@@ -1,8 +1,4 @@
-use axum::{
-    extract::State,
-    response::IntoResponse,
-    Json,
-};
+use axum::{extract::State, response::IntoResponse, Json};
 use memorose_common::{ForgetMode, ForgetTargetKind, ForgettingTombstone, MemoryUnit};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;

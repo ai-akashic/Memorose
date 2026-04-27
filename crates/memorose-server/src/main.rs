@@ -21,15 +21,16 @@ use tower_http::trace::TraceLayer;
 use uuid::Uuid;
 
 mod dashboard;
+mod repair_cli;
 mod shard_manager;
 pub mod types;
 
 use types::{
-    AddEdgeRequest, BatchIngestRequest, ContextCompressionTier, ContextFormat, GoalMemoryUnitView,
-    GoalTree, IngestRequest, JoinRequest, L3TaskTree, MemoryContextHitView, MemoryContextRequest,
-    MemoryContextResponse, RenderedMemoryContext, RetrievalMemoryUnitView,
-    RetrieveRequest, RetrieveResponse, RetrieveResultItem, UpdateTaskStatusRequest,
-    default_context_token_budget, public_asset_storage_key,
+    default_context_token_budget, public_asset_storage_key, AddEdgeRequest, BatchIngestRequest,
+    ContextCompressionTier, ContextFormat, GoalMemoryUnitView, GoalTree, IngestRequest,
+    JoinRequest, L3TaskTree, MemoryContextHitView, MemoryContextRequest, MemoryContextResponse,
+    RenderedMemoryContext, RetrievalMemoryUnitView, RetrieveRequest, RetrieveResponse,
+    RetrieveResultItem, UpdateTaskStatusRequest,
 };
 
 use shard_manager::ShardManager;
@@ -92,6 +93,15 @@ async fn main() {
     );
 
     let config = AppConfig::load().expect("Failed to load configuration");
+    match repair_cli::run_from_env_if_requested(&config).await {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(error) => {
+            eprintln!("repair command failed: {error:?}");
+            std::process::exit(2);
+        }
+    }
+
     let runtime_mode = if config.is_standalone_mode() {
         RuntimeMode::Standalone
     } else {

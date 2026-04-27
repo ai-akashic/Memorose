@@ -1,7 +1,5 @@
 use anyhow::{Context, Result};
-use arrow_array::{
-    Float32Array, RecordBatch, RecordBatchIterator, StringArray, TimestampMicrosecondArray,
-};
+use arrow_array::{Float32Array, RecordBatch, StringArray, TimestampMicrosecondArray};
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
 use chrono::Utc;
 use futures::TryStreamExt;
@@ -34,19 +32,21 @@ fn create_graph_schema() -> Arc<Schema> {
 
 #[derive(Clone)]
 pub struct GraphStore {
-    db: Arc<Connection>,
+    db: Option<Arc<Connection>>,
     buffer: Arc<Mutex<Vec<GraphEdge>>>,
     table_name: String,
-    _shutdown: Arc<tokio::sync::Notify>,
-    _flush_task: Arc<tokio::task::JoinHandle<()>>,
+    _shutdown: Option<Arc<tokio::sync::Notify>>,
+    _flush_task: Option<Arc<tokio::task::JoinHandle<()>>>,
 }
 
 impl Drop for GraphStore {
     fn drop(&mut self) {
         // Signal the background task to exit when the last GraphStore clone is dropped.
         // At that point strong_count is 2: this struct's copy + the task's copy.
-        if Arc::strong_count(&self._shutdown) == 2 {
-            self._shutdown.notify_one();
+        if let Some(shutdown) = &self._shutdown {
+            if Arc::strong_count(shutdown) == 2 {
+                shutdown.notify_one();
+            }
         }
     }
 }
@@ -80,20 +80,37 @@ impl GraphStore {
         });
 
         let store = Self {
-            db,
+            db: Some(db),
             buffer,
             table_name,
-            _shutdown: shutdown,
-            _flush_task: Arc::new(flush_task),
+            _shutdown: Some(shutdown),
+            _flush_task: Some(Arc::new(flush_task)),
         };
         store.init().await?;
         Ok(store)
     }
 
+    pub fn disabled() -> Self {
+        Self {
+            db: None,
+            buffer: Arc::new(Mutex::new(Vec::new())),
+            table_name: "relationships".to_string(),
+            _shutdown: None,
+            _flush_task: None,
+        }
+    }
+
+    fn db(&self) -> Option<&Arc<Connection>> {
+        self.db.as_ref()
+    }
+
     async fn init(&self) -> Result<()> {
-        let tables = self.db.table_names().execute().await?;
+        let Some(db) = self.db() else {
+            return Ok(());
+        };
+        let tables = db.table_names().execute().await?;
         if tables.contains(&self.table_name) {
-            let table = self.db.open_table(&self.table_name).execute().await?;
+            let table = db.open_table(&self.table_name).execute().await?;
             let schema = table.schema().await?;
             let required_columns = [
                 "user_id",
@@ -115,24 +132,23 @@ impl GraphStore {
                     "Graph table '{}' missing scoped edge columns, recreating...",
                     self.table_name
                 );
-                self.db.drop_table(&self.table_name).await?;
+                db.drop_table(&self.table_name, &[]).await?;
             } else {
                 return Ok(());
             }
         }
 
-        let schema = create_graph_schema();
-        let batch = RecordBatch::new_empty(schema.clone());
-        let reader = RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema);
-
-        self.db
-            .create_table(&self.table_name, reader)
+        db.create_empty_table(&self.table_name, create_graph_schema())
             .execute()
             .await?;
         Ok(())
     }
 
     pub async fn add_edge(&self, edge: &GraphEdge) -> Result<()> {
+        if self.db().is_none() {
+            return Ok(());
+        }
+
         let should_flush = {
             let mut buf = self.buffer.lock().await;
             buf.push(edge.clone());
@@ -146,7 +162,10 @@ impl GraphStore {
     }
 
     pub async fn flush(&self) -> Result<()> {
-        Self::flush_with_refs(&self.db, &self.buffer, &self.table_name).await
+        let Some(db) = self.db() else {
+            return Ok(());
+        };
+        Self::flush_with_refs(db, &self.buffer, &self.table_name).await
     }
 
     async fn flush_with_refs(
@@ -209,9 +228,8 @@ impl GraphStore {
 
         let write_result = async {
             let batch = batch?;
-            let reader = RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema);
             let table = db.open_table(table_name).execute().await?;
-            table.add(reader).execute().await?;
+            table.add(vec![batch]).execute().await?;
             Ok::<_, anyhow::Error>(())
         }
         .await;
@@ -235,6 +253,9 @@ impl GraphStore {
         target_id: Uuid,
         delta: f32,
     ) -> Result<()> {
+        let Some(db) = self.db() else {
+            return Ok(());
+        };
         // Try to find existing edge
         let existing_edges = self.get_outgoing_edges(user_id, source_id).await?;
         let existing_edge = existing_edges
@@ -259,7 +280,7 @@ impl GraphStore {
                 "user_id = '{}' AND namespace_key = '{}' AND source_id = '{}' AND target_id = '{}' AND relation = 'RelatedTo'",
                 escaped_user, escaped_namespace, source_id, target_id
             );
-            let table = self.db.open_table(&self.table_name).execute().await?;
+            let table = db.open_table(&self.table_name).execute().await?;
             table.delete(&filter).await?;
 
             // Also purge from the in-memory write buffer so a pending flush doesn't
@@ -306,6 +327,10 @@ impl GraphStore {
         user_id: &str,
         source_id: Uuid,
     ) -> Result<Vec<GraphEdge>> {
+        let Some(db) = self.db() else {
+            return Ok(Vec::new());
+        };
+
         let mut edges = {
             let buf = self.buffer.lock().await;
             buf.iter()
@@ -314,7 +339,7 @@ impl GraphStore {
                 .collect::<Vec<_>>()
         };
 
-        let table = self.db.open_table(&self.table_name).execute().await?;
+        let table = db.open_table(&self.table_name).execute().await?;
         let escaped_user_id = user_id.replace("'", "''");
         let batches: Vec<RecordBatch> = table
             .query()
@@ -336,6 +361,10 @@ impl GraphStore {
         user_id: &str,
         target_id: Uuid,
     ) -> Result<Vec<GraphEdge>> {
+        let Some(db) = self.db() else {
+            return Ok(Vec::new());
+        };
+
         let mut edges = {
             let buf = self.buffer.lock().await;
             buf.iter()
@@ -344,7 +373,7 @@ impl GraphStore {
                 .collect::<Vec<_>>()
         };
 
-        let table = self.db.open_table(&self.table_name).execute().await?;
+        let table = db.open_table(&self.table_name).execute().await?;
         let escaped_user_id = user_id.replace("'", "''");
         let batches: Vec<RecordBatch> = table
             .query()
@@ -362,6 +391,10 @@ impl GraphStore {
     }
 
     pub async fn get_all_edges_for_user(&self, user_id: &str) -> Result<Vec<GraphEdge>> {
+        let Some(db) = self.db() else {
+            return Ok(Vec::new());
+        };
+
         let mut edges = {
             let buf = self.buffer.lock().await;
             buf.iter()
@@ -370,7 +403,7 @@ impl GraphStore {
                 .collect::<Vec<_>>()
         };
 
-        let table = self.db.open_table(&self.table_name).execute().await?;
+        let table = db.open_table(&self.table_name).execute().await?;
         let escaped_user_id = user_id.replace("'", "''");
         let batches: Vec<RecordBatch> = table
             .query()
@@ -384,20 +417,98 @@ impl GraphStore {
         Ok(Self::dedup_edges(edges))
     }
 
+    pub async fn get_edges_for_user_limited(
+        &self,
+        user_id: &str,
+        limit: usize,
+    ) -> Result<Vec<GraphEdge>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let Some(db) = self.db() else {
+            return Ok(Vec::new());
+        };
+
+        let mut edges = {
+            let buf = self.buffer.lock().await;
+            buf.iter()
+                .filter(|e| e.user_id == user_id)
+                .take(limit)
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+
+        if edges.len() < limit {
+            let table = db.open_table(&self.table_name).execute().await?;
+            let escaped_user_id = user_id.replace("'", "''");
+            let batches: Vec<RecordBatch> = table
+                .query()
+                .only_if(format!("user_id = '{}'", escaped_user_id))
+                .limit(limit - edges.len())
+                .execute()
+                .await?
+                .try_collect()
+                .await?;
+            edges.extend(self.batches_to_edges(batches)?);
+        }
+
+        let mut edges = Self::dedup_edges(edges);
+        edges.truncate(limit);
+        Ok(edges)
+    }
+
     pub async fn scan_all_edges(&self) -> Result<Vec<GraphEdge>> {
+        let Some(db) = self.db() else {
+            return Ok(Vec::new());
+        };
+
         let mut edges = {
             let buf = self.buffer.lock().await;
             buf.clone()
         };
 
-        let table = self.db.open_table(&self.table_name).execute().await?;
+        let table = db.open_table(&self.table_name).execute().await?;
         let batches: Vec<RecordBatch> = table.query().execute().await?.try_collect().await?;
 
         edges.extend(self.batches_to_edges(batches)?);
         Ok(Self::dedup_edges(edges))
     }
 
+    pub async fn scan_edges_limited(&self, limit: usize) -> Result<Vec<GraphEdge>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let Some(db) = self.db() else {
+            return Ok(Vec::new());
+        };
+
+        let mut edges = {
+            let buf = self.buffer.lock().await;
+            buf.iter().take(limit).cloned().collect::<Vec<_>>()
+        };
+
+        if edges.len() < limit {
+            let table = db.open_table(&self.table_name).execute().await?;
+            let batches: Vec<RecordBatch> = table
+                .query()
+                .limit(limit - edges.len())
+                .execute()
+                .await?
+                .try_collect()
+                .await?;
+            edges.extend(self.batches_to_edges(batches)?);
+        }
+
+        let mut edges = Self::dedup_edges(edges);
+        edges.truncate(limit);
+        Ok(edges)
+    }
+
     pub async fn delete_edges_for_node(&self, user_id: &str, node_id: Uuid) -> Result<usize> {
+        let Some(db) = self.db() else {
+            return Ok(0);
+        };
+
         let escaped_user_id = user_id.replace("'", "''");
         let filter = format!(
             "user_id = '{}' AND (source_id = '{}' OR target_id = '{}')",
@@ -414,7 +525,7 @@ impl GraphStore {
             before.saturating_sub(buf.len())
         };
 
-        let table = self.db.open_table(&self.table_name).execute().await?;
+        let table = db.open_table(&self.table_name).execute().await?;
         let existing = table
             .query()
             .only_if(filter.clone())
@@ -440,6 +551,9 @@ impl GraphStore {
         if source_ids.is_empty() {
             return Ok(HashMap::new());
         }
+        let Some(db) = self.db() else {
+            return Ok(HashMap::new());
+        };
 
         // 先检查缓冲区
         let mut result: HashMap<Uuid, Vec<GraphEdge>> = HashMap::new();
@@ -469,7 +583,7 @@ impl GraphStore {
         );
 
         // 单次批量查询
-        let table = self.db.open_table(&self.table_name).execute().await?;
+        let table = db.open_table(&self.table_name).execute().await?;
         let batches: Vec<RecordBatch> = table
             .query()
             .only_if(filter)
@@ -506,6 +620,9 @@ impl GraphStore {
         if target_ids.is_empty() {
             return Ok(HashMap::new());
         }
+        let Some(db) = self.db() else {
+            return Ok(HashMap::new());
+        };
 
         // 先检查缓冲区
         let mut result: HashMap<Uuid, Vec<GraphEdge>> = HashMap::new();
@@ -535,7 +652,7 @@ impl GraphStore {
         );
 
         // 单次批量查询
-        let table = self.db.open_table(&self.table_name).execute().await?;
+        let table = db.open_table(&self.table_name).execute().await?;
         let batches: Vec<RecordBatch> = table
             .query()
             .only_if(filter)
@@ -828,6 +945,12 @@ mod tests {
 
         let scanned = store.scan_all_edges().await?;
         assert_eq!(scanned.len(), 3);
+
+        let limited_scanned = store.scan_edges_limited(2).await?;
+        assert_eq!(limited_scanned.len(), 2);
+
+        let limited_user_edges = store.get_edges_for_user_limited("user1", 2).await?;
+        assert_eq!(limited_user_edges.len(), 2);
 
         let batch_outgoing = store
             .batch_get_outgoing_edges("user1", &[node_a, node_d, Uuid::new_v4()])

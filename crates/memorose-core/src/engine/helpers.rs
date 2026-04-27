@@ -127,8 +127,7 @@ impl super::MemoroseEngine {
             if let Some(description) = asset.description.as_deref() {
                 total += count_tokens(description);
             }
-            if asset.storage_key.starts_with("http://")
-                || asset.storage_key.starts_with("https://")
+            if asset.storage_key.starts_with("http://") || asset.storage_key.starts_with("https://")
             {
                 total += count_tokens(&asset.storage_key);
             }

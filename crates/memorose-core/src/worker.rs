@@ -589,16 +589,24 @@ impl BackgroundWorker {
     }
 
     async fn run_l3_task_cycle(&self) -> Result<()> {
-        // Find all users
+        // Find all users from keys only. Loading values here can materialize the
+        // whole memory database during a background tick.
         let kv = self.engine.kv();
-        let results = kv.scan(b"u:")?;
         let mut users = std::collections::HashSet::new();
-        for (k, _) in results {
-            let key_str = String::from_utf8_lossy(&k);
-            let parts: Vec<&str> = key_str.split(':').collect();
-            if parts.len() >= 2 {
-                users.insert(parts[1].to_string());
+        let mut after: Option<Vec<u8>> = None;
+        loop {
+            let keys = kv.scan_keys_prefix_after(b"u:", after.as_deref(), 512)?;
+            if keys.is_empty() {
+                break;
             }
+            for key in &keys {
+                let key_str = String::from_utf8_lossy(key);
+                let parts: Vec<&str> = key_str.split(':').collect();
+                if parts.len() >= 2 {
+                    users.insert(parts[1].to_string());
+                }
+            }
+            after = keys.last().cloned();
         }
 
         for user_id in users {
@@ -721,22 +729,24 @@ impl BackgroundWorker {
     ) -> crate::engine::PendingMaterializationInput {
         match input {
             EmbedInput::Text(text) => crate::engine::PendingMaterializationInput::Text(text),
-            EmbedInput::Multimodal { parts } => crate::engine::PendingMaterializationInput::Multimodal {
-                parts: parts
-                    .into_iter()
-                    .map(|part| match part {
-                        EmbedPart::Text(text) => {
-                            crate::engine::PendingMaterializationPart::Text { text }
-                        }
-                        EmbedPart::InlineData { mime_type, data } => {
-                            crate::engine::PendingMaterializationPart::InlineData {
-                                mime_type,
-                                data,
+            EmbedInput::Multimodal { parts } => {
+                crate::engine::PendingMaterializationInput::Multimodal {
+                    parts: parts
+                        .into_iter()
+                        .map(|part| match part {
+                            EmbedPart::Text(text) => {
+                                crate::engine::PendingMaterializationPart::Text { text }
                             }
-                        }
-                    })
-                    .collect(),
-            },
+                            EmbedPart::InlineData { mime_type, data } => {
+                                crate::engine::PendingMaterializationPart::InlineData {
+                                    mime_type,
+                                    data,
+                                }
+                            }
+                        })
+                        .collect(),
+                }
+            }
         }
     }
 
@@ -773,7 +783,8 @@ impl BackgroundWorker {
             .get_memory_unit_including_forgotten(&job.unit.user_id, job.unit.id)?
         {
             if existing.visible
-                && existing.materialization_state == memorose_common::MaterializationState::Published
+                && existing.materialization_state
+                    == memorose_common::MaterializationState::Published
             {
                 self.run_post_publish_hooks_once(&existing, &job.post_publish_edges)
                     .await?;
@@ -836,7 +847,11 @@ impl BackgroundWorker {
 
         let community_step = self.config.community_trigger_l1_step.max(1);
         for (user_id, delta) in l1_increase_by_user {
-            if let Ok((before, after)) = self.engine.bump_l1_count_and_get_range(&user_id, delta).await {
+            if let Ok((before, after)) = self
+                .engine
+                .bump_l1_count_and_get_range(&user_id, delta)
+                .await
+            {
                 if before / community_step < after / community_step && after >= community_step {
                     let _ = self.engine.set_needs_community(&user_id);
                 }
@@ -907,7 +922,8 @@ impl BackgroundWorker {
                 Err(error) => {
                     let error_message = format!("Materialization publish failed: {:?}", error);
                     if job.attempts >= self.config.consolidation_max_retries {
-                        self.engine.fail_materialization_job(&mut job, &error_message)?;
+                        self.engine
+                            .fail_materialization_job(&mut job, &error_message)?;
                     } else {
                         self.engine
                             .reschedule_materialization_job(&mut job, &error_message)?;
@@ -927,7 +943,8 @@ impl BackgroundWorker {
                 if job.attempts >= max_retries {
                     self.engine.fail_materialization_job(&mut job, error)?;
                 } else {
-                    self.engine.reschedule_materialization_job(&mut job, error)?;
+                    self.engine
+                        .reschedule_materialization_job(&mut job, error)?;
                 }
             }
             return Ok(any_published);
@@ -954,7 +971,8 @@ impl BackgroundWorker {
                         if job.attempts >= self.config.consolidation_max_retries {
                             self.engine.fail_materialization_job(&mut job, error)?;
                         } else {
-                            self.engine.reschedule_materialization_job(&mut job, error)?;
+                            self.engine
+                                .reschedule_materialization_job(&mut job, error)?;
                         }
                         continue;
                     }
@@ -963,10 +981,13 @@ impl BackgroundWorker {
                     match self.publish_materialization_job(job.clone()).await {
                         Ok(published) => any_published |= published,
                         Err(error) => {
-                            let error_message =
-                                format!("Materialization publish after embedding failed: {:?}", error);
+                            let error_message = format!(
+                                "Materialization publish after embedding failed: {:?}",
+                                error
+                            );
                             if job.attempts >= self.config.consolidation_max_retries {
-                                self.engine.fail_materialization_job(&mut job, &error_message)?;
+                                self.engine
+                                    .fail_materialization_job(&mut job, &error_message)?;
                             } else {
                                 self.engine
                                     .reschedule_materialization_job(&mut job, &error_message)?;
@@ -986,7 +1007,8 @@ impl BackgroundWorker {
                     if job.attempts >= max_retries {
                         self.engine.fail_materialization_job(&mut job, &error)?;
                     } else {
-                        self.engine.reschedule_materialization_job(&mut job, &error)?;
+                        self.engine
+                            .reschedule_materialization_job(&mut job, &error)?;
                     }
                 }
             }
@@ -995,7 +1017,8 @@ impl BackgroundWorker {
                 let error_message = format!("Materialization embedding failed: {:?}", error);
                 for mut job in jobs_needing_embedding {
                     if job.attempts >= max_retries {
-                        self.engine.fail_materialization_job(&mut job, &error_message)?;
+                        self.engine
+                            .fail_materialization_job(&mut job, &error_message)?;
                     } else {
                         self.engine
                             .reschedule_materialization_job(&mut job, &error_message)?;
@@ -1275,12 +1298,7 @@ impl BackgroundWorker {
             return Ok(false);
         }
 
-        valid_events.sort_by_key(|event| {
-            (
-                Self::packed_event_key(event),
-                event.transaction_time,
-            )
-        });
+        valid_events.sort_by_key(|event| (Self::packed_event_key(event), event.transaction_time));
 
         // 1.5 Batching / Prompt Packing with overfetch + fair selection
         let pending_valid_count = valid_events.len();
@@ -1840,7 +1858,10 @@ impl BackgroundWorker {
 
             let mut edges_by_source = HashMap::<uuid::Uuid, Vec<GraphEdge>>::new();
             for edge in staged_edges {
-                edges_by_source.entry(edge.source_id).or_default().push(edge);
+                edges_by_source
+                    .entry(edge.source_id)
+                    .or_default()
+                    .push(edge);
             }
 
             let jobs = units_to_stage
@@ -3395,7 +3416,8 @@ mod tests {
             MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
 
         let mut worker = BackgroundWorker::new(engine);
-        worker.config.consolidation_interval_ms = 1; worker.config.tick_interval_ms = 1;
+        worker.config.consolidation_interval_ms = 1;
+        worker.config.tick_interval_ms = 1;
         *worker.last_consolidation.lock().await =
             std::time::Instant::now() - Duration::from_secs(1);
 
@@ -3536,7 +3558,8 @@ mod tests {
             fail_compress: false,
             generate_response: None,
         }));
-        worker.config.consolidation_interval_ms = 1; worker.config.tick_interval_ms = 1;
+        worker.config.consolidation_interval_ms = 1;
+        worker.config.tick_interval_ms = 1;
         worker.config.consolidation_batch_size = 32;
         worker.config.consolidation_target_tokens = 10_000;
         worker.config.consolidation_max_events_per_pack = 32;
@@ -3576,7 +3599,8 @@ mod tests {
 
         let mut worker = BackgroundWorker::new(engine.clone());
         worker.llm_client = Some(llm);
-        worker.config.consolidation_interval_ms = 1; worker.config.tick_interval_ms = 1;
+        worker.config.consolidation_interval_ms = 1;
+        worker.config.tick_interval_ms = 1;
         worker.config.llm_concurrency = 2;
         worker.config.consolidation_batch_size = 8;
         worker.config.consolidation_target_tokens = 4;
@@ -3634,7 +3658,8 @@ mod tests {
             fail_compress: false,
             generate_response: None,
         }));
-        worker.config.consolidation_interval_ms = 1; worker.config.tick_interval_ms = 1;
+        worker.config.consolidation_interval_ms = 1;
+        worker.config.tick_interval_ms = 1;
         worker.config.consolidation_batch_size = 2;
         worker.config.consolidation_fetch_multiplier = 3;
         worker.config.consolidation_target_tokens = 4;
@@ -3703,7 +3728,8 @@ mod tests {
 
         let mut worker = BackgroundWorker::new(engine.clone());
         worker.llm_client = Some(llm.clone());
-        worker.config.consolidation_interval_ms = 1; worker.config.tick_interval_ms = 1;
+        worker.config.consolidation_interval_ms = 1;
+        worker.config.tick_interval_ms = 1;
         worker.config.llm_concurrency = 2;
         worker.config.consolidation_batch_size = 2;
         worker.config.consolidation_fetch_multiplier = 1;
@@ -4510,7 +4536,8 @@ mod tests {
             fail_compress: false,
             generate_response: None,
         }));
-        worker.config.consolidation_interval_ms = 1; worker.config.tick_interval_ms = 1;
+        worker.config.consolidation_interval_ms = 1;
+        worker.config.tick_interval_ms = 1;
         *worker.last_consolidation.lock().await =
             std::time::Instant::now() - Duration::from_secs(1);
 
@@ -4559,7 +4586,8 @@ mod tests {
             fail_compress: false,
             generate_response: None,
         }));
-        worker.config.consolidation_interval_ms = 1; worker.config.tick_interval_ms = 1;
+        worker.config.consolidation_interval_ms = 1;
+        worker.config.tick_interval_ms = 1;
         *worker.last_consolidation.lock().await =
             std::time::Instant::now() - Duration::from_secs(1);
 

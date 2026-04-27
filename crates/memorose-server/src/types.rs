@@ -258,7 +258,7 @@ impl ContextFormat {
             _ => Self::Text,
         }
     }
-// PLACEHOLDER_CHUNK5
+    // PLACEHOLDER_CHUNK5
 
     pub fn as_str(self) -> &'static str {
         match self {

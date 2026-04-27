@@ -1,6 +1,6 @@
+use super::helpers::validate_id;
 use anyhow::Result;
 use memorose_common::Event;
-use super::helpers::validate_id;
 
 impl super::MemoroseEngine {
     pub async fn ingest_event(&self, event: Event) -> Result<()> {
@@ -89,7 +89,8 @@ impl super::MemoroseEngine {
         // Over-fetch by 4x to account for invalid entries that get skipped during parsing.
         let scan_limit = limit.saturating_mul(4).max(20);
         let pending_pairs =
-            tokio::task::spawn_blocking(move || skv.scan_limited(b"pending:", scan_limit)).await??;
+            tokio::task::spawn_blocking(move || skv.scan_limited(b"pending:", scan_limit))
+                .await??;
 
         let mut events = Vec::new();
         let mut invalid_pending_entries = Vec::new();

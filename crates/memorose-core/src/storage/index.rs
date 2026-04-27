@@ -2,6 +2,7 @@ use anyhow::Result;
 use memorose_common::{MemoryUnit, TimeRange};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::ops::Bound;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -871,37 +872,24 @@ impl TextIndex {
 
         if let Some(range) = valid_time.clone() {
             if range.start.is_some() || range.end.is_some() {
-                let start = range
-                    .start
-                    .map(|t| t.timestamp_micros())
-                    .unwrap_or(i64::MIN);
-                let end = range.end.map(|t| t.timestamp_micros()).unwrap_or(i64::MAX);
-                let time_query =
-                    tantivy::query::RangeQuery::new_i64("valid_time".to_string(), start..end + 1);
+                let valid_time_field = schema.get_field("valid_time").unwrap();
+                let time_query = i64_range_query(valid_time_field, &range);
                 sub_queries.push((tantivy::query::Occur::Must, Box::new(time_query)));
             }
         }
 
         if let Some(range) = transaction_time.clone() {
             if range.start.is_some() || range.end.is_some() {
-                let start = range
-                    .start
-                    .map(|t| t.timestamp_micros())
-                    .unwrap_or(i64::MIN);
-                let end = range.end.map(|t| t.timestamp_micros()).unwrap_or(i64::MAX);
-                let time_query = tantivy::query::RangeQuery::new_i64(
-                    "transaction_time".to_string(),
-                    start..end + 1,
-                );
+                let transaction_time_field = schema.get_field("transaction_time").unwrap();
+                let time_query = i64_range_query(transaction_time_field, &range);
                 sub_queries.push((tantivy::query::Occur::Must, Box::new(time_query)));
             }
         }
 
         let combined_query = tantivy::query::BooleanQuery::new(sub_queries);
-        let top_docs = searcher.search(
-            &combined_query,
-            &tantivy::collector::TopDocs::with_limit(limit.max(1)),
-        )?;
+        let top_docs_collector =
+            tantivy::collector::TopDocs::with_limit(limit.max(1)).order_by_score();
+        let top_docs = searcher.search(&combined_query, &top_docs_collector)?;
 
         let mut tantivy_results = Vec::new();
         let mut seen = HashSet::new();
@@ -1045,16 +1033,35 @@ fn tokenize_query_terms(query_str: &str) -> Vec<String> {
         .collect()
 }
 
+fn i64_range_query(field: Field, range: &TimeRange) -> tantivy::query::RangeQuery {
+    let lower = range
+        .start
+        .map(|time| {
+            Bound::Included(tantivy::Term::from_field_i64(
+                field,
+                time.timestamp_micros(),
+            ))
+        })
+        .unwrap_or(Bound::Unbounded);
+    let upper = range
+        .end
+        .map(|time| {
+            Bound::Included(tantivy::Term::from_field_i64(
+                field,
+                time.timestamp_micros(),
+            ))
+        })
+        .unwrap_or(Bound::Unbounded);
+    tantivy::query::RangeQuery::new(lower, upper)
+}
+
 fn overlay_match_score(content: &str, terms: &[String]) -> usize {
     if terms.is_empty() {
         return 1;
     }
 
     let lowered = content.to_lowercase();
-    terms
-        .iter()
-        .filter(|term| lowered.contains(term.as_str()))
-        .count()
+    terms.iter().filter(|term| lowered.contains(*term)).count()
 }
 
 fn matches_filters(

@@ -1,13 +1,12 @@
+use super::types::*;
+use crate::fact_extraction;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use memorose_common::{
-    tokenizer::count_tokens, GraphEdge, MemoryDomain, MemoryUnit,
-    RelationType, TimeRange,
+    tokenizer::count_tokens, GraphEdge, MemoryDomain, MemoryUnit, RelationType, TimeRange,
 };
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
-use super::types::*;
-use crate::fact_extraction;
 
 impl super::MemoroseEngine {
     pub(crate) async fn build_organization_knowledge_detail_record_from_snapshot(
@@ -137,7 +136,10 @@ impl super::MemoroseEngine {
         )
     }
 
-    pub(crate) fn organization_knowledge_contribution_key(knowledge_id: Uuid, source_id: Uuid) -> String {
+    pub(crate) fn organization_knowledge_contribution_key(
+        knowledge_id: Uuid,
+        source_id: Uuid,
+    ) -> String {
         format!(
             "organization_knowledge_contribution:{}:{}",
             knowledge_id, source_id
@@ -193,7 +195,9 @@ impl super::MemoroseEngine {
         }
     }
 
-    pub(crate) fn organization_relation_key(record: &OrganizationKnowledgeRelationRecord) -> String {
+    pub(crate) fn organization_relation_key(
+        record: &OrganizationKnowledgeRelationRecord,
+    ) -> String {
         match &record.relation {
             OrganizationKnowledgeRelationKind::Source { source_id } => {
                 Self::organization_source_relation_key(*source_id)
@@ -314,7 +318,9 @@ impl super::MemoroseEngine {
         candidates
     }
 
-    pub(crate) fn organization_source_topic_candidates(source: &MemoryUnit) -> Vec<(String, String)> {
+    pub(crate) fn organization_source_topic_candidates(
+        source: &MemoryUnit,
+    ) -> Vec<(String, String)> {
         let keywords = Self::normalize_organization_keywords(source);
         Self::organization_topic_candidates_from_keywords_and_content(&keywords, &source.content)
     }
@@ -394,7 +400,9 @@ impl super::MemoroseEngine {
         Some(OrganizationProjectionTopic { label, alias_keys })
     }
 
-    pub(crate) fn select_organization_topic(sources: &[MemoryUnit]) -> Option<OrganizationProjectionTopic> {
+    pub(crate) fn select_organization_topic(
+        sources: &[MemoryUnit],
+    ) -> Option<OrganizationProjectionTopic> {
         let candidate_groups = sources
             .iter()
             .map(Self::organization_source_topic_candidates)
@@ -403,7 +411,10 @@ impl super::MemoroseEngine {
         Self::select_organization_topic_from_candidates(&candidate_groups)
     }
 
-    pub(crate) fn merge_organization_keywords(primary_label: &str, sources: &[MemoryUnit]) -> Vec<String> {
+    pub(crate) fn merge_organization_keywords(
+        primary_label: &str,
+        sources: &[MemoryUnit],
+    ) -> Vec<String> {
         let mut merged = Vec::new();
         let mut seen = HashSet::new();
 
@@ -512,7 +523,9 @@ impl super::MemoroseEngine {
         })
     }
 
-    pub(crate) fn materialize_organization_read_view(record: &OrganizationKnowledgeRecord) -> MemoryUnit {
+    pub(crate) fn materialize_organization_read_view(
+        record: &OrganizationKnowledgeRecord,
+    ) -> MemoryUnit {
         let mut read_view = MemoryUnit::new_with_domain(
             Some(record.org_id.clone()),
             Self::organization_read_view_owner(&record.org_id),
@@ -621,7 +634,10 @@ impl super::MemoroseEngine {
             .collect()
     }
 
-    pub(crate) fn build_organization_knowledge_content(source: &MemoryUnit, keywords: &[String]) -> String {
+    pub(crate) fn build_organization_knowledge_content(
+        source: &MemoryUnit,
+        keywords: &[String],
+    ) -> String {
         let summary =
             Self::neutralize_first_person_language(&Self::normalize_whitespace(&source.content));
         if let Some(title) = keywords.first() {
@@ -673,7 +689,10 @@ impl super::MemoroseEngine {
             && source.content != "No memories provided."
     }
 
-    pub(crate) async fn load_organization_source_units(&self, source_ids: &[Uuid]) -> Result<Vec<MemoryUnit>> {
+    pub(crate) async fn load_organization_source_units(
+        &self,
+        source_ids: &[Uuid],
+    ) -> Result<Vec<MemoryUnit>> {
         let mut sources = Vec::new();
 
         for source_id in source_ids {
@@ -688,7 +707,10 @@ impl super::MemoroseEngine {
         Ok(sources)
     }
 
-    pub(crate) fn load_organization_knowledge(&self, id: Uuid) -> Result<Option<OrganizationKnowledgeRecord>> {
+    pub(crate) fn load_organization_knowledge(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<OrganizationKnowledgeRecord>> {
         let key = Self::organization_knowledge_key(id);
         match self.system_kv().get(key.as_bytes())? {
             Some(bytes) => Ok(serde_json::from_slice(&bytes).ok()),
@@ -696,7 +718,10 @@ impl super::MemoroseEngine {
         }
     }
 
-    pub(crate) fn store_organization_knowledge(&self, record: &OrganizationKnowledgeRecord) -> Result<()> {
+    pub(crate) fn store_organization_knowledge(
+        &self,
+        record: &OrganizationKnowledgeRecord,
+    ) -> Result<()> {
         let key = Self::organization_knowledge_key(record.id);
         self.system_kv()
             .put(key.as_bytes(), &serde_json::to_vec(record)?)
@@ -785,7 +810,10 @@ impl super::MemoroseEngine {
         Ok(())
     }
 
-    pub(crate) fn delete_organization_relation_by_primary_key(&self, primary_key: &str) -> Result<()> {
+    pub(crate) fn delete_organization_relation_by_primary_key(
+        &self,
+        primary_key: &str,
+    ) -> Result<()> {
         if let Some(bytes) = self.system_kv().get(primary_key.as_bytes())? {
             if let Ok(relation) =
                 serde_json::from_slice::<OrganizationKnowledgeRelationRecord>(&bytes)
@@ -798,7 +826,10 @@ impl super::MemoroseEngine {
         Ok(())
     }
 
-    pub(crate) fn delete_organization_membership_or_relation_by_key(&self, key: &str) -> Result<()> {
+    pub(crate) fn delete_organization_membership_or_relation_by_key(
+        &self,
+        key: &str,
+    ) -> Result<()> {
         if key.starts_with("organization_knowledge_membership:source:") {
             let source_id = key
                 .rsplit(':')
@@ -959,7 +990,11 @@ impl super::MemoroseEngine {
         }
     }
 
-    pub(crate) fn revoke_organization_contribution(&self, knowledge_id: Uuid, source_id: Uuid) -> Result<()> {
+    pub(crate) fn revoke_organization_contribution(
+        &self,
+        knowledge_id: Uuid,
+        source_id: Uuid,
+    ) -> Result<()> {
         let Some(mut contribution) =
             self.load_organization_contribution(knowledge_id, source_id)?
         else {
@@ -1357,16 +1392,14 @@ impl super::MemoroseEngine {
         })
         .await??;
 
-        if let Err(error) = self
-            .vector
-            .delete_by_id("memories", &unit_id.to_string())
-            .await
-        {
-            tracing::warn!(
-                "Failed to delete materialized unit {} from vector store: {:?}",
-                unit_id,
-                error
-            );
+        if let Some(vector) = &self.vector {
+            if let Err(error) = vector.delete_by_id("memories", &unit_id.to_string()).await {
+                tracing::warn!(
+                    "Failed to delete materialized unit {} from vector store: {:?}",
+                    unit_id,
+                    error
+                );
+            }
         }
 
         let index = self.index.clone();
@@ -1380,7 +1413,10 @@ impl super::MemoroseEngine {
         Ok(())
     }
 
-    pub(crate) async fn delete_materialized_organization_view_storage(&self, unit: &MemoryUnit) -> Result<()> {
+    pub(crate) async fn delete_materialized_organization_view_storage(
+        &self,
+        unit: &MemoryUnit,
+    ) -> Result<()> {
         let unit_key = format!("u:{}:unit:{}", unit.user_id, unit.id).into_bytes();
         self.delete_memory_unit_storage_by_key(unit_key, unit.id)
             .await
@@ -1694,7 +1730,10 @@ impl super::MemoroseEngine {
         Ok(stats)
     }
 
-    pub(crate) async fn publish_native_shared_knowledge(&self, units: &[MemoryUnit]) -> Result<usize> {
+    pub(crate) async fn publish_native_shared_knowledge(
+        &self,
+        units: &[MemoryUnit],
+    ) -> Result<usize> {
         self.publish_native_shared_knowledge_for_domain(units, None)
             .await
     }
@@ -1752,11 +1791,13 @@ impl super::MemoroseEngine {
 
     pub(crate) async fn write_materialized_search_storage(&self, unit: &MemoryUnit) -> Result<()> {
         if unit.embedding.is_some() {
-            self.vector.ensure_table("memories").await?;
-            self.vector
-                .delete_by_id("memories", &unit.id.to_string())
-                .await?;
-            self.vector.add("memories", vec![unit.clone()]).await?;
+            if let Some(vector) = &self.vector {
+                vector.ensure_table("memories").await?;
+                vector
+                    .delete_by_id("memories", &unit.id.to_string())
+                    .await?;
+                vector.add("memories", vec![unit.clone()]).await?;
+            }
         }
 
         let index = self.index.clone();
@@ -1772,7 +1813,10 @@ impl super::MemoroseEngine {
         Ok(())
     }
 
-    pub(crate) async fn write_published_memory_unit_metadata(&self, unit: &MemoryUnit) -> Result<()> {
+    pub(crate) async fn write_published_memory_unit_metadata(
+        &self,
+        unit: &MemoryUnit,
+    ) -> Result<()> {
         let kv = self.kv_store.clone();
         let unit_to_store = unit.clone();
         tokio::task::spawn_blocking(move || {
@@ -1786,7 +1830,10 @@ impl super::MemoroseEngine {
                 let l1_key = format!("l1_idx:{}:{}", unit_to_store.user_id, unit_to_store.id);
                 batch.put(
                     l1_key.as_bytes(),
-                    unit_to_store.transaction_time.timestamp_micros().to_le_bytes(),
+                    unit_to_store
+                        .transaction_time
+                        .timestamp_micros()
+                        .to_le_bytes(),
                 );
             }
 
@@ -2054,5 +2101,4 @@ impl super::MemoroseEngine {
             .map(|(hit, _)| hit)
             .collect())
     }
-
 }

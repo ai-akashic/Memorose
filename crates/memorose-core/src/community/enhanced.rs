@@ -535,16 +535,14 @@ mod tests {
     fn test_label_propagation() {
         let node_a = Uuid::new_v4();
         let node_b = Uuid::new_v4();
-        
-        let edges = vec![
-            GraphEdge::new(
-                "user1".to_string(),
-                node_a,
-                node_b,
-                RelationType::RelatedTo,
-                1.0,
-            ),
-        ];
+
+        let edges = vec![GraphEdge::new(
+            "user1".to_string(),
+            node_a,
+            node_b,
+            RelationType::RelatedTo,
+            1.0,
+        )];
 
         let config = DetectionConfig {
             algorithm: Algorithm::LabelPropagation,
@@ -554,7 +552,7 @@ mod tests {
 
         let detector = EnhancedCommunityDetector::new(config);
         let result = detector.detect(&edges).unwrap();
-        
+
         assert!(result.num_communities > 0);
         assert!(result.node_to_community.contains_key(&node_a));
         assert!(result.node_to_community.contains_key(&node_b));
@@ -564,7 +562,7 @@ mod tests {
     fn test_empty_graph() {
         let config = DetectionConfig::default();
         let detector = EnhancedCommunityDetector::new(config);
-        
+
         // Passing empty edges should not panic and return 0 communities
         let result = detector.detect(&[]).unwrap();
         assert_eq!(result.num_communities, 0);

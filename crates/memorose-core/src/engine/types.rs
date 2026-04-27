@@ -1,8 +1,6 @@
 use crate::arbitrator::MemoryCorrectionKind;
 use chrono::{DateTime, Utc};
-use memorose_common::{
-    GraphEdge, MaterializationState, MemoryType, MemoryUnit, RelationType,
-};
+use memorose_common::{GraphEdge, MaterializationState, MemoryType, MemoryUnit, RelationType};
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, DerefMut};
 use uuid::Uuid;
@@ -49,7 +47,9 @@ pub enum PendingMaterializationPart {
 #[serde(rename_all = "snake_case")]
 pub enum PendingMaterializationInput {
     Text(String),
-    Multimodal { parts: Vec<PendingMaterializationPart> },
+    Multimodal {
+        parts: Vec<PendingMaterializationPart>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -225,7 +225,10 @@ impl SharedSearchHit {
         Self::NativeMemory { unit }
     }
 
-    pub(crate) fn organization_knowledge(record: &OrganizationKnowledgeRecord, unit: MemoryUnit) -> Self {
+    pub(crate) fn organization_knowledge(
+        record: &OrganizationKnowledgeRecord,
+        unit: MemoryUnit,
+    ) -> Self {
         Self::OrganizationKnowledge {
             knowledge: OrganizationKnowledgeSearchHit {
                 knowledge_id: record.id,
