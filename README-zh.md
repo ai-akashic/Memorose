@@ -571,7 +571,7 @@ _*Fallback：先做视觉描述或转录，再走文本 embedding。_
 - **嵌入式存储**：RocksDB + LanceDB + Tantivy 进程内运行，无外部数据库依赖
 - **分片 + Raft**：每个 shard 自带共识组，避免单 leader 成为瓶颈
 - **可插拔 LLM**：Gemini、OpenAI、以及 OpenAI-compatible endpoint
-- **可插拔 reranker**：内建 weighted RRF，也支持外部 HTTP reranker
+- **插件化 reranker**：内建 weighted reranker，也支持内部 arbitrator 模式和任意 HTTP reranker 插件
 
 ---
 

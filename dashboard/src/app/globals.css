@@ -5,12 +5,12 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --radius: 0.9rem;
+  --radius: 0.75rem;
 
-  --background: 18 20% 7%;
+  --background: 18 14% 6%;
   --foreground: 24 18% 90%;
 
-  --card: 20 19% 11%;
+  --card: 20 15% 10%;
   --card-foreground: 24 22% 94%;
 
   --popover: 20 16% 10%;
@@ -33,8 +33,8 @@
   --success: 142 58% 49%;
   --warning: 38 92% 56%;
 
-  --border: 18 12% 22%;
-  --input: 18 12% 21%;
+  --border: 18 9% 18%;
+  --input: 18 9% 16%;
   --ring: 10 95% 67%;
 
   --chart-1: 10 95% 67%;
@@ -89,21 +89,21 @@
   --color-sidebar-border: hsl(var(--sidebar-border));
   --color-sidebar-ring: hsl(var(--sidebar-ring));
 
-  --radius-sm: 0.7rem;
-  --radius-md: 1rem;
-  --radius-lg: 1.35rem;
-  --radius-xl: 1.75rem;
+  --radius-sm: 0.55rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 0.95rem;
+  --radius-xl: 1.15rem;
 
   --font-sans: var(--font-geist-sans), "Geist", "Avenir Next", "SF Pro Rounded", "SF Pro Display", "Segoe UI", system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), "Geist Mono", ui-monospace, monospace;
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22);
-  --shadow-md: 0 18px 40px rgba(0, 0, 0, 0.24);
-  --shadow-lg: 0 32px 70px rgba(0, 0, 0, 0.34);
-  --shadow-xl: 0 40px 110px rgba(0, 0, 0, 0.5);
-  --shadow-glow: 0 18px 48px rgba(255, 122, 87, 0.18);
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.18), 0 8px 24px rgba(0, 0, 0, 0.14), 0 0 0 1px rgba(255, 255, 255, 0.04);
-  --shadow-card-hover: 0 2px 4px rgba(0, 0, 0, 0.2), 0 12px 32px rgba(0, 0, 0, 0.18), 0 0 40px rgba(255, 122, 87, 0.06);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.18);
+  --shadow-md: 0 12px 28px rgba(0, 0, 0, 0.18);
+  --shadow-lg: 0 22px 52px rgba(0, 0, 0, 0.24);
+  --shadow-xl: 0 32px 80px rgba(0, 0, 0, 0.34);
+  --shadow-glow: none;
+  --shadow-card: 0 1px 1px rgba(0, 0, 0, 0.2);
+  --shadow-card-hover: 0 1px 1px rgba(0, 0, 0, 0.24);
 }
 
 @layer base {
@@ -124,29 +124,18 @@
   body {
     @apply bg-background text-foreground antialiased text-[13.5px];
     font-family: var(--font-sans);
-    letter-spacing: -0.012em;
+    letter-spacing: 0;
     line-height: 1.55;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     background:
-      radial-gradient(circle at top left, rgba(255, 140, 92, 0.1), transparent 28%),
-      radial-gradient(circle at top right, rgba(238, 181, 97, 0.08), transparent 22%),
-      radial-gradient(circle at bottom, rgba(180, 94, 73, 0.12), transparent 32%),
-      linear-gradient(180deg, rgba(32, 19, 17, 0.98), rgba(16, 13, 13, 1));
+      radial-gradient(circle at 22% 0%, rgba(255, 122, 87, 0.055), transparent 32rem),
+      linear-gradient(180deg, rgba(24, 18, 16, 0.98), rgba(14, 13, 12, 1));
     background-attachment: fixed;
   }
 
   body::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    background-image:
-      linear-gradient(to right, rgba(255, 255, 255, 0.024) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(255, 255, 255, 0.024) 1px, transparent 1px);
-    background-size: 56px 56px;
-    mask-image: radial-gradient(circle at center, black, transparent 88%);
-    opacity: 0.5;
+    content: none;
   }
 
   ::selection {
@@ -190,7 +179,7 @@
     transition: background-color 0.2s ease;
   }
   tr:hover td {
-    background-color: rgba(255,255,255,0.02);
+    background-color: rgba(255, 255, 255, 0.018);
   }
 
   button:active:not(:disabled) {
@@ -201,54 +190,34 @@
 
 @layer components {
   .glass-card {
-    @apply rounded-[1.6rem] border border-white/10 bg-card/60 backdrop-blur-xl transition-all duration-300 ease-out;
+    @apply rounded-xl border border-white/[0.055] bg-white/[0.028] backdrop-blur-xl transition-colors duration-200 ease-out;
     position: relative;
     box-shadow: var(--shadow-card);
   }
 
   .glass-card::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    padding: 1px;
-    background: conic-gradient(from 180deg at 50% 50%, rgba(255, 122, 87, 0.14), transparent 25%, rgba(255, 188, 110, 0.1), transparent 50%, rgba(255, 122, 87, 0.08), transparent 75%);
-    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-    mask-composite: exclude;
-    -webkit-mask-composite: xor;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.4s ease;
+    content: none;
   }
 
   .glass-card::after {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: 10%;
-    right: 10%;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.12), transparent);
-    border-radius: inherit;
-    pointer-events: none;
+    content: none;
   }
 
   .glass-card:hover {
-    @apply border-white/16 bg-card/68;
+    @apply border-white/[0.075] bg-white/[0.04];
     box-shadow: var(--shadow-card-hover);
-    transform: translateY(-1px);
   }
 
   .glass-card:hover::before {
-    opacity: 1;
+    opacity: 0;
   }
 
   .dashboard-stat-pill {
-    @apply flex min-w-[8.5rem] flex-col rounded-[1.15rem] border border-white/8 bg-white/[0.035] px-4 py-3;
+    @apply flex min-w-[8.5rem] flex-col rounded-xl border border-white/[0.055] bg-white/[0.03] px-4 py-3;
   }
 
   .dashboard-stat-label {
-    @apply text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80;
+    @apply text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/75;
   }
 
   .dashboard-stat-value {
@@ -256,11 +225,11 @@
   }
 
   .dashboard-soft-border {
-    @apply border border-white/8 bg-white/[0.025];
+    @apply border border-white/[0.055] bg-white/[0.025];
   }
 
   .label-xs {
-    @apply text-[10px] font-semibold uppercase tracking-wider text-muted-foreground;
+    @apply text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80;
   }
 
   .blob-bg {
@@ -318,10 +287,10 @@
 
 @keyframes glow-pulse {
   0%, 100% {
-    opacity: 0.6;
+    opacity: 0.45;
   }
   50% {
-    opacity: 1;
+    opacity: 0.7;
   }
 }
 
@@ -338,9 +307,7 @@
 }
 
 .bg-grid-white\/\[0\.02\] {
-  background-image:
-    linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-image: none;
 }
 
 .bg-\[size\:50px_50px\] {

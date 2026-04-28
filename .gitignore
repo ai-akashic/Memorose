@@ -59,6 +59,7 @@ coverage/
 # Test artifacts
 test-results/
 *.test
+.superpowers/
 
 # Documentation builds
 /book/

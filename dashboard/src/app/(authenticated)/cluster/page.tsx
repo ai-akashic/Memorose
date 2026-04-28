@@ -27,7 +27,6 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { motion } from "framer-motion";
 
 const RAFT_STATE_COLOR: Record<ShardStatus["raft_state"], string> = {
   Leader: "text-success",

@@ -206,15 +206,7 @@ impl MemoroseEngine {
         let arbitrator = Arbitrator::new();
         let reranker: Arc<dyn crate::reranker::Reranker> = if let Some(config) = app_config.as_ref()
         {
-            if config.reranker.r#type == memorose_common::config::RerankerType::Http
-                && config.reranker.endpoint.is_some()
-            {
-                Arc::new(crate::reranker::HttpReranker::new(
-                    config.reranker.endpoint.clone().unwrap(),
-                ))
-            } else {
-                Arc::new(crate::reranker::WeightedReranker::new())
-            }
+            crate::reranker::build_reranker_with_llm_config(&config.reranker, Some(&config.llm))
         } else {
             Arc::new(crate::reranker::WeightedReranker::new())
         };

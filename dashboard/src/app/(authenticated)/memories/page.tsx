@@ -54,13 +54,13 @@ import { DashboardHero } from "@/components/dashboard-chrome";
 
 function LevelBadge({ level }: { level: number }) {
   const colors: Record<number, string> = {
-    0: "bg-muted text-muted-foreground border-border",
-    1: "bg-primary/15 text-primary border-primary/20 hover:bg-primary/20",
-    2: "bg-success/15 text-success border-success/20 hover:bg-success/20",
-    3: "bg-amber-500/15 text-amber-500 border-amber-500/20 hover:bg-amber-500/20",
+    0: "bg-muted/70 text-muted-foreground border-transparent",
+    1: "bg-primary/12 text-primary border-transparent hover:bg-primary/16",
+    2: "bg-success/12 text-success border-transparent hover:bg-success/16",
+    3: "bg-amber-500/12 text-amber-500 border-transparent hover:bg-amber-500/16",
   };
   return (
-    <Badge variant="outline" className={`text-[10px] px-1.5 py-0 font-mono ${colors[level] || "bg-muted text-muted-foreground"}`}>
+    <Badge variant="outline" className={`text-[10px] px-1.5 py-0 font-mono border-transparent ${colors[level] || "bg-muted text-muted-foreground"}`}>
       L{level}
     </Badge>
   );
@@ -68,7 +68,7 @@ function LevelBadge({ level }: { level: number }) {
 
 function ImportanceBar({ value }: { value: number }) {
   return (
-    <div className="w-16 h-1 bg-card rounded-full overflow-hidden border border-border">
+    <div className="w-16 h-1 bg-white/[0.06] rounded-full overflow-hidden">
       <div
         className="h-full bg-primary transition-all duration-700"
         style={{ width: `${value * 100}%` }}
@@ -89,8 +89,8 @@ function MemoryDetailSheet({
   const t = useTranslations("Memories");
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="overflow-y-auto sm:max-w-md glass-card border-l">
-        <SheetHeader className="pb-6">
+      <SheetContent className="overflow-y-auto sm:max-w-md glass-card border-l border-white/[0.055]">
+        <SheetHeader className="pb-4">
           <SheetTitle className="label-xs">{t("detail.title")}</SheetTitle>
         </SheetHeader>
 
@@ -110,7 +110,7 @@ function MemoryDetailSheet({
 
             <div className="flex flex-col gap-2">
               <span className="label-xs">{t("detail.payload")}</span>
-              <div className="bg-card border border-border rounded-xl p-4">
+              <div className="bg-white/[0.025] rounded-xl p-4">
                 <p className="text-xs text-foreground/90 leading-relaxed whitespace-pre-wrap">{memory.content}</p>
               </div>
             </div>
@@ -140,7 +140,7 @@ function MemoryDetailSheet({
                 <span className="label-xs">{t("detail.keywords")}</span>
                 <div className="flex flex-wrap gap-1.5">
                   {memory.keywords.map((kw) => (
-                    <span key={kw} className="bg-card px-2 py-0.5 rounded-full border border-border label-xs">{kw}</span>
+                    <span key={kw} className="bg-white/[0.04] px-2 py-0.5 rounded-full label-xs">{kw}</span>
                   ))}
                 </div>
               </div>
@@ -521,27 +521,25 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
   return (
     <div className="space-y-4">
       {/* Filters */}
-      <div className="flex flex-wrap items-center gap-4 bg-card/40 backdrop-blur-md p-2 rounded-2xl border border-white/5 shadow-sm">
+      <div className="flex flex-wrap items-center gap-3 rounded-xl bg-white/[0.025] p-2">
         <ToggleGroup
           type="single"
           value={levelFilter}
           onValueChange={(v) => { setLevelFilter(v || "all"); setPage(1); }}
-          className="bg-background/50 p-1 rounded-xl border border-white/5"
+          className="rounded-lg bg-background/35 p-1"
         >
           {["all", "0", "1", "2", "3"].map(v => (
-            <ToggleGroupItem key={v} value={v} className="h-7 px-3.5 rounded-lg data-[state=on]:bg-white/10 data-[state=on]:text-white transition-all label-xs hover:text-foreground">
+            <ToggleGroupItem key={v} value={v} className="h-7 px-3 rounded-md data-[state=on]:bg-white/[0.08] data-[state=on]:text-white transition-colors label-xs hover:text-foreground">
               {v === "all" ? t("filters.allLevels") : `L${v}`}
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
 
-        <div className="h-5 w-px bg-white/10 mx-1" />
-
         <Select value={agentId} onValueChange={(v) => { setAgentId(v); setPage(1); }}>
-          <SelectTrigger className="w-[140px] h-9 bg-background/50 border-white/5 rounded-xl hover:bg-white/5 transition-all label-xs focus:ring-1 focus:ring-primary/50">
+          <SelectTrigger className="w-[140px] h-9 label-xs">
             <SelectValue placeholder="AGENT" />
           </SelectTrigger>
-          <SelectContent className="glass-card border-white/10">
+          <SelectContent className="glass-card">
             <SelectItem value="all" className="label-xs">{t("filters.allAgents")}</SelectItem>
             {agentsData?.agents.map((a) => (
               <SelectItem key={a.agent_id} value={a.agent_id} className="text-[10px] font-mono">{a.agent_id}</SelectItem>
@@ -550,10 +548,10 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
         </Select>
 
         <Select value={sort} onValueChange={setSort}>
-          <SelectTrigger className="w-[140px] h-9 bg-background/50 border-white/5 rounded-xl hover:bg-white/5 transition-all label-xs focus:ring-1 focus:ring-primary/50">
+          <SelectTrigger className="w-[140px] h-9 label-xs">
             <SelectValue />
           </SelectTrigger>
-          <SelectContent className="glass-card border-white/10">
+          <SelectContent className="glass-card">
             <SelectItem value="importance" className="label-xs">{t("filters.importance")}</SelectItem>
             <SelectItem value="recent" className="label-xs">{t("filters.recent")}</SelectItem>
             <SelectItem value="access_count" className="label-xs">{t("filters.accessCount")}</SelectItem>
@@ -562,10 +560,10 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
       </div>
 
       {/* Memory Table */}
-      <div className="glass-card rounded-xl overflow-hidden">
+      <div className="glass-card overflow-hidden">
         <Table>
           <TableHeader>
-            <TableRow className="border-border hover:bg-transparent bg-card">
+            <TableRow className="hover:bg-transparent">
               <TableHead className="w-24 px-4 label-xs">{t("table.user")}</TableHead>
               <TableHead className="w-24 px-4 label-xs">{t("table.agent")}</TableHead>
               <TableHead className="text-center w-14 px-4 label-xs">{t("table.level")}</TableHead>
@@ -578,14 +576,14 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
           <TableBody>
             {isLoading ? (
               Array.from({ length: 5 }).map((_, i) => (
-                <TableRow key={i} className="border-border">
+                <TableRow key={i}>
                   <TableCell colSpan={7}>
                     <Skeleton className="h-10 w-full opacity-20" />
                   </TableCell>
                 </TableRow>
               ))
             ) : memories?.items.length === 0 ? (
-              <TableRow className="border-border hover:bg-transparent">
+              <TableRow className="hover:bg-transparent">
                 <TableCell colSpan={7} className="p-0">
                   <EmptyState icon={List} title={t("empty")} />
                 </TableCell>
@@ -608,14 +606,14 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
                         handleViewDetail(m.id);
                       }
                     }}
-                    className={`border-white/5 transition-all duration-200 ${canOpenDetail ? "cursor-pointer group hover:bg-white/[0.04] hover:shadow-[inset_2px_0_0_rgba(255,92,92,0.8)]" : "opacity-95"}`}
+                    className={`transition-colors duration-150 ${canOpenDetail ? "cursor-pointer group hover:bg-white/[0.025]" : "opacity-95"}`}
                   >
                     <TableCell>
                       <span className="text-xs font-mono truncate block max-w-[100px] text-foreground/80">{m.user_id || "—"}</span>
                     </TableCell>
                     <TableCell>
                       {m.agent_id ? (
-                        <Badge variant="outline" className="text-[10px] h-5 px-1.5 font-mono bg-card border-border">{m.agent_id}</Badge>
+                        <Badge variant="outline" className="text-[10px] h-5 px-1.5 font-mono bg-white/[0.035] border-transparent">{m.agent_id}</Badge>
                       ) : (
                         <span className="label-xs">—</span>
                       )}
@@ -638,7 +636,7 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
                       {m.keywords.length > 0 && (
                         <div className="flex gap-1.5 mt-2 flex-wrap">
                           {m.keywords.slice(0, 3).map((kw) => (
-                            <span key={kw} className="bg-card px-1.5 py-0.5 rounded border border-border label-xs">{kw}</span>
+                            <span key={kw} className="bg-white/[0.035] px-1.5 py-0.5 rounded label-xs">{kw}</span>
                           ))}
                         </div>
                       )}
@@ -652,8 +650,8 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
 
         {/* Pagination */}
         {memories && memories.total > 20 && (
-          <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-card">
-            <span className="font-medium text-[10px] uppercase tracking-wider text-muted-foreground">
+          <div className="flex items-center justify-between border-t border-white/[0.04] px-4 py-3">
+            <span className="font-medium text-[10px] uppercase tracking-wide text-muted-foreground/75">
               {t("pagination.showing", { from: (page - 1) * 20 + 1, to: Math.min(page * 20, memories.total), total: memories.total })}
             </span>
             <div className="flex gap-1">

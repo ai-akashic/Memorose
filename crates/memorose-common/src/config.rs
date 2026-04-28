@@ -1,5 +1,6 @@
 use config::{Config, ConfigError, Environment, File};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::env;
 
 // --- Constants for Default Configuration ---
@@ -370,6 +371,7 @@ pub struct AppConfig {
 #[serde(rename_all = "snake_case")]
 pub enum RerankerType {
     Weighted,
+    Arbitrator,
     Http,
 }
 
@@ -379,12 +381,53 @@ impl Default for RerankerType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+fn default_reranker_timeout_secs() -> u64 {
+    10
+}
+
+fn default_reranker_fallback_to_weighted() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RerankerConfig {
     #[serde(default)]
     pub r#type: RerankerType,
     #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
     pub endpoint: Option<String>,
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub top_n: Option<usize>,
+    #[serde(default)]
+    pub max_candidates: Option<usize>,
+    #[serde(default = "default_reranker_timeout_secs")]
+    pub timeout_secs: u64,
+    #[serde(default = "default_reranker_fallback_to_weighted")]
+    pub fallback_to_weighted: bool,
+    #[serde(default)]
+    pub include_metadata: bool,
+}
+
+impl Default for RerankerConfig {
+    fn default() -> Self {
+        Self {
+            r#type: RerankerType::Weighted,
+            provider: None,
+            endpoint: None,
+            headers: HashMap::new(),
+            model: None,
+            top_n: None,
+            max_candidates: None,
+            timeout_secs: default_reranker_timeout_secs(),
+            fallback_to_weighted: default_reranker_fallback_to_weighted(),
+            include_metadata: false,
+        }
+    }
 }
 
 impl Default for LLMConfig {
@@ -695,6 +738,12 @@ impl AppConfig {
             )?
             .set_default("vector.cpu_threads", DEFAULT_VECTOR_CPU_THREADS as i64)?
             .set_default("vector.io_threads", DEFAULT_VECTOR_IO_THREADS as i64)?
+            .set_default("reranker.timeout_secs", default_reranker_timeout_secs())?
+            .set_default(
+                "reranker.fallback_to_weighted",
+                default_reranker_fallback_to_weighted(),
+            )?
+            .set_default("reranker.include_metadata", false)?
             // File: config.toml
             .add_source(File::with_name("config").required(false))
             // Environment: MEMOROSE_LLM__PROVIDER=openai -> llm.provider=openai
@@ -879,6 +928,82 @@ mod tests {
         assert_eq!(config.vector.io_threads, Some(2));
         assert_eq!(config.vector.max_index_size_gb, Some(7));
         assert_eq!(config.vector.schema_version, 3);
+    }
+
+    #[test]
+    fn test_reranker_config_accepts_http_provider_and_headers() {
+        let config: RerankerConfig = serde_json::from_value(serde_json::json!({
+            "type": "http",
+            "provider": "jina",
+            "endpoint": "https://api.jina.ai/v1/rerank",
+            "headers": {
+                "Authorization": "Bearer test-key"
+            },
+            "model": "jina-reranker-v2-base-multilingual",
+            "top_n": 8,
+            "timeout_secs": 2,
+            "fallback_to_weighted": false,
+            "include_metadata": true
+        }))
+        .expect("http reranker config should deserialize");
+
+        assert_eq!(config.r#type, RerankerType::Http);
+        assert_eq!(config.provider.as_deref(), Some("jina"));
+        assert_eq!(
+            config.endpoint.as_deref(),
+            Some("https://api.jina.ai/v1/rerank")
+        );
+        assert_eq!(
+            config.headers.get("Authorization").map(String::as_str),
+            Some("Bearer test-key")
+        );
+        assert_eq!(
+            config.model.as_deref(),
+            Some("jina-reranker-v2-base-multilingual")
+        );
+        assert_eq!(config.top_n, Some(8));
+        assert_eq!(config.timeout_secs, 2);
+        assert!(!config.fallback_to_weighted);
+        assert!(config.include_metadata);
+    }
+
+    #[test]
+    fn test_reranker_config_accepts_arbitrator_type() {
+        let config: RerankerConfig = serde_json::from_value(serde_json::json!({
+            "type": "arbitrator",
+            "provider": "gemini",
+            "model": "gemini-3.1-flash-lite-preview",
+            "max_candidates": 32
+        }))
+        .expect("arbitrator reranker config should deserialize");
+
+        assert_eq!(config.r#type, RerankerType::Arbitrator);
+        assert_eq!(config.provider.as_deref(), Some("gemini"));
+        assert_eq!(
+            config.model.as_deref(),
+            Some("gemini-3.1-flash-lite-preview")
+        );
+        assert_eq!(config.max_candidates, Some(32));
+    }
+
+    #[test]
+    fn test_reranker_type_env_override_loads() {
+        std::env::set_var("MEMOROSE__RERANKER__TYPE", "arbitrator");
+        std::env::set_var("MEMOROSE__RERANKER__PROVIDER", "gemini");
+        std::env::set_var("MEMOROSE__RERANKER__MODEL", "gemini-3.1-flash-lite-preview");
+
+        let config = AppConfig::load().expect("reranker type env should load");
+
+        std::env::remove_var("MEMOROSE__RERANKER__TYPE");
+        std::env::remove_var("MEMOROSE__RERANKER__PROVIDER");
+        std::env::remove_var("MEMOROSE__RERANKER__MODEL");
+
+        assert_eq!(config.reranker.r#type, RerankerType::Arbitrator);
+        assert_eq!(config.reranker.provider.as_deref(), Some("gemini"));
+        assert_eq!(
+            config.reranker.model.as_deref(),
+            Some("gemini-3.1-flash-lite-preview")
+        );
     }
 
     #[test]

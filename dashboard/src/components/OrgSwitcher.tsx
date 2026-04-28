@@ -72,15 +72,15 @@ export function OrgSwitcher({ collapsed }: { collapsed?: boolean }) {
   const trigger = collapsed ? (
     <button
       type="button"
-      className="flex h-7 w-7 items-center justify-center rounded-md border border-primary/20 bg-primary/10 text-[10px] font-bold text-primary"
+      className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10 text-[10px] font-semibold text-primary"
       aria-label={t("switcher.ariaLabel")}
     >
       {activeOrg.org_id.charAt(0).toUpperCase()}
     </button>
   ) : (
-    <Button variant="ghost" className="h-9 w-full justify-between px-1.5 hover:bg-muted/70">
+    <Button variant="ghost" className="h-9 w-full justify-between px-1.5 hover:bg-white/[0.035]">
       <div className="flex min-w-0 items-center gap-2">
-        <div className="flex h-6 w-6 items-center justify-center rounded-md border border-primary/20 bg-primary/10 text-primary">
+        <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-primary/10 text-primary">
           <Building2 className="h-3 w-3" />
         </div>
         <div className="min-w-0 text-left">
@@ -92,7 +92,7 @@ export function OrgSwitcher({ collapsed }: { collapsed?: boolean }) {
   );
 
   return (
-    <div className={collapsed ? "flex justify-center border-b border-border py-2.5" : "flex shrink-0 items-center border-b border-border px-2.5 py-2.5"}>
+    <div className={collapsed ? "flex justify-center py-2.5" : "flex shrink-0 items-center px-2.5 py-2.5"}>
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogTrigger asChild>{trigger}</DialogTrigger>
         <DialogContent className="sm:max-w-lg">
@@ -105,7 +105,7 @@ export function OrgSwitcher({ collapsed }: { collapsed?: boolean }) {
 
           <div className="space-y-5">
             <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">
+              <p className="sr-only">
                 {t("switcher.description")}
               </p>
               <div className="grid gap-2">
@@ -119,10 +119,10 @@ export function OrgSwitcher({ collapsed }: { collapsed?: boolean }) {
                         setOrgId(organization.org_id);
                         setOpen(false);
                       }}
-                      className={`flex min-h-12 items-center justify-between rounded-xl border px-3 py-3 text-left transition-colors ${
+                      className={`flex min-h-12 items-center justify-between rounded-xl px-3 py-3 text-left transition-colors ${
                         selected
-                          ? "border-primary/30 bg-primary/5"
-                          : "border-border/70 bg-background/60 hover:bg-muted/60"
+                          ? "bg-primary/10"
+                          : "bg-white/[0.025] hover:bg-white/[0.045]"
                       }`}
                     >
                       <div className="min-w-0">
@@ -139,16 +139,16 @@ export function OrgSwitcher({ collapsed }: { collapsed?: boolean }) {
             </div>
 
             {!showCreateForm ? (
-              <Button 
-                variant="outline" 
-                className="w-full border-dashed border-border/70 text-muted-foreground hover:text-foreground h-12 rounded-xl" 
+              <Button
+                variant="outline"
+                className="w-full border-dashed text-muted-foreground hover:text-foreground h-12 rounded-xl"
                 onClick={() => setShowCreateForm(true)}
               >
                 <Plus className="mr-2 h-4 w-4" />
                 {t("switcher.createTitle")}
               </Button>
             ) : (
-              <div className="space-y-3 rounded-2xl border border-border/70 bg-background/50 p-4">
+              <div className="space-y-3 rounded-xl bg-white/[0.025] p-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 label-xs">
                     <Plus className="h-3.5 w-3.5" />

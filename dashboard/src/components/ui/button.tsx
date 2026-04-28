@@ -5,16 +5,16 @@ import { Slot } from "radix-ui"
 import { cn } from "@/lib/utils"
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl text-sm font-medium transition-all duration-200 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/40 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl text-sm font-medium transition-colors duration-150 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/30 focus-visible:ring-[2px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive",
   {
     variants: {
       variant: {
         default:
-          "bg-primary text-primary-foreground shadow-[0_14px_32px_rgba(255,122,87,0.22)] hover:bg-primary/95 hover:-translate-y-0.5 hover:scale-[1.02] hover:shadow-[0_18px_40px_rgba(255,122,87,0.35)] transition-all duration-300",
+          "bg-primary text-primary-foreground shadow-none hover:bg-primary/92",
         destructive:
-          "bg-destructive text-white shadow-[0_12px_26px_rgba(220,38,38,0.2)] hover:bg-destructive/90 hover:-translate-y-0.5 hover:shadow-[0_16px_32px_rgba(220,38,38,0.3)] focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60 transition-all duration-300",
+          "bg-destructive text-white shadow-none hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60",
         outline:
-          "border border-white/10 bg-white/[0.03] text-foreground shadow-none hover:bg-white/[0.06] hover:-translate-y-0.5 hover:shadow-sm hover:border-white/20 hover:text-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50 transition-all duration-300",
+          "border border-white/[0.065] bg-white/[0.025] text-foreground shadow-none hover:bg-white/[0.055] hover:border-white/[0.1] hover:text-foreground dark:bg-input/25 dark:border-input/70 dark:hover:bg-input/45",
         secondary:
           "bg-secondary/80 text-secondary-foreground hover:bg-secondary",
         ghost:

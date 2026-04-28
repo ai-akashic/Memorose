@@ -14,7 +14,7 @@ pub use arbitrator::Arbitrator;
 pub use community::CommunityDetector;
 pub use engine::{MemoroseEngine, OrganizationKnowledgeSearchHit, SharedSearchHit};
 pub use llm::{GeminiClient, LLMClient};
-pub use reranker::Reranker;
+pub use reranker::{build_reranker, build_reranker_with_llm_config, Reranker};
 pub use worker::BackgroundWorker;
 
 // Re-export common types for convenience

@@ -84,28 +84,28 @@ export default function AuthenticatedLayout({
           <CommandPalette />
           <aside
             className={cn(
-              "flex flex-col shrink-0 border-r border-white/8 bg-[linear-gradient(180deg,rgba(34,20,18,0.94),rgba(18,12,12,0.94))] backdrop-blur-xl shadow-[10px_0_42px_rgba(0,0,0,0.28)] transition-all duration-300 z-30 h-full overflow-hidden",
+              "flex flex-col shrink-0 border-r border-white/[0.055] bg-background/72 backdrop-blur-xl transition-all duration-300 z-30 h-full overflow-hidden",
               collapsed ? "w-16" : "w-52"
             )}
           >
-            <div className={cn("border-b border-white/8", collapsed ? "px-2 py-2.5" : "px-2.5 py-3")}>
+            <div className={cn(collapsed ? "px-2 py-2.5" : "px-2.5 py-3")}>
               {collapsed ? (
                 <div className="flex justify-center">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-[0.95rem] border border-white/10 bg-white/[0.04] shadow-[0_10px_30px_rgba(0,0,0,0.2)]">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/[0.035]">
                     <MemoroseLogo size={21} />
                   </div>
                 </div>
               ) : (
                 <div className="flex items-center gap-2 px-1 py-0.5">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[0.95rem] border border-white/10 bg-white/[0.06] shadow-sm">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/[0.035]">
                     <MemoroseLogo size={24} />
                   </div>
                   <div className="min-w-0">
-                    <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground/80">
+                    <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/65">
                       Memorose
                     </p>
-                    <p className="truncate text-sm font-bold leading-5 tracking-tight text-foreground/90">
-                      Control Plane
+                    <p className="truncate text-sm font-semibold leading-5 tracking-tight text-foreground/90">
+                      Control
                     </p>
                   </div>
                 </div>
@@ -122,21 +122,21 @@ export default function AuthenticatedLayout({
                     key={item.href}
                     href={item.href}
                     className={cn(
-                      "group relative flex items-center gap-2 overflow-hidden rounded-[0.95rem] border px-2 py-2 text-xs transition-all duration-200",
+                      "group relative flex items-center gap-2 overflow-hidden rounded-xl px-2 py-2 text-xs transition-colors duration-150",
                       isActive
-                        ? "border-primary/25 bg-gradient-to-r from-primary/12 via-primary/8 to-transparent text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_10px_25px_rgba(255,122,87,0.12)]"
-                        : "border-transparent text-muted-foreground hover:border-white/10 hover:bg-white/[0.04] hover:text-foreground"
+                        ? "bg-primary/10 text-foreground"
+                        : "text-muted-foreground hover:bg-white/[0.035] hover:text-foreground"
                     )}
                   >
                     {isActive && (
-                      <span className="absolute inset-y-2 left-0 w-[3px] rounded-r-full bg-primary shadow-[0_0_18px_rgba(255,122,87,0.8)] animate-[glow-pulse_2s_ease-in-out_infinite]" />
+                      <span className="absolute inset-y-2 left-0 w-[2px] rounded-r-full bg-primary/75" />
                     )}
                     <div
                       className={cn(
-                        "flex h-7.5 w-7.5 shrink-0 items-center justify-center rounded-[0.8rem] border transition-colors",
+                        "flex h-7.5 w-7.5 shrink-0 items-center justify-center rounded-lg transition-colors",
                         isActive
-                          ? "border-primary/20 bg-primary/12 text-primary"
-                          : "border-white/8 bg-white/[0.03] text-muted-foreground group-hover:text-foreground"
+                          ? "text-primary"
+                          : "text-muted-foreground group-hover:text-foreground"
                       )}
                     >
                       <item.icon className="h-[14px] w-[14px]" />
@@ -162,7 +162,7 @@ export default function AuthenticatedLayout({
               })}
             </nav>
 
-            <div className="flex flex-col items-center space-y-1 border-t border-white/8 bg-background/50 p-2">
+            <div className="flex flex-col items-center space-y-1 border-t border-white/[0.045] bg-background/40 p-2">
               {!collapsed ? (
                 <div className="w-full flex justify-between items-center">
                   <LocaleSwitcher />
@@ -208,9 +208,7 @@ export default function AuthenticatedLayout({
           </aside>
 
           <main className="flex-1 overflow-y-auto overflow-x-hidden h-full allow-select bg-transparent relative z-0 flex flex-col">
-            <div className="absolute left-[-10%] top-[-8%] z-[-1] h-[28rem] w-[28rem] rounded-full bg-[radial-gradient(circle,rgba(255,128,92,0.18),transparent_65%)] blur-3xl pointer-events-none" />
-            <div className="absolute right-[-8%] top-[10%] z-[-1] h-[24rem] w-[24rem] rounded-full bg-[radial-gradient(circle,rgba(255,188,110,0.12),transparent_65%)] blur-3xl pointer-events-none" />
-            <div className="absolute inset-0 z-[-1] bg-gradient-to-b from-transparent via-background/24 to-background/72 pointer-events-none" />
+            <div className="absolute inset-0 z-[-1] bg-gradient-to-b from-transparent via-background/12 to-background/60 pointer-events-none" />
             <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-5 py-5 md:px-7 md:py-7 lg:px-10 openclaw-dashboard-enter relative">
               {children}
             </div>

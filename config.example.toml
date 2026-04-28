@@ -90,6 +90,35 @@ cpu_threads = 1
 io_threads = 1
 
 # ============================================
+# Reranker Plugins
+# ============================================
+[reranker]
+# Built-in local weighted reranker:
+type = "weighted"
+
+# Internal arbitrator mode. Reuses the configured [llm] provider/API key and
+# lets the model choose a dynamic set of genuinely relevant memories.
+# type = "arbitrator"
+# provider = "gemini"
+# model = "gemini-3.1-flash-lite-preview"
+# max_candidates = 32
+# fallback_to_weighted = true
+# include_metadata = true
+
+# External HTTP reranker plugin.
+# type = "http"
+# provider = "jina"
+# endpoint = "https://api.jina.ai/v1/rerank"
+# model = "jina-reranker-v2-base-multilingual"
+# top_n = 20
+# timeout_secs = 10
+# fallback_to_weighted = true
+# include_metadata = true
+#
+# [reranker.headers]
+# Authorization = "Bearer your-reranker-api-key"
+
+# ============================================
 # Knowledge Graph (L2)
 # ============================================
 [graph]
