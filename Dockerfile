@@ -26,9 +26,10 @@ COPY . .
 
 # Increase recursion limit for lance crate's deeply nested async blocks
 ENV RUST_MIN_STACK=8388608
+ENV RUSTUP_TOOLCHAIN=1.91.0
 
 # Verify the toolchain early so LanceDB MSRV failures are obvious in Docker logs.
-RUN rustc --version && cargo --version
+RUN rustup show active-toolchain && rustc --version && cargo --version
 
 # Build both binaries
 RUN cargo build --release -p memorose-server
