@@ -4,8 +4,8 @@
     <img src=".github/assets/logo.svg" alt="Memorose" width="160" />
   </a>
   <h1>Memorose</h1>
-  <p><b>The open-source memory runtime for AI agents.</b></p>
-  <p>Persistent memory, procedural recall, shared knowledge, and forgetting in one Rust-native stack.</p>
+  <p><b>Open-source AI memory database for long-lived agents.</b></p>
+  <p>Persistent memory, hybrid retrieval, graph context, shared knowledge, and controlled forgetting in one Rust-native stack.</p>
   <p>
     <a href="./README-zh.md"><b>简体中文</b></a>
   </p>
@@ -31,13 +31,13 @@
   <br />
 </div>
 
-<p align="center"><sub>Memorose is not a vector wrapper. It is a memory runtime for agents: ingest, consolidate, retrieve, reflect, share, and forget in one system.</sub></p>
+<p align="center"><sub>Memorose is not a vector wrapper. It is a self-hosted memory runtime for agents: ingest events, consolidate durable memory, retrieve with hybrid search, project shared knowledge, and control memory lifecycle.</sub></p>
 
 ---
 
 ## 💡 Why Memorose?
 
-Most agent memory systems are still vector stores with nicer branding. Real agents need a memory runtime that can remember facts and procedures, evolve memory over time, and enforce boundaries across agent, user, and organization scopes.
+Most agent memory systems are still vector stores with nicer branding. Real agents need a memory runtime that can remember facts and procedures, retrieve through more than one signal, and enforce boundaries across agent, user, and organization scopes.
 
 **Memorose** is a self-hosted Rust system built for that exact job:
 
@@ -45,11 +45,11 @@ Most agent memory systems are still vector stores with nicer branding. Real agen
 - **Factual + Procedural:** Stores both what happened and *how* work gets done.
 - **Domain-Aware:** Strict isolation across agent, user, and organization scopes.
 - **Hybrid Retrieval:** Vectors, text search, graph expansion, and reranking combined.
-- **Continuous Evolution:** Denoising, compression, linking, reflection, and active forgetting.
+- **Memory Lifecycle:** Denoising, compression, linking, reflection, semantic update, and optional forgetting.
 - **Multimodal Native:** Text, image, audio, and video enter the same memory system.
 - **Rust-Native Stack:** Embedded storage with no Python dependency chains.
 
-One binary. Self-hosted. Sub-10ms retrieval target. Built for agents that need a real memory system.
+Self-hosted. Rust-native. Designed for agents that need durable memory instead of another prompt appendix.
 
 ---
 
@@ -67,8 +67,8 @@ Store both what happened (facts) and how work gets done (procedures).
 ### 🔍 Hybrid Retrieval
 Vectors, full-text, graph expansion, and reranking work together in one unified stack.
 
-### 🧬 Memory Evolution
-Denoise, compress, align, associate, reflect, and forget are built directly into the runtime.
+### 🧬 Memory Lifecycle
+Denoise, compress, align, associate, reflect, semantic update, and optional forgetting are part of the runtime.
 
 ### 🎞️ Multimodal Native
 Text, image, audio, and video can enter and be searched within the same memory system.
@@ -96,10 +96,26 @@ docker run -d \
 <details>
 <summary><b>Or build from source</b></summary>
 
+Requirements:
+
+- Rust 1.91+
+- `protobuf-compiler`
+- `cmake`
+- `libclang`
+
+On Debian/Ubuntu:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y protobuf-compiler cmake libclang-dev
+```
+
 ```bash
 git clone https://github.com/ai-akashic/Memorose.git
 cd Memorose
-cargo build --release
+export RUST_MIN_STACK=8388608
+cargo build --release -p memorose-server
+export GOOGLE_API_KEY="your_google_api_key_here"
 ./target/release/memorose-server
 ```
 </details>
@@ -184,6 +200,25 @@ curl -s -X POST http://localhost:3000/v1/memory/context \
 
 ---
 
+## ⚙️ Configuration Notes
+
+The Docker image runs the API server on `3000` and the dashboard on `3100`.
+
+| Setting | Purpose | Default / note |
+|---------|---------|----------------|
+| `MEMOROSE__LLM__PROVIDER` | LLM provider | Defaults to `gemini`; set to `openai` for OpenAI |
+| `GOOGLE_API_KEY` | Gemini LLM and embedding provider | Required when provider is `gemini` |
+| `OPENAI_API_KEY` | OpenAI provider key | Requires `MEMOROSE__LLM__PROVIDER=openai` |
+| `MEMOROSE__LLM__MODEL` | Chat / reasoning model | Example: `gemini-3.1-flash-lite-preview` |
+| `MEMOROSE__LLM__EMBEDDING_MODEL` | Embedding model | Example: `gemini-embedding-2-preview` |
+| `DASHBOARD_ADMIN_PASSWORD` | Dashboard admin password | Defaults to `admin` if unset; set this in real deployments |
+| `MEMOROSE__FORGETTING__ENABLED` | Background forgetting worker | Disabled by default |
+| `MEMOROSE__VECTOR__MAX_INDEX_SIZE_GB` | LanceDB index size guardrail | Defaults to `5` |
+
+Forgetting is available through preview / execute flows and can be enabled for background pruning, but it is intentionally disabled by default.
+
+---
+
 ## 🏗️ How It Works
 
 Memorose processes memories through a 4-tier cognitive pipeline, modeled after human memory consolidation:
@@ -223,7 +258,7 @@ Memorose processes memories through a 4-tier cognitive pipeline, modeled after h
 │  ► RocksDB                                          │
 └─────────────────────────────────────────────────────┘
 
-  ↕ Forgetting runs continuously across all tiers:
+  ↕ Optional forgetting can run across memory tiers when enabled:
     importance decay + threshold pruning + deduplication
 ```
 
@@ -247,13 +282,13 @@ flowchart TD
         L3["L3 Goals & Task Memory / 目标与任务记忆<br/>goals + task trees + dependencies"]
     end
 
-    subgraph Evolution["Memory Evolution / 记忆演化"]
+    subgraph Evolution["Memory Lifecycle / 记忆生命周期"]
         E1["Denoise / 降噪"]
         E2["Compress / 压缩"]
         E3["Align / 对齐"]
         E4["Associate / 关联"]
         E5["Reflect / 反思"]
-        E6["Forget / 遗忘<br/>decay + prune on L1-L3"]
+        E6["Forget / 遗忘<br/>optional decay + prune on L1-L3"]
     end
 
     subgraph Domains["Memory Domains / 记忆领域"]
@@ -311,16 +346,16 @@ Memorose separates **cognitive tier** from **memory domain**:
 
 ---
 
-## 🔄 Six Cognitive Operations
+## 🔄 Cognitive Operations
 
-These six operations form the memory evolution pipeline:
+These operations form the memory lifecycle pipeline:
 
 1. **Align**: Map multimodal input (text, image, audio, video) to structured events.
 2. **Compress**: LLM-extract high-density facts from verbose conversations (L0 → L1).
 3. **Associate**: Auto-link semantically similar memories via cosine similarity.
 4. **Insight**: Community detection (Louvain/LPA) + LLM synthesis of abstract knowledge.
 5. **Reflect**: Per-session retrospective: what happened, what was learned.
-6. **Forget**: Importance decay + threshold pruning + semantic deduplication.
+6. **Update / Forget**: Preview semantic updates or forgetting plans, then execute them deliberately. Background forgetting is disabled by default.
 
 ---
 
@@ -333,28 +368,28 @@ These six operations form the memory evolution pipeline:
 | Hybrid Search (Vector + BM25) | **Yes** | No | Yes | No |
 | Knowledge Graph | **Yes** | Yes | No | No |
 | Native Multimodal Embedding | **Yes** | No | No | No |
-| Active Forgetting | **Yes** | No | No | No |
+| Controlled Forgetting | **Preview / execute; background off by default** | No | No | No |
 | Raft Replication | **Yes** | No | No | No |
 | Built-in Dashboard | **Yes** | Yes | No | No |
 | Language | **Rust** | Python | Go | Python |
-| Latency (p99) | **<10ms** | ~50ms | ~30ms | ~20ms |
 
 ---
 
 ## ⚡ Performance
 
-Benchmarked on a single 8-core node with 1M stored memories:
+Current performance work focuses on practical startup behavior, bounded vector index growth, hybrid retrieval latency, and reproducible benchmark coverage.
 
-- **Search Latency**: <8ms p99 (hybrid vector + BM25)
-- **Write Throughput**: 50K ops/sec sustained
-- **Memory Footprint**: ~120 MB baseline
-- **Cold Start**: <200ms to first query
+- **Retrieval target**: low-latency hybrid search for agent recall paths.
+- **Storage guardrails**: LanceDB index size limits and degraded startup behavior are configurable.
+- **Benchmark direction**: publish reproducible workloads before treating numbers as release claims.
+
+See `examples/README.md` for local benchmark scripts and examples.
 
 ---
 
 ## 🖥️ Dashboard
 
-Memorose includes a modern, glassmorphic Next.js dashboard that runs as a separate web app.
+Memorose includes a Next.js dashboard for observing memory, graph context, cluster state, and correction workflows.
 
 **Recommended local startup:**
 ```bash
