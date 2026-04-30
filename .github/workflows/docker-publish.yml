@@ -20,7 +20,8 @@ env:
 
 jobs:
   build-and-push-image:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+    timeout-minutes: 1440
     permissions:
       contents: read
       packages: write
