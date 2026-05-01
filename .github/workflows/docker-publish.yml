@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   build-and-push-image:
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     timeout-minutes: 1440
     permissions:
       contents: read
