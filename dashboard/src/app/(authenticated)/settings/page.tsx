@@ -264,7 +264,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="relative mx-auto max-w-4xl space-y-8 pb-12">
+    <div className="relative mx-auto w-full max-w-4xl space-y-8 pb-12">
       <DashboardHero
         icon={SettingsIcon}
         kicker={t("title")}
