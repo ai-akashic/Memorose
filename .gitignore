@@ -43,9 +43,6 @@ data_example_basic/
 *.log
 logs/
 
-# Docker
-.dockerignore
-
 # Coverage reports
 tarpaulin-report.html
 coverage/

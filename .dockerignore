@@ -1,0 +1,55 @@
+# VCS and local editor state
+.git/
+.github/
+.claude/
+.vscode/
+.idea/
+.DS_Store
+
+# Rust build artifacts
+target/
+**/target/
+**/*.rs.bk
+
+# Node/Next.js build artifacts
+node_modules/
+dashboard/node_modules/
+dashboard/.next/
+dashboard/out/
+dashboard/.turbo/
+dashboard/.vercel/
+dashboard/coverage/
+dashboard/tsconfig.tsbuildinfo
+
+# Runtime data, logs, and local configuration
+data/
+data_example_basic/
+logs/
+*.log
+*.db
+*.sqlite
+*.sqlite3
+.env
+.env.*
+*.env
+config.toml
+config.local.*
+*.local.toml
+
+# Test and coverage artifacts
+coverage/
+test-results/
+tarpaulin-report.html
+*.profraw
+*.test
+
+# Generated documentation/build outputs
+book/
+doc/
+crates/memorose-server/static/dashboard/
+
+# Backups and temporary files
+*.bak
+*.backup
+*.tmp
+*~

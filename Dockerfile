@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.7
+
 # ---- Frontend Builder ----
 FROM node:20-alpine AS frontend-builder
 WORKDIR /usr/src/app/dashboard
@@ -17,6 +19,8 @@ RUN pnpm run build
 
 # ---- Backend Builder ----
 FROM rust:1.91.0-bookworm AS backend-builder
+ARG CARGO_REGISTRY_INDEX=""
+ARG CARGO_REGISTRY_NAME="mirror"
 
 # Install dependencies needed for compiling C/C++ libraries and Protobuf
 RUN apt-get update && apt-get install -y protobuf-compiler cmake libclang-dev && rm -rf /var/lib/apt/lists/*
@@ -27,13 +31,31 @@ COPY . .
 # Increase recursion limit for lance crate's deeply nested async blocks
 ENV RUST_MIN_STACK=8388608
 ENV RUSTUP_TOOLCHAIN=1.91.0
+ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
+ENV CARGO_NET_RETRY=10
+ENV CARGO_HTTP_TIMEOUT=600
+ENV CARGO_HTTP_MULTIPLEXING=false
+
+RUN if [ -n "${CARGO_REGISTRY_INDEX}" ]; then \
+      mkdir -p /usr/local/cargo && \
+      printf '[source.crates-io]\nreplace-with = "%s"\n\n[source.%s]\nregistry = "%s"\n' \
+        "${CARGO_REGISTRY_NAME}" "${CARGO_REGISTRY_NAME}" "${CARGO_REGISTRY_INDEX}" \
+        > /usr/local/cargo/config.toml; \
+    fi
 
 # Verify the toolchain early so LanceDB MSRV failures are obvious in Docker logs.
 RUN rustup show active-toolchain && rustc --version && cargo --version
 
+# Fetch dependencies separately so transient registry failures can reuse BuildKit cache on retry.
+RUN --mount=type=cache,id=memorose-cargo-registry-arm64,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=memorose-cargo-git-arm64,target=/usr/local/cargo/git,sharing=locked \
+    cargo fetch --locked
+
 # Build both binaries
-RUN cargo build --release -p memorose-server
-RUN cargo build --release -p memorose-gateway
+RUN --mount=type=cache,id=memorose-cargo-registry-arm64,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=memorose-cargo-git-arm64,target=/usr/local/cargo/git,sharing=locked \
+    cargo build --release --locked -p memorose-server && \
+    cargo build --release --locked -p memorose-gateway
 
 # ---- Backend Runner ----
 FROM debian:bookworm-slim AS backend-runner

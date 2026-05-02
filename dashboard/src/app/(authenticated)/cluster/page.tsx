@@ -28,37 +28,44 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 
-const RAFT_STATE_COLOR: Record<ShardStatus["raft_state"], string> = {
-  Leader: "text-success",
-  Follower: "text-primary",
-  Candidate: "text-warning",
-  Standalone: "text-success",
+const RAFT_STATE_BADGE_STYLE: Record<ShardStatus["raft_state"], string> = {
+  Leader: "border-success/20 bg-success/10 text-success",
+  Follower: "border-primary/20 bg-primary/10 text-primary",
+  Candidate: "border-warning/25 bg-warning/10 text-warning",
+  Standalone: "border-success/20 bg-success/10 text-success",
 };
 
-function RaftMetricsGrid({ data, stateColor, t }: { data: ShardStatus | ClusterStatusSingle; stateColor: string; t: ReturnType<typeof useTranslations> }) {
+function RaftMetricsGrid({ data, t }: { data: ShardStatus | ClusterStatusSingle; t: ReturnType<typeof useTranslations> }) {
+  const stateBadgeStyle = RAFT_STATE_BADGE_STYLE[data.raft_state] || "border-white/[0.055] bg-white/[0.03] text-muted-foreground";
+
   return (
     <div className="grid grid-cols-3 gap-2 mt-4">
-      <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center">
+      <div className="glass-card min-w-0 p-2 rounded-lg flex flex-col justify-center items-center">
         <span className="label-xs">{t("raft.state")}</span>
-        <span className={`text-xs font-bold uppercase mt-1 ${stateColor}`}>{data.raft_state}</span>
+        <span
+          className={`mt-1 inline-flex max-w-full items-center justify-center rounded-full border px-2 py-1 text-[10px] font-semibold leading-none ${stateBadgeStyle}`}
+          title={data.raft_state}
+        >
+          <span className="block max-w-full truncate">{data.raft_state}</span>
+        </span>
       </div>
-      <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center">
+      <div className="glass-card min-w-0 p-2 rounded-lg flex flex-col justify-center items-center">
         <span className="label-xs">{t("raft.term")}</span>
         <span className="text-xs font-mono font-bold text-foreground/80 mt-1">{data.current_term}</span>
       </div>
-      <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center">
+      <div className="glass-card min-w-0 p-2 rounded-lg flex flex-col justify-center items-center">
         <span className="label-xs">{t("raft.logIndex")}</span>
         <span className="text-xs font-mono font-bold text-foreground/80 mt-1">{data.last_log_index}</span>
       </div>
-      <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center">
+      <div className="glass-card min-w-0 p-2 rounded-lg flex flex-col justify-center items-center">
         <span className="label-xs">{t("raft.applied")}</span>
         <span className="text-xs font-mono font-bold text-foreground/80 mt-1">{data.last_applied}</span>
       </div>
-      <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center">
+      <div className="glass-card min-w-0 p-2 rounded-lg flex flex-col justify-center items-center">
         <span className="label-xs">{t("raft.lag")}</span>
         <span className={`text-xs font-mono font-bold mt-1 ${data.replication_lag > 10 ? "text-warning" : "text-success"}`}>{data.replication_lag}</span>
       </div>
-      <div className="glass-card p-2 rounded-lg flex flex-col justify-center items-center">
+      <div className="glass-card min-w-0 p-2 rounded-lg flex flex-col justify-center items-center">
         <span className="label-xs">{t("raft.voters")}</span>
         <span className="text-xs font-mono font-bold text-foreground/80 mt-1">{data.voters?.length ?? 0}</span>
       </div>
@@ -67,8 +74,6 @@ function RaftMetricsGrid({ data, stateColor, t }: { data: ShardStatus | ClusterS
 }
 
 function ShardRaftCard({ shard, t }: { shard: ShardStatus; t: ReturnType<typeof useTranslations> }) {
-  const stateColor = RAFT_STATE_COLOR[shard.raft_state] || "text-muted-foreground";
-
   const isHealthy = shard.replication_lag <= 10;
 
   return (
@@ -83,15 +88,13 @@ function ShardRaftCard({ shard, t }: { shard: ShardStatus; t: ReturnType<typeof 
         </div>
       </CardHeader>
       <CardContent className="p-4 pt-2">
-        <RaftMetricsGrid data={shard} stateColor={stateColor} t={t} />
+        <RaftMetricsGrid data={shard} t={t} />
       </CardContent>
     </Card>
   );
 }
 
 function RaftStatusCard({ cluster, t }: { cluster: ClusterStatusSingle; t: ReturnType<typeof useTranslations> }) {
-  const stateColor = RAFT_STATE_COLOR[cluster.raft_state] || "text-muted-foreground";
-
   return (
     <Card className="glass-card overflow-hidden relative">
       <CardHeader className="p-4 pb-0">
@@ -104,7 +107,7 @@ function RaftStatusCard({ cluster, t }: { cluster: ClusterStatusSingle; t: Retur
         </div>
       </CardHeader>
       <CardContent className="p-4 pt-2">
-        <RaftMetricsGrid data={cluster} stateColor={stateColor} t={t} />
+        <RaftMetricsGrid data={cluster} t={t} />
       </CardContent>
     </Card>
   );
