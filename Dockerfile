@@ -19,11 +19,25 @@ RUN pnpm run build
 
 # ---- Backend Builder ----
 FROM rust:1.91.0-bookworm AS backend-builder
-ARG CARGO_REGISTRY_INDEX=""
-ARG CARGO_REGISTRY_NAME="mirror"
+ARG APT_DEBIAN_MIRROR=""
+ARG APT_SECURITY_MIRROR=""
+ARG CARGO_BUILD_JOBS=1
 
 # Install dependencies needed for compiling C/C++ libraries and Protobuf
-RUN apt-get update && apt-get install -y protobuf-compiler cmake libclang-dev && rm -rf /var/lib/apt/lists/*
+RUN if [ -n "${APT_DEBIAN_MIRROR}" ]; then \
+      sed -i "s|http://deb.debian.org/debian|${APT_DEBIAN_MIRROR}|g" /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; \
+    fi && \
+    if [ -n "${APT_SECURITY_MIRROR}" ]; then \
+      sed -i "s|http://deb.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; \
+    fi && \
+    for attempt in 1 2 3 4 5; do \
+      apt-get update -o Acquire::Retries=5 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60 && \
+      apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev cmake libclang-dev && \
+      rm -rf /var/lib/apt/lists/* && \
+      break; \
+      if [ "${attempt}" = "5" ]; then exit 1; fi; \
+      sleep $((attempt * 5)); \
+    done
 
 WORKDIR /usr/src/app
 COPY . .
@@ -35,13 +49,7 @@ ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 ENV CARGO_NET_RETRY=10
 ENV CARGO_HTTP_TIMEOUT=600
 ENV CARGO_HTTP_MULTIPLEXING=false
-
-RUN if [ -n "${CARGO_REGISTRY_INDEX}" ]; then \
-      mkdir -p /usr/local/cargo && \
-      printf '[source.crates-io]\nreplace-with = "%s"\n\n[source.%s]\nregistry = "%s"\n' \
-        "${CARGO_REGISTRY_NAME}" "${CARGO_REGISTRY_NAME}" "${CARGO_REGISTRY_INDEX}" \
-        > /usr/local/cargo/config.toml; \
-    fi
+ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 
 # Verify the toolchain early so LanceDB MSRV failures are obvious in Docker logs.
 RUN rustup show active-toolchain && rustc --version && cargo --version
@@ -54,13 +62,28 @@ RUN --mount=type=cache,id=memorose-cargo-registry-arm64,target=/usr/local/cargo/
 # Build both binaries
 RUN --mount=type=cache,id=memorose-cargo-registry-arm64,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=memorose-cargo-git-arm64,target=/usr/local/cargo/git,sharing=locked \
-    cargo build --release --locked -p memorose-server && \
-    cargo build --release --locked -p memorose-gateway
+    cargo build --release --locked --jobs "${CARGO_BUILD_JOBS}" -p memorose-server && \
+    cargo build --release --locked --jobs "${CARGO_BUILD_JOBS}" -p memorose-gateway
 
 # ---- Backend Runner ----
 FROM debian:bookworm-slim AS backend-runner
+ARG APT_DEBIAN_MIRROR=""
+ARG APT_SECURITY_MIRROR=""
 
-RUN apt-get update && apt-get install -y ca-certificates openssl && rm -rf /var/lib/apt/lists/*
+RUN if [ -n "${APT_DEBIAN_MIRROR}" ]; then \
+      sed -i "s|http://deb.debian.org/debian|${APT_DEBIAN_MIRROR}|g" /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; \
+    fi && \
+    if [ -n "${APT_SECURITY_MIRROR}" ]; then \
+      sed -i "s|http://deb.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; \
+    fi && \
+    for attempt in 1 2 3 4 5; do \
+      apt-get update -o Acquire::Retries=5 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60 && \
+      apt-get install -y --no-install-recommends ca-certificates openssl && \
+      rm -rf /var/lib/apt/lists/* && \
+      break; \
+      if [ "${attempt}" = "5" ]; then exit 1; fi; \
+      sleep $((attempt * 5)); \
+    done
 
 WORKDIR /app
 
@@ -97,9 +120,24 @@ CMD ["node", "server/standalone-server.js"]
 
 # ---- Unified Runner (Default for `docker run`) ----
 FROM node:20-bookworm-slim AS unified-runner
+ARG APT_DEBIAN_MIRROR=""
+ARG APT_SECURITY_MIRROR=""
 
 # Install SSL certs (needed for Rust HTTP requests)
-RUN apt-get update && apt-get install -y ca-certificates openssl && rm -rf /var/lib/apt/lists/*
+RUN if [ -n "${APT_DEBIAN_MIRROR}" ]; then \
+      sed -i "s|http://deb.debian.org/debian|${APT_DEBIAN_MIRROR}|g" /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; \
+    fi && \
+    if [ -n "${APT_SECURITY_MIRROR}" ]; then \
+      sed -i "s|http://deb.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; \
+    fi && \
+    for attempt in 1 2 3 4 5; do \
+      apt-get update -o Acquire::Retries=5 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60 && \
+      apt-get install -y --no-install-recommends ca-certificates openssl && \
+      rm -rf /var/lib/apt/lists/* && \
+      break; \
+      if [ "${attempt}" = "5" ]; then exit 1; fi; \
+      sleep $((attempt * 5)); \
+    done
 
 WORKDIR /app
 

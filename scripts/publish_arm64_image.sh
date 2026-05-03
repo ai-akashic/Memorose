@@ -20,6 +20,8 @@ MERGE=true
 LOAD=false
 TARGET="unified-runner"
 BUILDER="${BUILDER_NAME:-memorose-arm64}"
+APT_DEBIAN_MIRROR="${APT_DEBIAN_MIRROR:-http://mirrors.tuna.tsinghua.edu.cn/debian}"
+APT_SECURITY_MIRROR="${APT_SECURITY_MIRROR:-http://mirrors.tuna.tsinghua.edu.cn/debian-security}"
 
 log_info() {
     printf '%s\n' "${BLUE}==>${NC} $*"
@@ -54,8 +56,9 @@ Options:
 
 Environment:
   BUILDER_NAME         Overrides the Buildx builder name
-  CARGO_REGISTRY_INDEX Optional Cargo registry mirror, e.g. sparse+https://rsproxy.cn/index/
-  CARGO_REGISTRY_NAME  Optional Cargo source name for the mirror, default: mirror
+  APT_DEBIAN_MIRROR   Debian mirror, default: http://mirrors.tuna.tsinghua.edu.cn/debian
+  APT_SECURITY_MIRROR Debian security mirror, default: http://mirrors.tuna.tsinghua.edu.cn/debian-security
+  CARGO_BUILD_JOBS    Optional Cargo parallel jobs in Docker, default: 1
 
 Notes:
   - The amd64 workflow publishes matching tags with the suffix -amd64.
@@ -86,6 +89,16 @@ trim() {
     local value="$1"
     value="${value#"${value%%[![:space:]]*}"}"
     value="${value%"${value##*[![:space:]]}"}"
+    printf '%s' "${value}"
+}
+
+normalize_apt_mirror() {
+    local value="$1"
+    value="$(trim "${value}")"
+    if [[ "${value}" == https://* ]]; then
+        log_warn "Converting apt mirror to http because base images may not have CA certificates yet: ${value}"
+        value="http://${value#https://}"
+    fi
     printf '%s' "${value}"
 }
 
@@ -144,9 +157,16 @@ build_arm64() {
         exit 1
     fi
 
-    if [[ -n "${CARGO_REGISTRY_INDEX:-}" ]]; then
-        build_args+=(--build-arg "CARGO_REGISTRY_INDEX=${CARGO_REGISTRY_INDEX}")
-        build_args+=(--build-arg "CARGO_REGISTRY_NAME=${CARGO_REGISTRY_NAME:-mirror}")
+    if [[ -n "${APT_DEBIAN_MIRROR:-}" ]]; then
+        build_args+=(--build-arg "APT_DEBIAN_MIRROR=$(normalize_apt_mirror "${APT_DEBIAN_MIRROR}")")
+    fi
+
+    if [[ -n "${APT_SECURITY_MIRROR:-}" ]]; then
+        build_args+=(--build-arg "APT_SECURITY_MIRROR=$(normalize_apt_mirror "${APT_SECURITY_MIRROR}")")
+    fi
+
+    if [[ -n "${CARGO_BUILD_JOBS:-}" ]]; then
+        build_args+=(--build-arg "CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}")
     fi
 
     build_args+=("${CONTEXT_DIR}")
