@@ -46,7 +46,9 @@ export function LoginForm() {
                             </Label>
                             <Input
                                 id="username"
+                                name="username"
                                 type="text"
+                                autoComplete="username"
                                 placeholder="admin"
                                 value={username}
                                 onChange={(e) => setUsername(e.target.value)}
@@ -60,7 +62,9 @@ export function LoginForm() {
                             </Label>
                             <Input
                                 id="password"
+                                name="password"
                                 type="password"
+                                autoComplete="current-password"
                                 placeholder="••••••••"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
@@ -71,6 +75,7 @@ export function LoginForm() {
 
                         {error && (
                             <motion.div 
+                                role="alert"
                                 initial={{ opacity: 0, height: 0 }} 
                                 animate={{ opacity: 1, height: "auto" }}
                                 className="flex items-center gap-2 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive border border-destructive/20 shadow-[0_0_15px_rgba(220,38,38,0.1)]"

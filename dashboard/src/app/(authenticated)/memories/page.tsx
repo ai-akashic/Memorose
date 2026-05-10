@@ -393,7 +393,8 @@ function SearchPlayground({
               <SelectItem value="vector">{t("search.vector")}</SelectItem>
             </SelectContent>
           </Select>
-          <Button type="submit" disabled={loading} size="icon" className="shrink-0">
+          <Button type="submit" disabled={loading} size="icon" aria-label={t("search.submit")} className="shrink-0">
+            <span className="sr-only">{t("search.submit")}</span>
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
           </Button>
         </div>
@@ -518,6 +519,19 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
     }
   }, []);
 
+  const handleOpenDetail = useCallback((memory: { id: string; item_type?: string }, event?: React.SyntheticEvent) => {
+    if (memory.item_type === "event") return;
+
+    if (event && "target" in event) {
+      const target = event.target;
+      if (target instanceof HTMLElement && target.closest("button,a,input,select,textarea")) {
+        return;
+      }
+    }
+
+    handleViewDetail(memory.id);
+  }, [handleViewDetail]);
+
   return (
     <div className="space-y-4">
       {/* Filters */}
@@ -594,7 +608,16 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
                 return (
                   <TableRow
                     key={m.id}
-                    onClick={() => {
+                    role={canOpenDetail ? "button" : undefined}
+                    tabIndex={canOpenDetail ? 0 : undefined}
+                    aria-label={canOpenDetail ? t("actions.openDetail") : undefined}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        handleOpenDetail(m, event);
+                      }
+                    }}
+                    onClick={(event) => {
                       const selection = window.getSelection();
                       const selectingText =
                         !!selection &&
@@ -602,9 +625,7 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
                         selection.toString().trim().length > 0;
                       if (selectingText) return;
 
-                      if (canOpenDetail) {
-                        handleViewDetail(m.id);
-                      }
+                      handleOpenDetail(m, event);
                     }}
                     className={`transition-colors duration-150 ${canOpenDetail ? "cursor-pointer group hover:bg-white/[0.025]" : "opacity-95"}`}
                   >
@@ -658,6 +679,7 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
               <Button
                 variant="ghost"
                 size="icon"
+                aria-label={t("pagination.previous")}
                 onClick={() => setPage(Math.max(1, page - 1))}
                 disabled={page === 1}
               >
@@ -666,6 +688,7 @@ function MemoryListTab({ userId, orgId }: { userId?: string; orgId?: string }) {
               <Button
                 variant="ghost"
                 size="icon"
+                aria-label={t("pagination.next")}
                 onClick={() => setPage(page + 1)}
                 disabled={page * 20 >= memories.total}
               >

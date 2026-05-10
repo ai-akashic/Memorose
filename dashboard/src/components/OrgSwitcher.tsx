@@ -173,11 +173,21 @@ export function OrgSwitcher({ collapsed }: { collapsed?: boolean }) {
                     {error}
                   </div>
                 ) : null}
-                <div className="flex gap-2">
-                  <Button type="button" onClick={() => setShowCreateForm(false)} variant="outline" className="w-1/3">
-                    {t("switcher.cancel", { fallback: "Cancel" })}
+                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.45fr)]">
+                  <Button
+                    type="button"
+                    onClick={() => setShowCreateForm(false)}
+                    variant="outline"
+                    className="min-h-9 w-full whitespace-normal px-3 text-center leading-tight"
+                  >
+                    {t("switcher.cancel")}
                   </Button>
-                  <Button type="button" onClick={handleCreate} disabled={creating} className="flex-1">
+                  <Button
+                    type="button"
+                    onClick={handleCreate}
+                    disabled={creating}
+                    className="min-h-9 w-full whitespace-normal px-3 text-center leading-tight"
+                  >
                     {creating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
                     {t("switcher.createAndSwitch")}
                   </Button>

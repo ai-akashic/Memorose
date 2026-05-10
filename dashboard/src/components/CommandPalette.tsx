@@ -10,12 +10,18 @@ export function CommandPalette() {
   const [open, setOpen] = React.useState(false);
   const router = useRouter();
   const t = useTranslations("CommandPalette");
+  const previousFocusRef = React.useRef<HTMLElement | null>(null);
 
   React.useEffect(() => {
     const down = (e: KeyboardEvent) => {
       if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
-        setOpen((open) => !open);
+        setOpen((currentOpen) => {
+          if (!currentOpen) {
+            previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          }
+          return !currentOpen;
+        });
       }
     };
 
@@ -31,11 +37,28 @@ export function CommandPalette() {
     []
   );
 
+  const closePalette = React.useCallback(() => {
+    setOpen(false);
+    window.requestAnimationFrame(() => previousFocusRef.current?.focus());
+  }, []);
+
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-[20vh] bg-background/50 backdrop-blur-sm" onClick={() => setOpen(false)}>
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center pt-[20vh] bg-background/50 backdrop-blur-sm"
+      onClick={closePalette}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          closePalette();
+        }
+      }}
+    >
       <Command 
+        role="dialog"
+        aria-modal="true"
+        aria-label={t("ariaLabel")}
         className="w-[600px] max-w-full rounded-xl glass-card overflow-hidden border border-white/[0.05] bg-card/80 animate-in fade-in zoom-in-95 duration-200" 
         onClick={(e) => e.stopPropagation()}
         loop

@@ -104,9 +104,6 @@ export default function AuthenticatedLayout({
                     <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/65">
                       Memorose
                     </p>
-                    <p className="truncate text-sm font-semibold leading-5 tracking-tight text-foreground/90">
-                      Control
-                    </p>
                   </div>
                 </div>
               )}
@@ -169,6 +166,7 @@ export default function AuthenticatedLayout({
                   <Button
                     variant="ghost"
                     size="sm"
+                    aria-label={collapsed ? tLayout("expandSidebar") : tLayout("collapseSidebar")}
                     onClick={() => setCollapsed(!collapsed)}
                     className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-white/[0.06]"
                   >
@@ -181,6 +179,7 @@ export default function AuthenticatedLayout({
                   <Button
                     variant="ghost"
                     size="sm"
+                    aria-label={collapsed ? tLayout("expandSidebar") : tLayout("collapseSidebar")}
                     onClick={() => setCollapsed(!collapsed)}
                     className="h-8 w-full justify-center px-0 text-muted-foreground hover:text-foreground hover:bg-white/[0.06]"
                   >

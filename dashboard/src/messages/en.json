@@ -10,13 +10,17 @@
     "logout": "Logout"
   },
   "Layout": {
-    "loading": "Loading..."
+    "loading": "Loading...",
+    "collapseSidebar": "Collapse sidebar",
+    "expandSidebar": "Expand sidebar"
   },
   "LocaleSwitcher": {
+    "ariaLabel": "Switch language",
     "en": "English",
     "zh": "中文"
   },
   "CommandPalette": {
+    "ariaLabel": "Command palette",
     "placeholder": "Type a command or search...",
     "empty": "No results found.",
     "navigation": "Navigation",
@@ -137,13 +141,16 @@
       "accessCount": "ACCESS"
     },
     "pagination": {
-      "showing": "Showing {from}-{to} of {total}"
+      "showing": "Showing {from}-{to} of {total}",
+      "previous": "Previous page",
+      "next": "Next page"
     },
     "actions": {
       "view": "view",
       "collapse": "collapse",
       "copy": "copy",
-      "copied": "copied!"
+      "copied": "copied!",
+      "openDetail": "Open memory detail"
     },
     "empty": "No memories found",
     "types": {
@@ -164,6 +171,7 @@
     },
     "search": {
       "placeholder": "Search memories…",
+      "submit": "Search memories",
       "userIdPlaceholder": "user_id (required)",
       "hybrid": "Hybrid",
       "text": "Text",
@@ -321,7 +329,8 @@
       "ariaLabel": "Switch organization",
       "description": "The active organization controls which streams and shared organization knowledge you are viewing.",
       "createTitle": "Create Organization",
-      "createAndSwitch": "Create And Switch",
+      "cancel": "Cancel",
+      "createAndSwitch": "Create and switch",
       "errorOrgIdRequired": "org_id is required",
       "errorCreateFailed": "Failed to create organization"
     },

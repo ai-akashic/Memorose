@@ -42,6 +42,7 @@ import {
 import { motion } from "framer-motion";
 import { useTranslations } from "next-intl";
 import { DashboardHero } from "@/components/dashboard-chrome";
+import { formatDateTime } from "@/lib/utils";
 
 const sectionIcon: Record<string, React.ElementType> = {
   Raft: Server,
@@ -119,17 +120,19 @@ function PasswordForm({ onSuccess }: { onSuccess?: () => void }) {
   return (
     <form onSubmit={handleSubmit} className="space-y-4 py-2">
       {[
-        { id: "current-pw", label: t("security.currentPassword"), value: current, onChange: setCurrent },
-        { id: "new-pw", label: t("security.newPassword"), value: newPw, onChange: setNewPw },
-        { id: "confirm-pw", label: t("security.confirmPassword"), value: confirm, onChange: setConfirm },
-      ].map(({ id, label, value, onChange }) => (
+        { id: "current-pw", name: "current-password", autoComplete: "current-password", label: t("security.currentPassword"), value: current, onChange: setCurrent },
+        { id: "new-pw", name: "new-password", autoComplete: "new-password", label: t("security.newPassword"), value: newPw, onChange: setNewPw },
+        { id: "confirm-pw", name: "confirm-password", autoComplete: "new-password", label: t("security.confirmPassword"), value: confirm, onChange: setConfirm },
+      ].map(({ id, name, autoComplete, label, value, onChange }) => (
         <div key={id} className="space-y-1.5">
           <Label htmlFor={id} className="label-xs">
             {label}
           </Label>
           <Input
             id={id}
+            name={name}
             type="password"
+            autoComplete={autoComplete}
             value={value}
             onChange={(e) => onChange(e.target.value)}
             required
@@ -139,6 +142,8 @@ function PasswordForm({ onSuccess }: { onSuccess?: () => void }) {
       ))}
       {message && (
         <motion.div
+          role={message.type === "error" ? "alert" : "status"}
+          aria-live={message.type === "error" ? "assertive" : "polite"}
           initial={{ opacity: 0, scale: 0.98 }}
           animate={{ opacity: 1, scale: 1 }}
           className={`flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-medium ${
@@ -264,7 +269,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="relative mx-auto w-full max-w-4xl space-y-8 pb-12">
+    <div className="relative mx-auto w-full max-w-4xl space-y-8 pb-12 lg:mx-0">
       <DashboardHero
         icon={SettingsIcon}
         kicker={t("title")}
@@ -372,6 +377,8 @@ export default function SettingsPage() {
                   </Label>
                   <Input
                     id="api-key-name"
+                    name="api-key-name"
+                    autoComplete="off"
                     value={createKeyName}
                     onChange={(e) => setCreateKeyName(e.target.value)}
                     placeholder={t("apiKeys.namePlaceholder")}
@@ -394,6 +401,8 @@ export default function SettingsPage() {
 
         {apiKeyMessage && (
           <div
+            role={apiKeyMessage.type === "error" ? "alert" : "status"}
+            aria-live={apiKeyMessage.type === "error" ? "assertive" : "polite"}
             className={`flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-medium ${
               apiKeyMessage.type === "success"
                 ? "border-success/20 bg-success/10 text-success"
@@ -406,7 +415,7 @@ export default function SettingsPage() {
         )}
 
         {createdApiKey && (
-          <Card className="glass-card border-primary/20 bg-primary/5 p-5">
+          <Card role="status" aria-live="polite" className="glass-card border-primary/20 bg-primary/5 p-5">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div className="space-y-2">
                 <div className="text-[10px] font-semibold uppercase tracking-wider text-primary">
@@ -472,7 +481,7 @@ export default function SettingsPage() {
                       </div>
                       <div>
                         <div className="text-[10px] uppercase tracking-wider">{t("apiKeys.createdAtLabel")}</div>
-                        <div className="mt-1 text-foreground">{new Date(apiKey.created_at).toLocaleString()}</div>
+                        <div className="mt-1 text-foreground">{formatDateTime(apiKey.created_at)}</div>
                       </div>
                     </div>
                   </div>

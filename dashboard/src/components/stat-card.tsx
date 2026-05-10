@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { formatNumber } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 
 const COLOR_GRADIENTS: Record<string, string> = {
   "text-primary": "from-transparent to-transparent",
@@ -15,8 +15,15 @@ const COLOR_GRADIENTS: Record<string, string> = {
 
 function NumberTicker({ value }: { value: number }) {
   const [displayValue, setDisplayValue] = useState(0);
+  const shouldReduceMotion = useReducedMotion();
+  const frameRef = useRef<number | null>(null);
 
   useEffect(() => {
+    if (shouldReduceMotion) {
+      setDisplayValue(value);
+      return;
+    }
+
     let startTimestamp: number | null = null;
     const duration = 1000;
     const startValue = displayValue;
@@ -28,12 +35,18 @@ function NumberTicker({ value }: { value: number }) {
       const current = Math.floor(startValue + (value - startValue) * easeOutQuart);
       setDisplayValue(current);
       if (progress < 1) {
-        window.requestAnimationFrame(step);
+        frameRef.current = window.requestAnimationFrame(step);
       }
     };
-    window.requestAnimationFrame(step);
+    frameRef.current = window.requestAnimationFrame(step);
+
+    return () => {
+      if (frameRef.current !== null) {
+        window.cancelAnimationFrame(frameRef.current);
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
+  }, [shouldReduceMotion, value]);
 
   return <span>{formatNumber(displayValue)}</span>;
 }
