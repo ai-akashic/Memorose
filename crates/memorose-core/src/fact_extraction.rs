@@ -3226,6 +3226,87 @@ pub(crate) fn descriptor_from_stored_fact(fact: &StoredMemoryFact) -> Option<Mem
     )
 }
 
+/// Stable profile-slot identity for a descriptor: drops the value and
+/// change-type segments of [`crate::engine::MemoroseEngine::memory_fact_descriptor_key`]
+/// so a single `(subject, attribute)` pair maps to exactly one slot that can hold
+/// multiple ranked values. Built from the stable label functions (not enum
+/// `Debug`) so the persisted key never shifts if a variant is renamed/reordered.
+pub(crate) fn profile_slot_key(descriptor: &MemoryFactDescriptor) -> String {
+    format!(
+        "{}|{}|{}",
+        memory_fact_subject_label(descriptor.subject),
+        descriptor.subject_key,
+        memory_fact_attribute_label(descriptor.attribute)
+    )
+}
+
+/// Single-value attributes collapse to one active value (a new incompatible value
+/// obsoletes the prior one). Everything else is multi-value by default.
+fn is_single_value_attribute(attribute: MemoryFactAttribute) -> bool {
+    matches!(
+        attribute,
+        MemoryFactAttribute::Residence
+            | MemoryFactAttribute::Employment
+            | MemoryFactAttribute::Status
+            | MemoryFactAttribute::Contact
+    )
+}
+
+/// Profile-relevant projection of a stored fact, derived once so the engine's
+/// profile module never has to touch the private fact enums.
+pub(crate) struct ProfileFactProjection {
+    pub(crate) slot_key: String,
+    pub(crate) subject_label: String,
+    pub(crate) subject_key: String,
+    pub(crate) attribute_label: String,
+    pub(crate) display_value: String,
+    pub(crate) canonical_value: String,
+    pub(crate) change_type_label: String,
+    pub(crate) confidence: f32,
+    /// Only user/agent subjects feed the user profile (external/org are out of scope).
+    pub(crate) is_user_or_agent_subject: bool,
+    pub(crate) is_historical: bool,
+    /// Negative polarity (Negation or Contradiction) — the value is being denied.
+    pub(crate) is_negative: bool,
+    pub(crate) supports_obsolete: bool,
+    pub(crate) supports_contradiction: bool,
+    pub(crate) is_single_value_attribute: bool,
+}
+
+/// Project a stored fact into the fields the profile layer needs. Returns `None`
+/// when the fact cannot be parsed into a descriptor.
+pub(crate) fn project_profile_fact(fact: &StoredMemoryFact) -> Option<ProfileFactProjection> {
+    let descriptor = descriptor_from_stored_fact(fact)?;
+    let comparison_key = descriptor.value_payload.comparison_key().to_string();
+    let canonical_value = if comparison_key.is_empty() {
+        descriptor.canonical_value.clone()
+    } else {
+        comparison_key
+    };
+    if canonical_value.is_empty() {
+        return None;
+    }
+    Some(ProfileFactProjection {
+        slot_key: profile_slot_key(&descriptor),
+        subject_label: memory_fact_subject_label(descriptor.subject).to_string(),
+        subject_key: descriptor.subject_key.clone(),
+        attribute_label: memory_fact_attribute_label(descriptor.attribute).to_string(),
+        display_value: descriptor.value.clone(),
+        canonical_value,
+        change_type_label: memory_fact_change_type_label(descriptor.change_type).to_string(),
+        confidence: descriptor.confidence as f32 / 100.0,
+        is_user_or_agent_subject: matches!(
+            descriptor.subject,
+            MemoryFactSubject::User | MemoryFactSubject::Agent
+        ),
+        is_historical: matches!(descriptor.change_type, MemoryFactChangeType::Historical),
+        is_negative: derived_polarity(descriptor.change_type) == "negative",
+        supports_obsolete: fact_change_supports_obsolete(descriptor.change_type),
+        supports_contradiction: fact_change_supports_contradiction(descriptor.change_type),
+        is_single_value_attribute: is_single_value_attribute(descriptor.attribute),
+    })
+}
+
 pub(crate) fn stored_fact_from_descriptor(descriptor: &MemoryFactDescriptor) -> StoredMemoryFact {
     StoredMemoryFact {
         subject: memory_fact_subject_label(descriptor.subject).to_string(),

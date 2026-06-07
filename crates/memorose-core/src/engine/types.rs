@@ -1,4 +1,5 @@
 use crate::arbitrator::MemoryCorrectionKind;
+use crate::engine::review_queue::ReviewStatus;
 use chrono::{DateTime, Utc};
 use memorose_common::{GraphEdge, MaterializationState, MemoryType, MemoryUnit, RelationType};
 use serde::{Deserialize, Serialize};
@@ -352,14 +353,6 @@ pub struct RacDecisionRecord {
     pub guard_reason: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum RacReviewStatus {
-    Pending,
-    Approved,
-    Rejected,
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RacReviewRecord {
     pub review_id: String,
@@ -375,7 +368,7 @@ pub struct RacReviewRecord {
     pub relation: Option<String>,
     pub reason: String,
     pub guard_reason: Option<String>,
-    pub status: RacReviewStatus,
+    pub status: ReviewStatus,
     pub reviewer: Option<String>,
     pub reviewer_note: Option<String>,
 }
@@ -433,4 +426,98 @@ pub(crate) struct OrganizationStorageReconciliationStats {
     pub(crate) reconciled_records: usize,
     pub(crate) removed_records: usize,
     pub(crate) removed_stale_source_relations: usize,
+}
+
+// ---------------------------------------------------------------------------
+// Profile memory layer
+// ---------------------------------------------------------------------------
+
+/// Outcome of attempting to promote a single L1 fact into a profile slot.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfilePromotionOutcome {
+    /// A new value was added to (or created) the slot.
+    Promoted,
+    /// An existing value was reaffirmed / updated in place.
+    Merged,
+    /// Queued for manual review (low confidence or pinned-slot conflict).
+    QueuedForReview,
+    /// Not eligible (unparsable, out-of-scope subject, below threshold).
+    Skipped,
+}
+
+/// Result of a manual profile patch. Distinguishes client-side conditions
+/// (slot/value not found) from genuine storage errors so the HTTP layer can map
+/// them to the right status code instead of collapsing everything to 400.
+pub enum ProfilePatchOutcome {
+    /// The patch was applied; carries the updated slot.
+    Applied(Box<memorose_common::ProfileSlot>),
+    /// The addressed slot does not exist.
+    SlotNotFound,
+    /// The addressed canonical value does not exist in the slot.
+    ValueNotFound { canonical_value: String },
+}
+
+/// A manual edit applied to a profile slot via the PATCH API or review approval.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case", tag = "op")]
+pub enum ProfileSlotPatch {
+    /// Force a canonical value to `Active` (creating it if absent), demoting
+    /// incompatible siblings to `Obsoleted` for single-value attributes.
+    SetActiveValue { canonical_value: String },
+    /// Mark a canonical value `Obsoleted`.
+    ObsoleteValue { canonical_value: String },
+    /// Remove a canonical value entirely.
+    RemoveValue { canonical_value: String },
+    /// Pin the slot so automatic promotion cannot obsolete its values.
+    Pin,
+    /// Unpin the slot.
+    Unpin,
+    /// Override a value's confidence.
+    SetConfidence {
+        canonical_value: String,
+        confidence: f32,
+    },
+}
+
+/// A queued profile promotion awaiting human review. Mirrors [`RacReviewRecord`]
+/// but carries the proposed slot value instead of a source/target unit pair.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProfileReviewRecord {
+    pub review_id: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub user_id: String,
+    pub org_id: Option<String>,
+    pub slot_key: String,
+    pub attribute: String,
+    pub subject: String,
+    /// Canonical subject ref (e.g. "user:self"), stored at enqueue so approval
+    /// never has to re-parse it out of `slot_key`. `default` for older records.
+    #[serde(default)]
+    pub subject_ref: Option<String>,
+    pub proposed_value: String,
+    pub proposed_canonical_value: String,
+    pub proposed_confidence: f32,
+    pub change_type: String,
+    pub source_unit_id: Uuid,
+    pub reason: String,
+    pub status: ReviewStatus,
+    pub reviewer: Option<String>,
+    pub reviewer_note: Option<String>,
+}
+
+/// Append-only audit entry recording how a profile slot changed.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProfileAuditEntry {
+    pub created_at: DateTime<Utc>,
+    pub user_id: String,
+    pub slot_key: String,
+    /// e.g. "promote", "merge", "obsolete", "negate", "patch", "review_approve".
+    pub action: String,
+    pub canonical_value: String,
+    pub confidence: f32,
+    pub change_type: String,
+    pub source_unit_id: Option<Uuid>,
+    pub reason: Option<String>,
 }

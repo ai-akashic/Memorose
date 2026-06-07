@@ -13,6 +13,7 @@ import {
   MessageSquare,
   Bot,
   Building2,
+  UserCircle,
 } from "lucide-react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
@@ -46,6 +47,7 @@ export default function AuthenticatedLayout({
     { href: "/cluster/", label: t("cluster"), icon: LayoutDashboard },
     { href: "/organizations/", label: t("organizations"), icon: Building2 },
     { href: "/memories/", label: t("memories"), icon: Database },
+    { href: "/profile/", label: t("profile"), icon: UserCircle },
     { href: "/playground/", label: t("playground"), icon: MessageSquare },
     { href: "/agents/", label: t("agents"), icon: Bot },
     { href: "/metrics/", label: t("metrics"), icon: BarChart3 },

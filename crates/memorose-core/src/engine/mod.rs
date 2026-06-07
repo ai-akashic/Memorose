@@ -5,8 +5,10 @@ pub(crate) mod helpers;
 mod ingest;
 mod memory_crud;
 mod organization;
+mod profile;
 mod query_cache;
 mod reflection;
+mod review_queue;
 mod search;
 mod snapshot;
 mod task;
@@ -16,6 +18,7 @@ pub mod types;
 mod tests;
 
 // Re-export public types
+pub use review_queue::ReviewStatus;
 pub(crate) use types::ValidatedCorrectionDecision;
 pub use types::{
     OrganizationAutomationCounterSnapshot, OrganizationKnowledgeContributionEntry,
@@ -24,8 +27,9 @@ pub use types::{
     OrganizationKnowledgeMembershipRecord, OrganizationKnowledgeRecord,
     OrganizationKnowledgeSearchHit, PendingMaterializationInput, PendingMaterializationJob,
     PendingMaterializationJobStatus, PendingMaterializationPart, PlannedMemoryCorrectionAction,
-    RacDecisionEffect, RacDecisionRecord, RacMetricHistoryPoint, RacMetricSnapshot,
-    RacReviewRecord, RacReviewStatus, ReflectionBatchOutcome, ReflectionMarker, SharedSearchHit,
+    ProfileAuditEntry, ProfilePatchOutcome, ProfilePromotionOutcome, ProfileReviewRecord,
+    ProfileSlotPatch, RacDecisionEffect, RacDecisionRecord, RacMetricHistoryPoint,
+    RacMetricSnapshot, RacReviewRecord, ReflectionBatchOutcome, ReflectionMarker, SharedSearchHit,
 };
 
 use crate::arbitrator::Arbitrator;

@@ -243,6 +243,12 @@ pub struct MemoryContextRequest {
     pub audio: Option<String>,
     #[serde(default)]
     pub video: Option<String>,
+    /// When true, prepend a compact user-profile block to the assembled context.
+    #[serde(default)]
+    pub include_profile: bool,
+    /// Max active values rendered per profile slot (defaults applied per tier).
+    #[serde(default)]
+    pub profile_top_n: Option<usize>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -307,6 +313,10 @@ pub struct MemoryContextResponse {
     pub context: String,
     pub hits: Vec<MemoryContextHitView>,
     pub query_time_ms: u128,
+    #[serde(default)]
+    pub profile_included: bool,
+    #[serde(default)]
+    pub profile_token_estimate: usize,
 }
 
 pub struct RenderedMemoryContext {
@@ -351,4 +361,67 @@ pub struct UpdateTaskStatusRequest {
     pub status: memorose_common::TaskStatus,
     pub progress: Option<f32>,
     pub result_summary: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Profile memory layer
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct ProfileQuery {
+    /// Filter to a single attribute (e.g. "residence").
+    #[serde(default)]
+    pub attribute: Option<String>,
+    /// Include obsoleted/negated/historical values in each slot.
+    #[serde(default)]
+    pub include_inactive: bool,
+}
+
+#[derive(Serialize)]
+pub struct ProfileResponse {
+    pub user_id: String,
+    pub slots: Vec<memorose_common::ProfileSlot>,
+    pub slot_count: usize,
+}
+
+/// Manual profile edit. `op` selects the action; remaining fields are
+/// interpreted per-op (see [`memorose_core::ProfileSlotPatch`]).
+#[derive(Deserialize)]
+pub struct ProfilePatchRequest {
+    pub slot_key: String,
+    pub op: String,
+    #[serde(default)]
+    pub canonical_value: Option<String>,
+    #[serde(default)]
+    pub confidence: Option<f32>,
+}
+
+#[derive(Serialize)]
+pub struct ProfilePatchResponse {
+    pub status: &'static str,
+    pub slot: Option<memorose_common::ProfileSlot>,
+}
+
+#[derive(Deserialize)]
+pub struct ProfileAuditQuery {
+    #[serde(default)]
+    pub slot_key: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Deserialize)]
+pub struct ProfileReviewListQuery {
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Deserialize)]
+pub struct ResolveProfileReviewRequest {
+    #[serde(default)]
+    pub reviewer: Option<String>,
+    #[serde(default)]
+    pub note: Option<String>,
 }

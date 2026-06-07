@@ -1,6 +1,7 @@
 use super::helpers::{
     cosine_similarity, OBSOLETE_ACTION_MIN_CONFIDENCE, OBSOLETE_ACTION_RELATION_ONLY_MIN_CONFIDENCE,
 };
+use super::review_queue::{ResolveStart, ReviewStatus};
 use super::types::*;
 use crate::arbitrator::{ExtractedMemoryFact, MemoryCorrectionAction, MemoryCorrectionKind};
 use crate::fact_extraction::{self, MemoryFactChangeType, MemoryFactDescriptor};
@@ -470,10 +471,6 @@ impl super::MemoroseEngine {
         )
     }
 
-    pub(crate) fn rac_review_key(review_id: &str) -> String {
-        format!("rac_review:{}", review_id)
-    }
-
     pub(crate) fn rac_metric_bucket_start(now: DateTime<Utc>) -> DateTime<Utc> {
         now.with_minute(0)
             .and_then(|dt| dt.with_second(0))
@@ -595,14 +592,11 @@ impl super::MemoroseEngine {
             relation: record.relation.clone(),
             reason: record.reason.clone(),
             guard_reason: record.guard_reason.clone(),
-            status: RacReviewStatus::Pending,
+            status: ReviewStatus::Pending,
             reviewer: None,
             reviewer_note: None,
         };
-        self.system_kv().put(
-            Self::rac_review_key(&review.review_id).as_bytes(),
-            &serde_json::to_vec(&review)?,
-        )?;
+        self.store_review(&review)?;
         Ok(Some(review))
     }
 
@@ -1123,56 +1117,17 @@ impl super::MemoroseEngine {
     }
 
     pub fn get_rac_review(&self, review_id: &str) -> Result<Option<RacReviewRecord>> {
-        let key = Self::rac_review_key(review_id);
-        Ok(self
-            .system_kv()
-            .get(key.as_bytes())?
-            .and_then(|bytes| serde_json::from_slice::<RacReviewRecord>(&bytes).ok()))
+        self.get_review::<RacReviewRecord>(review_id)
     }
 
     pub fn list_rac_reviews(
         &self,
-        status_filter: Option<RacReviewStatus>,
+        status_filter: Option<ReviewStatus>,
         user_id_filter: Option<&str>,
         org_id_filter: Option<&str>,
         limit: usize,
     ) -> Result<Vec<RacReviewRecord>> {
-        if limit == 0 {
-            return Ok(Vec::new());
-        }
-
-        let mut records = self
-            .system_kv()
-            .scan(b"rac_review:")?
-            .into_iter()
-            .filter_map(|(_, value)| serde_json::from_slice::<RacReviewRecord>(&value).ok())
-            .filter(|record| {
-                status_filter
-                    .as_ref()
-                    .map_or(true, |status| &record.status == status)
-            })
-            .filter(|record| user_id_filter.map_or(true, |user_id| record.user_id == user_id))
-            .filter(|record| {
-                org_id_filter.map_or(true, |org_id| record.org_id.as_deref() == Some(org_id))
-            })
-            .collect::<Vec<_>>();
-
-        records.sort_by(|left, right| {
-            right
-                .created_at
-                .cmp(&left.created_at)
-                .then_with(|| right.source_unit_id.cmp(&left.source_unit_id))
-                .then_with(|| right.target_unit_id.cmp(&left.target_unit_id))
-        });
-        records.truncate(limit);
-        Ok(records)
-    }
-
-    pub(crate) fn store_rac_review(&self, review: &RacReviewRecord) -> Result<()> {
-        self.system_kv().put(
-            Self::rac_review_key(&review.review_id).as_bytes(),
-            &serde_json::to_vec(review)?,
-        )
+        self.list_reviews::<RacReviewRecord>(status_filter, user_id_filter, org_id_filter, limit)
     }
 
     pub async fn apply_manual_memory_correction(
@@ -1212,12 +1167,12 @@ impl super::MemoroseEngine {
         reviewer: Option<String>,
         reviewer_note: Option<String>,
     ) -> Result<Option<RacReviewRecord>> {
-        let Some(mut review) = self.get_rac_review(review_id)? else {
-            return Ok(None);
+        let mut review = match self.begin_resolve_review::<RacReviewRecord>(review_id, None)? {
+            ResolveStart::NotFound => return Ok(None),
+            ResolveStart::AlreadyResolved(review) => return Ok(Some(review)),
+            ResolveStart::Pending(review) => review,
         };
-        if review.status != RacReviewStatus::Pending {
-            return Ok(Some(review));
-        }
+        let now = Utc::now();
 
         if approve {
             let kind = match review.action.as_str() {
@@ -1244,15 +1199,9 @@ impl super::MemoroseEngine {
                 "review_approve",
             )
             .await?;
-            review.status = RacReviewStatus::Approved;
-        } else {
-            review.status = RacReviewStatus::Rejected;
         }
 
-        review.updated_at = Utc::now();
-        review.reviewer = reviewer;
-        review.reviewer_note = reviewer_note;
-        self.store_rac_review(&review)?;
+        self.finish_resolve_review(&mut review, approve, reviewer, reviewer_note, now)?;
         Ok(Some(review))
     }
 }

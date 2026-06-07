@@ -1711,6 +1711,32 @@ impl BackgroundWorker {
 
         units.retain(|unit| !removed_ids.contains(&unit.id));
 
+        // Promote eligible L1 facts into the user profile layer. RAC-tombstoned
+        // units were just removed above, so only survivors contribute. Failures
+        // are logged and skipped — profile promotion must never block storage.
+        let promote_now = chrono::Utc::now();
+        for unit in units.iter() {
+            if unit.level != 1
+                || unit.memory_type != memorose_common::MemoryType::Factual
+                || !matches!(
+                    unit.domain,
+                    memorose_common::MemoryDomain::Agent | memorose_common::MemoryDomain::User
+                )
+                || unit.extracted_facts.is_empty()
+            {
+                continue;
+            }
+            if let Err(error) = self.engine.upsert_profile_facts(
+                &unit.user_id,
+                unit.org_id.as_deref(),
+                &unit.extracted_facts,
+                unit.id,
+                promote_now,
+            ) {
+                tracing::warn!("profile promotion failed for unit {}: {:?}", unit.id, error);
+            }
+        }
+
         let surviving_ids = units.iter().map(|unit| unit.id).collect::<HashSet<_>>();
         staged_edges.retain(|edge| {
             surviving_ids.contains(&edge.source_id) && surviving_ids.contains(&edge.target_id)
@@ -4031,6 +4057,95 @@ mod tests {
         let l1s = engine.fetch_recent_l1_units(TEST_USER, 10).await?;
         assert_eq!(l1s.len(), 1);
         assert_eq!(l1s[0].content, "I now live in Beijing");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_profile_evolves_on_contradictory_ingest() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let stream_id = Uuid::new_v4();
+
+        let engine = MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true)
+            .await?
+            .with_arbitrator(crate::arbitrator::Arbitrator::with_client(Arc::new(
+                ContextAwareCorrectionLLM,
+            )));
+
+        let mut worker = BackgroundWorker::new(engine.clone());
+        worker.llm_client = Some(Arc::new(MockLLM {
+            fail_compress: false,
+            generate_response: None,
+        }));
+
+        // Cycle 1: establish residence = Shanghai.
+        worker
+            .process_pipeline_batch(vec![(
+                vec![Uuid::new_v4()],
+                TEST_USER.into(),
+                stream_id,
+                "I live in Shanghai".into(),
+                None,
+                Vec::new(),
+                serde_json::json!({}),
+                None,
+            )])
+            .await?;
+
+        let residence = engine
+            .list_profile_slots(TEST_USER)?
+            .into_iter()
+            .find(|slot| slot.attribute == "residence")
+            .expect("residence slot promoted after first ingest");
+        let active: Vec<_> = residence
+            .active_values()
+            .map(|v| v.canonical_value.clone())
+            .collect();
+        assert_eq!(active, vec!["shanghai".to_string()]);
+
+        // Cycle 2: user moves to Beijing.
+        worker
+            .process_pipeline_batch(vec![(
+                vec![Uuid::new_v4()],
+                TEST_USER.into(),
+                stream_id,
+                "I now live in Beijing".into(),
+                None,
+                Vec::new(),
+                serde_json::json!({}),
+                None,
+            )])
+            .await?;
+
+        let residence = engine
+            .list_profile_slots(TEST_USER)?
+            .into_iter()
+            .find(|slot| slot.attribute == "residence")
+            .expect("residence slot present");
+        let active: Vec<_> = residence
+            .active_values()
+            .map(|v| v.canonical_value.clone())
+            .collect();
+        assert_eq!(
+            active,
+            vec!["beijing".to_string()],
+            "single-value residence collapses to the latest value"
+        );
+        let shanghai = residence
+            .values
+            .iter()
+            .find(|v| v.canonical_value == "shanghai")
+            .expect("shanghai retained for history");
+        assert_eq!(
+            shanghai.status,
+            memorose_common::ProfileValueStatus::Obsoleted
+        );
+
+        let audit = engine.list_profile_audit(TEST_USER, None, 20)?;
+        assert!(
+            audit.iter().any(|e| e.canonical_value == "beijing"),
+            "audit records the beijing promotion"
+        );
 
         Ok(())
     }

@@ -2953,8 +2953,7 @@ async fn test_apply_memory_correction_actions_downgrades_medium_confidence_obsol
         Some("obsolete_relation_only_due_to_confidence")
     );
 
-    let reviews =
-        engine.list_rac_reviews(Some(RacReviewStatus::Pending), Some(TEST_USER), None, 8)?;
+    let reviews = engine.list_rac_reviews(Some(ReviewStatus::Pending), Some(TEST_USER), None, 8)?;
     let review = reviews
         .into_iter()
         .find(|review| {
@@ -2964,7 +2963,7 @@ async fn test_apply_memory_correction_actions_downgrades_medium_confidence_obsol
         })
         .expect("expected pending rac review record");
     assert_eq!(review.stage, "post_store");
-    assert_eq!(review.status, RacReviewStatus::Pending);
+    assert_eq!(review.status, ReviewStatus::Pending);
     assert_eq!(
         review.guard_reason.as_deref(),
         Some("obsolete_relation_only_due_to_confidence")
@@ -3020,7 +3019,7 @@ async fn test_resolve_rac_review_approval_tombstones_target() -> Result<()> {
         .await?;
 
     let review = engine
-        .list_rac_reviews(Some(RacReviewStatus::Pending), Some(TEST_USER), None, 8)?
+        .list_rac_reviews(Some(ReviewStatus::Pending), Some(TEST_USER), None, 8)?
         .into_iter()
         .find(|review| review.source_unit_id == new_id && review.target_unit_id == old_id)
         .expect("expected pending review");
@@ -3035,7 +3034,7 @@ async fn test_resolve_rac_review_approval_tombstones_target() -> Result<()> {
         .await?
         .expect("review should resolve");
 
-    assert_eq!(resolved.status, RacReviewStatus::Approved);
+    assert_eq!(resolved.status, ReviewStatus::Approved);
     assert_eq!(resolved.reviewer.as_deref(), Some("qa-reviewer"));
     assert_eq!(
         resolved.reviewer_note.as_deref(),
@@ -3043,7 +3042,7 @@ async fn test_resolve_rac_review_approval_tombstones_target() -> Result<()> {
     );
     assert!(engine.is_memory_unit_forgotten(TEST_USER, old_id)?);
     assert!(engine
-        .list_rac_reviews(Some(RacReviewStatus::Pending), Some(TEST_USER), None, 8)?
+        .list_rac_reviews(Some(ReviewStatus::Pending), Some(TEST_USER), None, 8)?
         .is_empty());
 
     let decisions = engine.list_recent_rac_decisions(16)?;
@@ -3108,7 +3107,7 @@ async fn test_resolve_rac_review_rejection_keeps_target_visible() -> Result<()> 
         .await?;
 
     let review = engine
-        .list_rac_reviews(Some(RacReviewStatus::Pending), Some(TEST_USER), None, 8)?
+        .list_rac_reviews(Some(ReviewStatus::Pending), Some(TEST_USER), None, 8)?
         .into_iter()
         .find(|review| review.source_unit_id == new_id && review.target_unit_id == old_id)
         .expect("expected pending review");
@@ -3123,13 +3122,13 @@ async fn test_resolve_rac_review_rejection_keeps_target_visible() -> Result<()> 
         .await?
         .expect("review should resolve");
 
-    assert_eq!(resolved.status, RacReviewStatus::Rejected);
+    assert_eq!(resolved.status, ReviewStatus::Rejected);
     assert!(!engine.is_memory_unit_forgotten(TEST_USER, old_id)?);
     assert!(engine
-        .list_rac_reviews(Some(RacReviewStatus::Pending), Some(TEST_USER), None, 8)?
+        .list_rac_reviews(Some(ReviewStatus::Pending), Some(TEST_USER), None, 8)?
         .is_empty());
     assert!(engine
-        .list_rac_reviews(Some(RacReviewStatus::Rejected), Some(TEST_USER), None, 8)?
+        .list_rac_reviews(Some(ReviewStatus::Rejected), Some(TEST_USER), None, 8)?
         .into_iter()
         .any(|review| review.review_id == resolved.review_id));
 
@@ -7127,6 +7126,508 @@ fn test_apply_token_budget_skips_oversized_item_and_keeps_later_fit() {
 
     assert_eq!(budgeted.len(), 1);
     assert_eq!(budgeted[0].0.id, small.id);
+}
+
+// ---------------------------------------------------------------------------
+// Profile memory layer
+// ---------------------------------------------------------------------------
+
+fn profile_fact(
+    attribute: &str,
+    value: &str,
+    change_type: &str,
+    confidence: f32,
+) -> StoredMemoryFact {
+    StoredMemoryFact {
+        subject: "user".into(),
+        subject_ref: Some("user:self".into()),
+        subject_name: None,
+        attribute: attribute.into(),
+        value: value.into(),
+        canonical_value: Some(value.to_ascii_lowercase()),
+        change_type: change_type.into(),
+        temporal_status: None,
+        polarity: None,
+        evidence_span: None,
+        confidence,
+    }
+}
+
+async fn new_test_engine() -> Result<(tempfile::TempDir, MemoroseEngine)> {
+    let temp_dir = tempdir()?;
+    let engine =
+        MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, true, true).await?;
+    Ok((temp_dir, engine))
+}
+
+#[tokio::test]
+async fn test_profile_slot_key_drops_value_and_change_type() -> Result<()> {
+    let berlin = profile_fact("residence", "Berlin", "reaffirm", 0.9);
+    let munich = profile_fact("residence", "Munich", "update", 0.9);
+    let proj_b = fact_extraction::project_profile_fact(&berlin).expect("berlin projects");
+    let proj_m = fact_extraction::project_profile_fact(&munich).expect("munich projects");
+    // Same (subject, attribute) -> identical slot key despite different value/change.
+    assert_eq!(proj_b.slot_key, proj_m.slot_key);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_upsert_profile_promotes_high_confidence_fact() -> Result<()> {
+    let (_dir, engine) = new_test_engine().await?;
+    let fact = profile_fact("residence", "Berlin", "reaffirm", 0.9);
+    let outcome =
+        engine.upsert_profile_slot_from_fact(TEST_USER, None, &fact, Uuid::new_v4(), Utc::now())?;
+    assert_eq!(outcome, ProfilePromotionOutcome::Promoted);
+
+    let slots = engine.list_profile_slots(TEST_USER)?;
+    assert_eq!(slots.len(), 1);
+    let active: Vec<_> = slots[0].active_values().collect();
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].canonical_value, "berlin");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_upsert_profile_multivalue_keeps_both() -> Result<()> {
+    let (_dir, engine) = new_test_engine().await?;
+    let tea = profile_fact("preference", "tea", "addition", 0.9);
+    let coffee = profile_fact("preference", "coffee", "addition", 0.9);
+    engine.upsert_profile_slot_from_fact(TEST_USER, None, &tea, Uuid::new_v4(), Utc::now())?;
+    engine.upsert_profile_slot_from_fact(TEST_USER, None, &coffee, Uuid::new_v4(), Utc::now())?;
+
+    let slots = engine.list_profile_slots(TEST_USER)?;
+    assert_eq!(slots.len(), 1, "preference is one slot");
+    let active: Vec<_> = slots[0]
+        .active_values()
+        .map(|v| v.canonical_value.clone())
+        .collect();
+    assert_eq!(active.len(), 2);
+    assert!(active.contains(&"tea".to_string()));
+    assert!(active.contains(&"coffee".to_string()));
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_upsert_profile_reaffirm_bumps_confidence_and_support() -> Result<()> {
+    let (_dir, engine) = new_test_engine().await?;
+    let fact = profile_fact("residence", "Berlin", "reaffirm", 0.7);
+    engine.upsert_profile_slot_from_fact(TEST_USER, None, &fact, Uuid::new_v4(), Utc::now())?;
+    engine.upsert_profile_slot_from_fact(TEST_USER, None, &fact, Uuid::new_v4(), Utc::now())?;
+
+    let slot = engine
+        .get_profile_slot(TEST_USER, &slot_key_for(&fact))?
+        .expect("slot exists");
+    let value = slot.active_values().next().expect("active value");
+    assert_eq!(value.support_count, 2);
+    assert!(
+        value.confidence > 0.7,
+        "confidence bumped: {}",
+        value.confidence
+    );
+    assert_eq!(value.source_unit_ids.len(), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_upsert_profile_contradiction_obsoletes_sibling_single_value_attr() -> Result<()> {
+    let (_dir, engine) = new_test_engine().await?;
+    let berlin = profile_fact("residence", "Berlin", "reaffirm", 0.9);
+    engine.upsert_profile_slot_from_fact(TEST_USER, None, &berlin, Uuid::new_v4(), Utc::now())?;
+    let munich = profile_fact("residence", "Munich", "update", 0.9);
+    engine.upsert_profile_slot_from_fact(TEST_USER, None, &munich, Uuid::new_v4(), Utc::now())?;
+
+    let slot = engine
+        .get_profile_slot(TEST_USER, &slot_key_for(&berlin))?
+        .expect("slot exists");
+    let active: Vec<_> = slot
+        .active_values()
+        .map(|v| v.canonical_value.clone())
+        .collect();
+    assert_eq!(
+        active,
+        vec!["munich".to_string()],
+        "single-value collapses to latest"
+    );
+    let berlin_value = slot
+        .values
+        .iter()
+        .find(|v| v.canonical_value == "berlin")
+        .expect("berlin retained");
+    assert_eq!(
+        berlin_value.status,
+        memorose_common::ProfileValueStatus::Obsoleted
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_upsert_profile_negation_marks_negated() -> Result<()> {
+    let (_dir, engine) = new_test_engine().await?;
+    let likes = profile_fact("preference", "coffee", "addition", 0.9);
+    engine.upsert_profile_slot_from_fact(TEST_USER, None, &likes, Uuid::new_v4(), Utc::now())?;
+    let mut stops = profile_fact("preference", "coffee", "negation", 0.9);
+    stops.polarity = Some("negative".into());
+    engine.upsert_profile_slot_from_fact(TEST_USER, None, &stops, Uuid::new_v4(), Utc::now())?;
+
+    let slot = engine
+        .get_profile_slot(TEST_USER, &slot_key_for(&likes))?
+        .expect("slot exists");
+    let value = slot
+        .values
+        .iter()
+        .find(|v| v.canonical_value == "coffee")
+        .expect("coffee value");
+    assert!(
+        matches!(
+            value.status,
+            memorose_common::ProfileValueStatus::Negated
+                | memorose_common::ProfileValueStatus::Obsoleted
+        ),
+        "negated/obsoleted, got {:?}",
+        value.status
+    );
+    assert_eq!(slot.active_values().count(), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_upsert_profile_low_confidence_queues_review() -> Result<()> {
+    let (_dir, engine) = new_test_engine().await?;
+    let fact = profile_fact("preference", "tea", "addition", 0.40);
+    let outcome =
+        engine.upsert_profile_slot_from_fact(TEST_USER, None, &fact, Uuid::new_v4(), Utc::now())?;
+    assert_eq!(outcome, ProfilePromotionOutcome::QueuedForReview);
+
+    let reviews = engine.list_profile_reviews(None, Some(TEST_USER), None, 10)?;
+    assert_eq!(reviews.len(), 1);
+    assert_eq!(reviews[0].proposed_canonical_value, "tea");
+    // No active value yet.
+    let slot = engine
+        .get_profile_slot(TEST_USER, &slot_key_for(&fact))?
+        .expect("slot exists");
+    assert_eq!(slot.active_values().count(), 0);
+    assert_eq!(slot.state, memorose_common::ProfileSlotState::PendingReview);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_resolve_profile_review_approve_applies_value() -> Result<()> {
+    let (_dir, engine) = new_test_engine().await?;
+    let fact = profile_fact("preference", "tea", "addition", 0.40);
+    engine.upsert_profile_slot_from_fact(TEST_USER, None, &fact, Uuid::new_v4(), Utc::now())?;
+    let reviews = engine.list_profile_reviews(None, Some(TEST_USER), None, 10)?;
+    let review_id = reviews[0].review_id.clone();
+
+    let resolved = engine
+        .resolve_profile_review(TEST_USER, &review_id, true, Some("admin".into()), None)
+        .await?
+        .expect("review resolved");
+    assert_eq!(resolved.status, ReviewStatus::Approved);
+
+    let slot = engine
+        .get_profile_slot(TEST_USER, &slot_key_for(&fact))?
+        .expect("slot exists");
+    let active: Vec<_> = slot
+        .active_values()
+        .map(|v| v.canonical_value.clone())
+        .collect();
+    assert_eq!(active, vec!["tea".to_string()]);
+    assert_eq!(slot.state, memorose_common::ProfileSlotState::Stable);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_upsert_profile_negative_unseen_value_never_active() -> Result<()> {
+    let (_dir, engine) = new_test_engine().await?;
+    // "I don't like cilantro" — a preference negation of a value never recorded.
+    // It must NOT materialize an Active preference for cilantro.
+    let mut dislike = profile_fact("preference", "cilantro", "negation", 0.9);
+    dislike.polarity = Some("negative".into());
+    engine.upsert_profile_slot_from_fact(TEST_USER, None, &dislike, Uuid::new_v4(), Utc::now())?;
+
+    let slot = engine
+        .get_profile_slot(TEST_USER, &slot_key_for(&dislike))?
+        .expect("slot exists");
+    assert_eq!(
+        slot.active_values().count(),
+        0,
+        "denial must not create active value"
+    );
+    let cilantro = slot
+        .values
+        .iter()
+        .find(|v| v.canonical_value == "cilantro")
+        .expect("cilantro recorded");
+    assert_ne!(cilantro.status, memorose_common::ProfileValueStatus::Active);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_resolve_profile_review_rejects_cross_tenant() -> Result<()> {
+    let (_dir, engine) = new_test_engine().await?;
+    let fact = profile_fact("preference", "tea", "addition", 0.40);
+    engine.upsert_profile_slot_from_fact("alice", None, &fact, Uuid::new_v4(), Utc::now())?;
+    let review_id = engine.list_profile_reviews(None, Some("alice"), None, 10)?[0]
+        .review_id
+        .clone();
+
+    // Bob (different user, possibly same shard) must not resolve Alice's review.
+    let cross = engine
+        .resolve_profile_review("bob", &review_id, true, None, None)
+        .await?;
+    assert!(
+        cross.is_none(),
+        "cross-tenant resolve must be rejected as not found"
+    );
+    // Alice's review is still pending and unmodified.
+    let still = engine
+        .get_profile_review(&review_id)?
+        .expect("review exists");
+    assert_eq!(still.status, ReviewStatus::Pending);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_patch_profile_pin_blocks_auto_obsolete() -> Result<()> {
+    let (_dir, engine) = new_test_engine().await?;
+    let berlin = profile_fact("residence", "Berlin", "reaffirm", 0.9);
+    engine.upsert_profile_slot_from_fact(TEST_USER, None, &berlin, Uuid::new_v4(), Utc::now())?;
+    let key = slot_key_for(&berlin);
+    engine
+        .patch_profile_slot(TEST_USER, &key, ProfileSlotPatch::Pin)
+        .await?;
+
+    // A contradicting update on a pinned slot must go to review, not auto-apply.
+    let munich = profile_fact("residence", "Munich", "update", 0.9);
+    let outcome = engine.upsert_profile_slot_from_fact(
+        TEST_USER,
+        None,
+        &munich,
+        Uuid::new_v4(),
+        Utc::now(),
+    )?;
+    assert_eq!(outcome, ProfilePromotionOutcome::QueuedForReview);
+
+    let slot = engine
+        .get_profile_slot(TEST_USER, &key)?
+        .expect("slot exists");
+    let active: Vec<_> = slot
+        .active_values()
+        .map(|v| v.canonical_value.clone())
+        .collect();
+    assert_eq!(active, vec!["berlin".to_string()], "pinned value preserved");
+    assert_eq!(
+        slot.state,
+        memorose_common::ProfileSlotState::ManuallyPinned
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_list_profile_audit_records_promotion_and_merge() -> Result<()> {
+    let (_dir, engine) = new_test_engine().await?;
+    let fact = profile_fact("residence", "Berlin", "reaffirm", 0.9);
+    engine.upsert_profile_slot_from_fact(TEST_USER, None, &fact, Uuid::new_v4(), Utc::now())?;
+    engine.upsert_profile_slot_from_fact(TEST_USER, None, &fact, Uuid::new_v4(), Utc::now())?;
+
+    let audit = engine.list_profile_audit(TEST_USER, None, 10)?;
+    assert!(
+        audit.len() >= 2,
+        "promotion + merge recorded, got {}",
+        audit.len()
+    );
+    assert!(audit.iter().any(|e| e.action == "promote"));
+    assert!(audit.iter().any(|e| e.action == "merge"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_upsert_profile_historical_keeps_current_active() -> Result<()> {
+    let (_dir, engine) = new_test_engine().await?;
+    let berlin = profile_fact("residence", "Berlin", "reaffirm", 0.9);
+    engine.upsert_profile_slot_from_fact(TEST_USER, None, &berlin, Uuid::new_v4(), Utc::now())?;
+    // "I used to live in Berlin" — a bare historical mention of the current value
+    // must NOT empty the slot of its active value.
+    let mut past = profile_fact("residence", "Berlin", "historical", 0.9);
+    past.temporal_status = Some("historical".into());
+    engine.upsert_profile_slot_from_fact(TEST_USER, None, &past, Uuid::new_v4(), Utc::now())?;
+
+    let slot = engine
+        .get_profile_slot(TEST_USER, &slot_key_for(&berlin))?
+        .expect("slot exists");
+    let active: Vec<_> = slot
+        .active_values()
+        .map(|v| v.canonical_value.clone())
+        .collect();
+    assert_eq!(
+        active,
+        vec!["berlin".to_string()],
+        "current value must remain active after a historical mention"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_upsert_profile_confidence_caps_below_one() -> Result<()> {
+    let (_dir, engine) = new_test_engine().await?;
+    let fact = profile_fact("residence", "Berlin", "reaffirm", 0.6);
+    // Repeat the same modest-confidence fact many times.
+    for _ in 0..50 {
+        engine.upsert_profile_slot_from_fact(TEST_USER, None, &fact, Uuid::new_v4(), Utc::now())?;
+    }
+    let slot = engine
+        .get_profile_slot(TEST_USER, &slot_key_for(&fact))?
+        .expect("slot exists");
+    let value = slot.active_values().next().expect("active value");
+    assert!(
+        value.confidence < 1.0,
+        "repetition must never manufacture absolute certainty, got {}",
+        value.confidence
+    );
+    assert!(value.confidence <= 0.95 + f32::EPSILON);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_upsert_profile_facts_batches_same_slot() -> Result<()> {
+    let (_dir, engine) = new_test_engine().await?;
+    // One unit asserting two preferences hits the `preference` slot once.
+    let facts = vec![
+        profile_fact("preference", "tea", "addition", 0.9),
+        profile_fact("preference", "coffee", "addition", 0.9),
+    ];
+    let outcomes =
+        engine.upsert_profile_facts(TEST_USER, None, &facts, Uuid::new_v4(), Utc::now())?;
+    assert_eq!(outcomes.len(), 2);
+
+    let slots = engine.list_profile_slots(TEST_USER)?;
+    assert_eq!(slots.len(), 1, "both facts land in one preference slot");
+    let active: Vec<_> = slots[0]
+        .active_values()
+        .map(|v| v.canonical_value.clone())
+        .collect();
+    assert_eq!(active.len(), 2);
+    assert!(active.contains(&"tea".to_string()));
+    assert!(active.contains(&"coffee".to_string()));
+    Ok(())
+}
+
+fn slot_key_for(fact: &StoredMemoryFact) -> String {
+    fact_extraction::project_profile_fact(fact)
+        .expect("fact projects")
+        .slot_key
+}
+
+fn sample_rac_review(
+    user_id: &str,
+    status: ReviewStatus,
+    created_at: DateTime<Utc>,
+) -> RacReviewRecord {
+    RacReviewRecord {
+        review_id: Uuid::new_v4().to_string(),
+        created_at,
+        updated_at: created_at,
+        stage: "staged_pre_store".into(),
+        user_id: user_id.to_string(),
+        org_id: None,
+        source_unit_id: Uuid::new_v4(),
+        target_unit_id: Uuid::new_v4(),
+        action: "obsolete".into(),
+        confidence: 0.6,
+        relation: Some("EvolvedTo".into()),
+        reason: "test".into(),
+        guard_reason: None,
+        status,
+        reviewer: None,
+        reviewer_note: None,
+    }
+}
+
+fn sample_profile_review(user_id: &str, status: ReviewStatus) -> ProfileReviewRecord {
+    ProfileReviewRecord {
+        review_id: Uuid::new_v4().to_string(),
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        user_id: user_id.to_string(),
+        org_id: None,
+        slot_key: "user|user:self|preference".into(),
+        attribute: "preference".into(),
+        subject: "user".into(),
+        subject_ref: Some("user:self".into()),
+        proposed_value: "tea".into(),
+        proposed_canonical_value: "tea".into(),
+        proposed_confidence: 0.4,
+        change_type: "addition".into(),
+        source_unit_id: Uuid::new_v4(),
+        reason: "test".into(),
+        status,
+        reviewer: None,
+        reviewer_note: None,
+    }
+}
+
+#[tokio::test]
+async fn test_review_queue_list_filters_and_sorts() -> Result<()> {
+    let (_dir, engine) = new_test_engine().await?;
+    // Two RAC reviews (one pending/older, one approved/newer) + one profile review.
+    let older = sample_rac_review(
+        TEST_USER,
+        ReviewStatus::Pending,
+        Utc::now() - chrono::Duration::hours(2),
+    );
+    let newer = sample_rac_review(TEST_USER, ReviewStatus::Approved, Utc::now());
+    let other_user = sample_rac_review("someone_else", ReviewStatus::Pending, Utc::now());
+    engine.store_review(&older)?;
+    engine.store_review(&newer)?;
+    engine.store_review(&other_user)?;
+    engine.store_profile_review(&sample_profile_review(TEST_USER, ReviewStatus::Pending))?;
+
+    // Prefix isolation: RAC list never returns the profile review and vice versa.
+    let all_rac = engine.list_rac_reviews(None, Some(TEST_USER), None, 100)?;
+    assert_eq!(all_rac.len(), 2, "only this user's RAC reviews");
+    // created_at descending.
+    assert_eq!(all_rac[0].review_id, newer.review_id);
+    assert_eq!(all_rac[1].review_id, older.review_id);
+
+    // status filter.
+    let pending =
+        engine.list_rac_reviews(Some(ReviewStatus::Pending), Some(TEST_USER), None, 100)?;
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].review_id, older.review_id);
+
+    // limit truncation.
+    let limited = engine.list_rac_reviews(None, Some(TEST_USER), None, 1)?;
+    assert_eq!(limited.len(), 1);
+    assert_eq!(limited[0].review_id, newer.review_id);
+
+    // profile queue is isolated by key prefix.
+    let profiles = engine.list_profile_reviews(None, Some(TEST_USER), None, 100)?;
+    assert_eq!(profiles.len(), 1);
+    assert_eq!(profiles[0].proposed_canonical_value, "tea");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_review_queue_roundtrip_preserves_rac_wire() -> Result<()> {
+    let (_dir, engine) = new_test_engine().await?;
+    let review = sample_rac_review(TEST_USER, ReviewStatus::Pending, Utc::now());
+    let id = review.review_id.clone();
+    engine.store_review(&review)?;
+
+    let fetched = engine.get_rac_review(&id)?.expect("roundtrip");
+    assert_eq!(fetched.review_id, review.review_id);
+    assert_eq!(fetched.source_unit_id, review.source_unit_id);
+    assert_eq!(fetched.action, "obsolete");
+    assert_eq!(fetched.status, ReviewStatus::Pending);
+
+    // Lock the wire format: status serializes to the snake_case string the
+    // dashboard and any persisted data depend on.
+    let json = serde_json::to_string(&fetched)?;
+    assert!(
+        json.contains("\"status\":\"pending\""),
+        "status wire format: {json}"
+    );
+    Ok(())
 }
 
 #[cfg(test)]

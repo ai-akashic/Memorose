@@ -382,4 +382,51 @@ export const api = {
 
   leaveCluster: (node_id: number) =>
     fetchRaw<{ status: string }>(`/v1/cluster/nodes/${node_id}`, { method: "DELETE" }),
+
+  // Profile memory layer
+  getProfile: (user_id: string, opts?: { attribute?: string; include_inactive?: boolean }) => {
+    const qs = new URLSearchParams();
+    if (opts?.attribute) qs.set("attribute", opts.attribute);
+    if (opts?.include_inactive) qs.set("include_inactive", "true");
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return fetchRaw<import("./types").ProfileResponse>(
+      `/v1/users/${encodeURIComponent(user_id)}/profile${suffix}`
+    );
+  },
+  patchProfile: (
+    user_id: string,
+    body: { slot_key: string; op: string; canonical_value?: string; confidence?: number }
+  ) =>
+    fetchRaw<import("./types").ProfilePatchResponse>(
+      `/v1/users/${encodeURIComponent(user_id)}/profile`,
+      { method: "PATCH", body: JSON.stringify(body) }
+    ),
+  getProfileAudit: (user_id: string, opts?: { slot_key?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (opts?.slot_key) qs.set("slot_key", opts.slot_key);
+    if (opts?.limit) qs.set("limit", String(opts.limit));
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return fetchRaw<import("./types").ProfileAuditResponse>(
+      `/v1/users/${encodeURIComponent(user_id)}/profile/audit${suffix}`
+    );
+  },
+  listProfileReviews: (user_id: string, opts?: { status?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (opts?.status) qs.set("status", opts.status);
+    if (opts?.limit) qs.set("limit", String(opts.limit));
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return fetchRaw<import("./types").ProfileReviewListResponse>(
+      `/v1/users/${encodeURIComponent(user_id)}/profile/reviews${suffix}`
+    );
+  },
+  approveProfileReview: (user_id: string, review_id: string, body?: { reviewer?: string; note?: string }) =>
+    fetchRaw<{ review: import("./types").ProfileReviewRecord }>(
+      `/v1/users/${encodeURIComponent(user_id)}/profile/reviews/${encodeURIComponent(review_id)}/approve`,
+      { method: "POST", body: JSON.stringify(body ?? {}) }
+    ),
+  rejectProfileReview: (user_id: string, review_id: string, body?: { reviewer?: string; note?: string }) =>
+    fetchRaw<{ review: import("./types").ProfileReviewRecord }>(
+      `/v1/users/${encodeURIComponent(user_id)}/profile/reviews/${encodeURIComponent(review_id)}/reject`,
+      { method: "POST", body: JSON.stringify(body ?? {}) }
+    ),
 };

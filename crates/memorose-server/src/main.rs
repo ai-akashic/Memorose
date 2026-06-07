@@ -1,9 +1,9 @@
 use axum::{
-    extract::{OriginalUri, Path, State},
+    extract::{OriginalUri, Path, Query, State},
     http::HeaderMap,
     middleware as axum_middleware,
     response::{IntoResponse, Redirect},
-    routing::{delete, get, post, put},
+    routing::{delete, get, patch, post, put},
     Json, Router,
 };
 use memorose_common::sharding::decode_raft_node_id;
@@ -29,8 +29,10 @@ use types::{
     default_context_token_budget, public_asset_storage_key, AddEdgeRequest, BatchIngestRequest,
     ContextCompressionTier, ContextFormat, GoalMemoryUnitView, GoalTree, IngestRequest,
     JoinRequest, L3TaskTree, MemoryContextHitView, MemoryContextRequest, MemoryContextResponse,
-    RenderedMemoryContext, RetrievalMemoryUnitView, RetrieveRequest, RetrieveResponse,
-    RetrieveResultItem, UpdateTaskStatusRequest,
+    ProfileAuditQuery, ProfilePatchRequest, ProfilePatchResponse, ProfileQuery, ProfileResponse,
+    ProfileReviewListQuery, RenderedMemoryContext, ResolveProfileReviewRequest,
+    RetrievalMemoryUnitView, RetrieveRequest, RetrieveResponse, RetrieveResultItem,
+    UpdateTaskStatusRequest,
 };
 
 use shard_manager::ShardManager;
@@ -308,6 +310,24 @@ async fn main() {
             put(update_task_status),
         )
         .route("/v1/users/:user_id/graph/edges", post(add_edge))
+        .route("/v1/users/:user_id/profile", get(get_user_profile))
+        .route("/v1/users/:user_id/profile", patch(patch_user_profile))
+        .route(
+            "/v1/users/:user_id/profile/audit",
+            get(get_user_profile_audit),
+        )
+        .route(
+            "/v1/users/:user_id/profile/reviews",
+            get(list_user_profile_reviews),
+        )
+        .route(
+            "/v1/users/:user_id/profile/reviews/:review_id/approve",
+            post(approve_user_profile_review),
+        )
+        .route(
+            "/v1/users/:user_id/profile/reviews/:review_id/reject",
+            post(reject_user_profile_review),
+        )
         .route("/v1/status/pending", get(pending_count))
         .route(
             "/v1/organizations/:org_id/knowledge",
@@ -1380,6 +1400,73 @@ fn format_memory_xml_block(unit: &MemoryUnit, tier: ContextCompressionTier) -> S
     xml
 }
 
+/// Render a compact profile block (active values only) honoring the compression
+/// tier. Returns `None` when there is nothing to show.
+fn format_profile_block(
+    slots: &[memorose_common::ProfileSlot],
+    tier: ContextCompressionTier,
+    top_n_override: Option<usize>,
+    format: ContextFormat,
+) -> Option<String> {
+    let (max_slots, default_top_n, show_confidence) = match tier {
+        ContextCompressionTier::Tiny => (6usize, 1usize, false),
+        ContextCompressionTier::Compact => (10, 2, false),
+        ContextCompressionTier::Detailed => (usize::MAX, 3, true),
+    };
+    let top_n = top_n_override.unwrap_or(default_top_n).max(1);
+
+    let mut lines: Vec<(String, String)> = Vec::new();
+    for slot in slots.iter() {
+        let actives: Vec<_> = slot.active_values().take(top_n).collect();
+        if actives.is_empty() {
+            continue;
+        }
+        let rendered = actives
+            .iter()
+            .map(|value| {
+                if show_confidence {
+                    format!("{} ({:.2})", value.value, value.confidence)
+                } else {
+                    value.value.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        lines.push((slot.attribute.clone(), rendered));
+        if lines.len() >= max_slots {
+            break;
+        }
+    }
+    if lines.is_empty() {
+        return None;
+    }
+
+    Some(match format {
+        ContextFormat::Text => {
+            let mut block = String::from("[profile]");
+            for (attribute, rendered) in &lines {
+                block.push('\n');
+                block.push_str(attribute);
+                block.push_str(": ");
+                block.push_str(rendered);
+            }
+            block
+        }
+        ContextFormat::Xml => {
+            let mut block = String::from("<profile>");
+            for (attribute, rendered) in &lines {
+                block.push_str(&format!(
+                    "<slot attribute=\"{}\">{}</slot>",
+                    xml_escape(attribute),
+                    xml_escape(rendered)
+                ));
+            }
+            block.push_str("</profile>");
+            block
+        }
+    })
+}
+
 fn render_memory_context(
     results: &[(SharedSearchHit, f32)],
     token_budget: usize,
@@ -1658,19 +1745,51 @@ async fn build_memory_context(
                 .await
             {
                 Ok(results) => {
-                    let rendered = render_memory_context(&results, token_budget, format);
+                    // Optionally reserve part of the budget for a compact profile
+                    // block so it can never starve memory retrieval (cap at 1/3).
+                    let mut profile_block = None;
+                    let mut profile_tokens = 0usize;
+                    if payload.include_profile {
+                        if let Ok(slots) = shard.engine.list_profile_slots(&payload.user_id) {
+                            if let Some(block) = format_profile_block(
+                                &slots,
+                                compression_tier,
+                                payload.profile_top_n,
+                                format,
+                            ) {
+                                let cost = count_tokens(&block);
+                                if cost <= token_budget / 3 {
+                                    profile_tokens = cost;
+                                    profile_block = Some(block);
+                                }
+                            }
+                        }
+                    }
+                    let body_budget = token_budget.saturating_sub(profile_tokens);
+                    let rendered = render_memory_context(&results, body_budget, format);
+                    let profile_included = profile_block.is_some();
+                    let context = match profile_block {
+                        Some(block) => match format {
+                            ContextFormat::Text if rendered.context.is_empty() => block,
+                            ContextFormat::Text => format!("{block}\n{}", rendered.context),
+                            ContextFormat::Xml => format!("{block}{}", rendered.context),
+                        },
+                        None => rendered.context,
+                    };
                     Json(MemoryContextResponse {
                         query: payload.query,
                         format: format.as_str().to_string(),
                         strategy: rendered.strategy.to_string(),
                         token_budget,
-                        used_token_estimate: rendered.used_token_estimate,
+                        used_token_estimate: rendered.used_token_estimate + profile_tokens,
                         matched_count: rendered.matched_count,
                         included_count: rendered.included_count,
                         truncated: rendered.truncated,
-                        context: rendered.context,
+                        context,
                         hits: rendered.hits,
                         query_time_ms: start.elapsed().as_millis(),
+                        profile_included,
+                        profile_token_estimate: profile_tokens,
                     })
                     .into_response()
                 }
@@ -1711,6 +1830,251 @@ async fn hard_delete_memory_unit_for_user(
 
     engine.delete_memory_unit_hard(user_id, unit_id).await?;
     Ok(true)
+}
+
+// ---------------------------------------------------------------------------
+// Profile memory layer
+// ---------------------------------------------------------------------------
+
+async fn get_user_profile(
+    State(state): State<Arc<AppState>>,
+    Path(user_id): Path<String>,
+    Query(query): Query<ProfileQuery>,
+) -> axum::response::Response {
+    if let Err(r) = validate_id(&user_id, "user_id") {
+        return r;
+    }
+    let shard = state.shard_manager.shard_for_user(&user_id);
+    let mut slots = match shard.engine.list_profile_slots(&user_id) {
+        Ok(slots) => slots,
+        Err(error) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response();
+        }
+    };
+    if let Some(attribute) = query.attribute.as_deref() {
+        slots.retain(|slot| slot.attribute == attribute);
+    }
+    if !query.include_inactive {
+        for slot in slots.iter_mut() {
+            slot.values.retain(|value| value.is_active());
+        }
+    }
+    let slot_count = slots.len();
+    Json(ProfileResponse {
+        user_id,
+        slots,
+        slot_count,
+    })
+    .into_response()
+}
+
+async fn patch_user_profile(
+    State(state): State<Arc<AppState>>,
+    Path(user_id): Path<String>,
+    Json(payload): Json<ProfilePatchRequest>,
+) -> axum::response::Response {
+    if let Err(r) = validate_id(&user_id, "user_id") {
+        return r;
+    }
+    let op = match parse_profile_patch(&payload) {
+        Ok(op) => op,
+        Err(response) => return response,
+    };
+    let shard = state.shard_manager.shard_for_user(&user_id);
+    match shard
+        .engine
+        .patch_profile_slot(&user_id, &payload.slot_key, op)
+        .await
+    {
+        Ok(memorose_core::ProfilePatchOutcome::Applied(slot)) => Json(ProfilePatchResponse {
+            status: "updated",
+            slot: Some(*slot),
+        })
+        .into_response(),
+        Ok(memorose_core::ProfilePatchOutcome::SlotNotFound) => (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "profile slot not found" })),
+        )
+            .into_response(),
+        Ok(memorose_core::ProfilePatchOutcome::ValueNotFound { canonical_value }) => (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!("canonical value '{canonical_value}' not found in slot")
+            })),
+        )
+            .into_response(),
+        Err(error) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+fn parse_profile_patch(
+    payload: &ProfilePatchRequest,
+) -> Result<memorose_core::ProfileSlotPatch, axum::response::Response> {
+    use memorose_core::ProfileSlotPatch;
+    let need_cv = |label: &str| -> Result<String, axum::response::Response> {
+        payload.canonical_value.clone().ok_or_else(|| {
+            (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!("op '{label}' requires canonical_value")
+                })),
+            )
+                .into_response()
+        })
+    };
+    let op = match payload.op.as_str() {
+        "set_active_value" => ProfileSlotPatch::SetActiveValue {
+            canonical_value: need_cv("set_active_value")?,
+        },
+        "obsolete_value" => ProfileSlotPatch::ObsoleteValue {
+            canonical_value: need_cv("obsolete_value")?,
+        },
+        "remove_value" => ProfileSlotPatch::RemoveValue {
+            canonical_value: need_cv("remove_value")?,
+        },
+        "pin" => ProfileSlotPatch::Pin,
+        "unpin" => ProfileSlotPatch::Unpin,
+        "set_confidence" => ProfileSlotPatch::SetConfidence {
+            canonical_value: need_cv("set_confidence")?,
+            confidence: payload.confidence.ok_or_else(|| {
+                (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": "op 'set_confidence' requires confidence"
+                    })),
+                )
+                    .into_response()
+            })?,
+        },
+        other => {
+            return Err((
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": format!("unsupported profile op '{other}'") })),
+            )
+                .into_response());
+        }
+    };
+    Ok(op)
+}
+
+async fn get_user_profile_audit(
+    State(state): State<Arc<AppState>>,
+    Path(user_id): Path<String>,
+    Query(query): Query<ProfileAuditQuery>,
+) -> axum::response::Response {
+    if let Err(r) = validate_id(&user_id, "user_id") {
+        return r;
+    }
+    let limit = query.limit.unwrap_or(50).clamp(1, 500);
+    let shard = state.shard_manager.shard_for_user(&user_id);
+    match shard
+        .engine
+        .list_profile_audit(&user_id, query.slot_key.as_deref(), limit)
+    {
+        Ok(entries) => Json(serde_json::json!({ "entries": entries })).into_response(),
+        Err(error) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn list_user_profile_reviews(
+    State(state): State<Arc<AppState>>,
+    Path(user_id): Path<String>,
+    Query(query): Query<ProfileReviewListQuery>,
+) -> axum::response::Response {
+    if let Err(r) = validate_id(&user_id, "user_id") {
+        return r;
+    }
+    let status_filter = match query.status.as_deref() {
+        None => Some(memorose_core::ReviewStatus::Pending),
+        Some("all") => None,
+        Some("pending") => Some(memorose_core::ReviewStatus::Pending),
+        Some("approved") => Some(memorose_core::ReviewStatus::Approved),
+        Some("rejected") => Some(memorose_core::ReviewStatus::Rejected),
+        Some(other) => {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": format!("unsupported status '{other}'") })),
+            )
+                .into_response();
+        }
+    };
+    let limit = query.limit.unwrap_or(25).clamp(1, 100);
+    let shard = state.shard_manager.shard_for_user(&user_id);
+    match shard
+        .engine
+        .list_profile_reviews(status_filter, Some(&user_id), None, limit)
+    {
+        Ok(reviews) => Json(serde_json::json!({ "reviews": reviews })).into_response(),
+        Err(error) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn approve_user_profile_review(
+    State(state): State<Arc<AppState>>,
+    Path((user_id, review_id)): Path<(String, String)>,
+    Json(payload): Json<ResolveProfileReviewRequest>,
+) -> axum::response::Response {
+    resolve_user_profile_review(state, user_id, review_id, payload, true).await
+}
+
+async fn reject_user_profile_review(
+    State(state): State<Arc<AppState>>,
+    Path((user_id, review_id)): Path<(String, String)>,
+    Json(payload): Json<ResolveProfileReviewRequest>,
+) -> axum::response::Response {
+    resolve_user_profile_review(state, user_id, review_id, payload, false).await
+}
+
+async fn resolve_user_profile_review(
+    state: Arc<AppState>,
+    user_id: String,
+    review_id: String,
+    payload: ResolveProfileReviewRequest,
+    approve: bool,
+) -> axum::response::Response {
+    if let Err(r) = validate_id(&user_id, "user_id") {
+        return r;
+    }
+    let shard = state.shard_manager.shard_for_user(&user_id);
+    match shard
+        .engine
+        .resolve_profile_review(
+            &user_id,
+            &review_id,
+            approve,
+            payload.reviewer,
+            payload.note,
+        )
+        .await
+    {
+        Ok(Some(review)) => Json(serde_json::json!({ "review": review })).into_response(),
+        Ok(None) => (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "profile review not found" })),
+        )
+            .into_response(),
+        Err(error) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
 }
 
 async fn delete_memory_unit_hard(

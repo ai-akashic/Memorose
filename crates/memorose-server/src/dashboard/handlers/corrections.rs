@@ -7,7 +7,7 @@ use memorose_common::{
     Event as MemoryEvent, EventContent, ForgetMode, MemoryType, MemoryUnit, StoredMemoryFact,
 };
 use memorose_core::arbitrator::MemoryCorrectionKind;
-use memorose_core::engine::{RacDecisionEffect, RacReviewRecord, RacReviewStatus};
+use memorose_core::engine::{RacDecisionEffect, RacReviewRecord, ReviewStatus};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -215,11 +215,11 @@ fn parse_memory_correction_kind(value: &str) -> Option<MemoryCorrectionKind> {
     }
 }
 
-fn parse_rac_review_status(value: Option<&str>) -> Option<RacReviewStatus> {
+fn parse_rac_review_status(value: Option<&str>) -> Option<ReviewStatus> {
     match value?.trim().to_ascii_lowercase().as_str() {
-        "pending" => Some(RacReviewStatus::Pending),
-        "approved" => Some(RacReviewStatus::Approved),
-        "rejected" => Some(RacReviewStatus::Rejected),
+        "pending" => Some(ReviewStatus::Pending),
+        "approved" => Some(ReviewStatus::Approved),
+        "rejected" => Some(ReviewStatus::Rejected),
         _ => None,
     }
 }
@@ -1096,7 +1096,7 @@ pub async fn list_rac_reviews(
         };
         Some(parsed)
     } else {
-        Some(RacReviewStatus::Pending)
+        Some(ReviewStatus::Pending)
     };
 
     let limit = query.limit.unwrap_or(25).clamp(1, 100);

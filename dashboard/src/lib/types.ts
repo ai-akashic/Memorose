@@ -608,3 +608,89 @@ export interface RacReviewView {
 export interface RacReviewListResponse {
   reviews: RacReviewView[];
 }
+
+// ---------------------------------------------------------------------------
+// Profile memory layer
+// ---------------------------------------------------------------------------
+
+export type ProfileValueStatus = "active" | "obsoleted" | "negated" | "historical";
+export type ProfileSlotState = "stable" | "pending_review" | "manually_pinned";
+export type ProfileReviewStatus = "pending" | "approved" | "rejected";
+
+export interface ProfileSlotValue {
+  value: string;
+  canonical_value: string;
+  confidence: number;
+  support_count: number;
+  status: ProfileValueStatus;
+  last_change_type: string;
+  source_unit_ids: string[];
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
+export interface ProfileSlot {
+  slot_key: string;
+  user_id: string;
+  org_id?: string | null;
+  subject: string;
+  subject_ref?: string | null;
+  subject_name?: string | null;
+  attribute: string;
+  state: ProfileSlotState;
+  values: ProfileSlotValue[];
+  created_at: string;
+  updated_at: string;
+  version: number;
+}
+
+export interface ProfileResponse {
+  user_id: string;
+  slots: ProfileSlot[];
+  slot_count: number;
+}
+
+export interface ProfilePatchResponse {
+  status: string;
+  slot: ProfileSlot | null;
+}
+
+export interface ProfileReviewRecord {
+  review_id: string;
+  created_at: string;
+  updated_at: string;
+  user_id: string;
+  org_id?: string | null;
+  slot_key: string;
+  attribute: string;
+  subject: string;
+  proposed_value: string;
+  proposed_canonical_value: string;
+  proposed_confidence: number;
+  change_type: string;
+  source_unit_id: string;
+  reason: string;
+  status: ProfileReviewStatus;
+  reviewer?: string | null;
+  reviewer_note?: string | null;
+}
+
+export interface ProfileReviewListResponse {
+  reviews: ProfileReviewRecord[];
+}
+
+export interface ProfileAuditEntry {
+  created_at: string;
+  user_id: string;
+  slot_key: string;
+  action: string;
+  canonical_value: string;
+  confidence: number;
+  change_type: string;
+  source_unit_id?: string | null;
+  reason?: string | null;
+}
+
+export interface ProfileAuditResponse {
+  entries: ProfileAuditEntry[];
+}

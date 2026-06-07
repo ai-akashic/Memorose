@@ -12,7 +12,10 @@ pub mod worker; // 新增：图查询优化模块
 
 pub use arbitrator::Arbitrator;
 pub use community::CommunityDetector;
-pub use engine::{MemoroseEngine, OrganizationKnowledgeSearchHit, SharedSearchHit};
+pub use engine::{
+    MemoroseEngine, OrganizationKnowledgeSearchHit, ProfileAuditEntry, ProfilePatchOutcome,
+    ProfilePromotionOutcome, ProfileReviewRecord, ProfileSlotPatch, ReviewStatus, SharedSearchHit,
+};
 pub use llm::{GeminiClient, LLMClient};
 pub use reranker::{build_reranker, build_reranker_with_llm_config, Reranker};
 pub use worker::BackgroundWorker;

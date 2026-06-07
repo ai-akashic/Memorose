@@ -4,9 +4,14 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 pub mod config;
+pub mod profile;
 pub mod sharding;
 pub mod tokenizer;
 pub mod video;
+
+pub use profile::{
+    ProfileSlot, ProfileSlotState, ProfileSlotValue, ProfileValueStatus, PROFILE_VALUE_MAX_SOURCES,
+};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TokenUsage {
