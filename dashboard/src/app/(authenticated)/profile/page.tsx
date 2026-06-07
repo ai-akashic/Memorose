@@ -7,6 +7,7 @@ import type {
   ProfileSlotValue,
   ProfileReviewRecord,
   ProfileValueStatus,
+  OrgProfileAggregate,
 } from "@/lib/types";
 import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
@@ -68,6 +69,22 @@ function SlotRow({
     async (op: string, canonical_value?: string) => {
       setBusy(true);
       try {
+        // Preview destructive edits and confirm before applying.
+        if (op === "obsolete_value" || op === "remove_value") {
+          const preview = await api.previewProfile(userId, {
+            slot_key: slot.slot_key,
+            op,
+            canonical_value,
+          });
+          const afterActive = preview.after.values.filter((v) => v.status === "active").length;
+          const ok = window.confirm(
+            `Apply "${op}" to "${canonical_value}"?\nActive values after: ${afterActive}.`
+          );
+          if (!ok) {
+            setBusy(false);
+            return;
+          }
+        }
         await api.patchProfile(userId, { slot_key: slot.slot_key, op, canonical_value });
         onChanged();
       } catch (e) {
@@ -237,6 +254,86 @@ function ReviewsPanel({ userId }: { userId: string }) {
   );
 }
 
+function OrgProfilePanel() {
+  const [orgInput, setOrgInput] = useState("");
+  const [agg, setAgg] = useState<OrgProfileAggregate | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  const aggregate = useCallback(async (org: string) => {
+    if (!org) return;
+    setLoading(true);
+    setLoaded(true);
+    try {
+      setAgg(await api.getOrgProfile(org));
+    } catch (e) {
+      console.error(e);
+      setAgg(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  return (
+    <div className="space-y-4">
+      <form
+        className="flex items-center gap-2 max-w-md"
+        onSubmit={(e) => {
+          e.preventDefault();
+          aggregate(orgInput.trim());
+        }}
+      >
+        <Input
+          placeholder="Enter org id…"
+          value={orgInput}
+          onChange={(e) => setOrgInput(e.target.value)}
+        />
+        <Button type="submit" disabled={!orgInput.trim()}>
+          <Search className="size-4 mr-1" /> Aggregate
+        </Button>
+      </form>
+
+      {!loaded ? (
+        <EmptyState
+          icon={UserCircle}
+          title="Aggregate an organization"
+          description="Enter an org id to see the distribution of profile attribute values across its users."
+        />
+      ) : loading || agg === null ? (
+        <Skeleton className="h-32 w-full" />
+      ) : agg.attributes.length === 0 ? (
+        <EmptyState
+          icon={UserCircle}
+          title="No org profile data"
+          description="No promoted profile values found for this organization."
+        />
+      ) : (
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground">{agg.user_count} users</p>
+          {agg.attributes.map((attr) => (
+            <Card key={attr.attribute}>
+              <CardHeader className="py-3">
+                <CardTitle className="text-sm font-medium">{attr.attribute}</CardTitle>
+              </CardHeader>
+              <CardContent className="border-t border-white/5 pt-3 space-y-1">
+                {attr.values.map((v) => (
+                  <div
+                    key={v.canonical_value}
+                    className="flex items-center justify-between gap-3 text-sm"
+                  >
+                    <span className="truncate">{v.value}</span>
+                    <Badge variant="outline">{v.user_count}</Badge>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ProfilePage() {
   const [userInput, setUserInput] = useState("");
   const [userId, setUserId] = useState("");
@@ -297,6 +394,7 @@ export default function ProfilePage() {
           <TabsList>
             <TabsTrigger value="slots">Slots</TabsTrigger>
             <TabsTrigger value="reviews">Reviews</TabsTrigger>
+            <TabsTrigger value="org">Org</TabsTrigger>
           </TabsList>
           <TabsContent value="slots" className="space-y-3 pt-3">
             <label className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -325,6 +423,9 @@ export default function ProfilePage() {
           </TabsContent>
           <TabsContent value="reviews" className="pt-3">
             <ReviewsPanel userId={userId} />
+          </TabsContent>
+          <TabsContent value="org" className="pt-3">
+            <OrgProfilePanel />
           </TabsContent>
         </Tabs>
       )}

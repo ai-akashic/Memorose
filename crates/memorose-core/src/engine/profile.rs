@@ -50,6 +50,72 @@ impl MemoroseEngine {
 
     // -- reads -------------------------------------------------------------
 
+    /// Aggregate active profile values across every user in `org_id` on this
+    /// shard. Users partition across shards, so per-shard aggregates merge by
+    /// summing. Read-only analytics — enumerates users via the `active_user:` set.
+    pub fn aggregate_org_profile(
+        &self,
+        org_id: &str,
+    ) -> Result<memorose_common::OrgProfileAggregate> {
+        let mut users_with_match: HashSet<String> = HashSet::new();
+        // attribute -> canonical_value -> (display value, distinct users)
+        let mut agg: HashMap<String, HashMap<String, (String, HashSet<String>)>> = HashMap::new();
+
+        for (key, _) in self.system_kv().scan(b"active_user:")? {
+            let Some(raw) = key.strip_prefix(b"active_user:") else {
+                continue;
+            };
+            let user_id = String::from_utf8_lossy(raw).to_string();
+            for slot in self.list_profile_slots(&user_id)? {
+                if slot.org_id.as_deref() != Some(org_id) {
+                    continue;
+                }
+                let mut contributed = false;
+                for value in slot.active_values() {
+                    contributed = true;
+                    let entry = agg
+                        .entry(slot.attribute.clone())
+                        .or_default()
+                        .entry(value.canonical_value.clone())
+                        .or_insert_with(|| (value.value.clone(), HashSet::new()));
+                    entry.1.insert(user_id.clone());
+                }
+                if contributed {
+                    users_with_match.insert(user_id.clone());
+                }
+            }
+        }
+
+        let mut attributes: Vec<memorose_common::OrgProfileAttribute> = agg
+            .into_iter()
+            .map(|(attribute, values)| {
+                let mut values: Vec<memorose_common::OrgProfileValueCount> = values
+                    .into_iter()
+                    .map(|(canonical_value, (value, users))| {
+                        memorose_common::OrgProfileValueCount {
+                            canonical_value,
+                            value,
+                            user_count: users.len(),
+                        }
+                    })
+                    .collect();
+                values.sort_by(|a, b| {
+                    b.user_count
+                        .cmp(&a.user_count)
+                        .then_with(|| a.canonical_value.cmp(&b.canonical_value))
+                });
+                memorose_common::OrgProfileAttribute { attribute, values }
+            })
+            .collect();
+        attributes.sort_by(|a, b| a.attribute.cmp(&b.attribute));
+
+        Ok(memorose_common::OrgProfileAggregate {
+            org_id: org_id.to_string(),
+            user_count: users_with_match.len(),
+            attributes,
+        })
+    }
+
     pub fn get_profile_slot(&self, user_id: &str, slot_key: &str) -> Result<Option<ProfileSlot>> {
         let key = Self::profile_slot_storage_key(user_id, slot_key);
         Ok(self
@@ -104,6 +170,80 @@ impl MemoroseEngine {
         let nonce = Uuid::new_v4().simple().to_string();
         let key = Self::profile_audit_key(&entry.user_id, &entry.slot_key, ts_micros, &nonce);
         self.kv().put(key.as_bytes(), &serde_json::to_vec(entry)?)
+    }
+
+    /// Reconcile the user's profile when one of their memory units is forgotten,
+    /// so derived profile values never outlive their source memory.
+    ///
+    /// Removes `unit_id` from every profile value's provenance. When a value
+    /// loses its last source: a `hard` delete (right-to-be-forgotten) erases the
+    /// value outright — and an emptied slot is dropped entirely — while a logical
+    /// forget only obsoletes it (retained, non-destructive). RAC's routine
+    /// tombstoning does NOT call this; the profile merge already reflects those.
+    pub fn reconcile_profile_after_forget(
+        &self,
+        user_id: &str,
+        unit_id: Uuid,
+        hard: bool,
+    ) -> Result<()> {
+        let now = Utc::now();
+        for mut slot in self.list_profile_slots(user_id)? {
+            // Hard (right-to-be-forgotten) overrides a pin; a logical forget must
+            // not obsolete a human-pinned value.
+            let pinned = matches!(slot.state, ProfileSlotState::ManuallyPinned);
+            let mut affected: Vec<String> = Vec::new();
+            let mut erase: Vec<String> = Vec::new();
+            for value in slot.values.iter_mut() {
+                let Some(pos) = value.source_unit_ids.iter().position(|id| *id == unit_id) else {
+                    continue;
+                };
+                value.source_unit_ids.remove(pos);
+                affected.push(value.canonical_value.clone());
+                // Only act when THIS value just lost its last supporting memory.
+                if value.source_unit_ids.is_empty() {
+                    if hard {
+                        erase.push(value.canonical_value.clone());
+                    } else if value.is_active() && !pinned {
+                        value.status = ProfileValueStatus::Obsoleted;
+                        value.last_seen_at = now;
+                    }
+                }
+            }
+            if affected.is_empty() {
+                continue;
+            }
+            if !erase.is_empty() {
+                // Erase only values this forget actually orphaned — never unrelated
+                // values that happened to have no sources (e.g. manual edits).
+                slot.values
+                    .retain(|value| !erase.contains(&value.canonical_value));
+            }
+            self.append_profile_audit(&ProfileAuditEntry {
+                created_at: now,
+                user_id: user_id.to_string(),
+                slot_key: slot.slot_key.clone(),
+                action: if hard {
+                    "forget_hard_cascade".to_string()
+                } else {
+                    "forget_logical_cascade".to_string()
+                },
+                canonical_value: affected.join(","),
+                confidence: 0.0,
+                change_type: "forget".to_string(),
+                source_unit_id: Some(unit_id),
+                reason: None,
+            })?;
+            if hard && slot.values.is_empty() {
+                self.kv()
+                    .delete(Self::profile_slot_storage_key(user_id, &slot.slot_key).as_bytes())?;
+            } else {
+                slot.updated_at = now;
+                slot.version = slot.version.saturating_add(1);
+                slot.sort_values();
+                self.put_profile_slot(&slot)?;
+            }
+        }
+        Ok(())
     }
 
     /// Promote a single L1 fact into its profile slot. Thin convenience wrapper
@@ -544,6 +684,110 @@ impl MemoroseEngine {
 
     // -- manual patch ------------------------------------------------------
 
+    /// Apply a patch op to a slot in memory (no I/O). Returns the audit metadata
+    /// on success, or the missing canonical value as `Err` for `SetConfidence`.
+    /// Shared by `patch_profile_slot` (execute) and `preview_profile_patch`.
+    fn apply_patch_to_slot(
+        slot: &mut ProfileSlot,
+        op: &ProfileSlotPatch,
+        now: DateTime<Utc>,
+    ) -> std::result::Result<PatchMeta, String> {
+        let meta = match op {
+            ProfileSlotPatch::SetActiveValue { canonical_value } => {
+                let audit_conf = if let Some(value) = slot
+                    .values
+                    .iter_mut()
+                    .find(|v| &v.canonical_value == canonical_value)
+                {
+                    value.status = ProfileValueStatus::Active;
+                    value.last_seen_at = now;
+                    value.confidence
+                } else {
+                    slot.values.push(ProfileSlotValue {
+                        value: canonical_value.clone(),
+                        canonical_value: canonical_value.clone(),
+                        confidence: 1.0,
+                        support_count: 1,
+                        status: ProfileValueStatus::Active,
+                        last_change_type: "manual".to_string(),
+                        source_unit_ids: Vec::new(),
+                        first_seen_at: now,
+                        last_seen_at: now,
+                    });
+                    1.0
+                };
+                Self::obsolete_other_active(slot, canonical_value, now);
+                PatchMeta {
+                    audit_action: "patch_set_active",
+                    audit_cv: canonical_value.clone(),
+                    audit_conf,
+                }
+            }
+            ProfileSlotPatch::ObsoleteValue { canonical_value } => {
+                if let Some(value) = slot
+                    .values
+                    .iter_mut()
+                    .find(|v| &v.canonical_value == canonical_value)
+                {
+                    value.status = ProfileValueStatus::Obsoleted;
+                    value.last_seen_at = now;
+                }
+                PatchMeta {
+                    audit_action: "patch_obsolete",
+                    audit_cv: canonical_value.clone(),
+                    audit_conf: 0.0,
+                }
+            }
+            ProfileSlotPatch::RemoveValue { canonical_value } => {
+                slot.values
+                    .retain(|v| &v.canonical_value != canonical_value);
+                PatchMeta {
+                    audit_action: "patch_remove",
+                    audit_cv: canonical_value.clone(),
+                    audit_conf: 0.0,
+                }
+            }
+            ProfileSlotPatch::Pin => {
+                slot.state = ProfileSlotState::ManuallyPinned;
+                PatchMeta {
+                    audit_action: "patch_pin",
+                    audit_cv: String::new(),
+                    audit_conf: 0.0,
+                }
+            }
+            ProfileSlotPatch::Unpin => {
+                slot.state = ProfileSlotState::Stable;
+                PatchMeta {
+                    audit_action: "patch_unpin",
+                    audit_cv: String::new(),
+                    audit_conf: 0.0,
+                }
+            }
+            ProfileSlotPatch::SetConfidence {
+                canonical_value,
+                confidence,
+            } => {
+                let clamped = confidence.clamp(0.0, 1.0);
+                if let Some(value) = slot
+                    .values
+                    .iter_mut()
+                    .find(|v| &v.canonical_value == canonical_value)
+                {
+                    value.confidence = clamped;
+                    value.last_seen_at = now;
+                } else {
+                    return Err(canonical_value.clone());
+                }
+                PatchMeta {
+                    audit_action: "patch_confidence",
+                    audit_cv: canonical_value.clone(),
+                    audit_conf: clamped,
+                }
+            }
+        };
+        Ok(meta)
+    }
+
     /// Apply a manual edit to a profile slot. Returns a [`ProfilePatchOutcome`]
     /// distinguishing success, a missing slot, and a missing value; `Err` is
     /// reserved for genuine storage failures.
@@ -557,84 +801,12 @@ impl MemoroseEngine {
             return Ok(ProfilePatchOutcome::SlotNotFound);
         };
         let now = Utc::now();
-        let audit_action;
-        let mut audit_cv = String::new();
-        let mut audit_conf = 0.0_f32;
-
-        match op {
-            ProfileSlotPatch::SetActiveValue { canonical_value } => {
-                audit_action = "patch_set_active";
-                audit_cv = canonical_value.clone();
-                if let Some(value) = slot
-                    .values
-                    .iter_mut()
-                    .find(|v| v.canonical_value == canonical_value)
-                {
-                    value.status = ProfileValueStatus::Active;
-                    value.last_seen_at = now;
-                    audit_conf = value.confidence;
-                } else {
-                    slot.values.push(ProfileSlotValue {
-                        value: canonical_value.clone(),
-                        canonical_value: canonical_value.clone(),
-                        confidence: 1.0,
-                        support_count: 1,
-                        status: ProfileValueStatus::Active,
-                        last_change_type: "manual".to_string(),
-                        source_unit_ids: Vec::new(),
-                        first_seen_at: now,
-                        last_seen_at: now,
-                    });
-                    audit_conf = 1.0;
-                }
-                Self::obsolete_other_active(&mut slot, &canonical_value, now);
+        let meta = match Self::apply_patch_to_slot(&mut slot, &op, now) {
+            Ok(meta) => meta,
+            Err(canonical_value) => {
+                return Ok(ProfilePatchOutcome::ValueNotFound { canonical_value })
             }
-            ProfileSlotPatch::ObsoleteValue { canonical_value } => {
-                audit_action = "patch_obsolete";
-                audit_cv = canonical_value.clone();
-                if let Some(value) = slot
-                    .values
-                    .iter_mut()
-                    .find(|v| v.canonical_value == canonical_value)
-                {
-                    value.status = ProfileValueStatus::Obsoleted;
-                    value.last_seen_at = now;
-                }
-            }
-            ProfileSlotPatch::RemoveValue { canonical_value } => {
-                audit_action = "patch_remove";
-                audit_cv = canonical_value.clone();
-                slot.values.retain(|v| v.canonical_value != canonical_value);
-            }
-            ProfileSlotPatch::Pin => {
-                audit_action = "patch_pin";
-                slot.state = ProfileSlotState::ManuallyPinned;
-            }
-            ProfileSlotPatch::Unpin => {
-                audit_action = "patch_unpin";
-                slot.state = ProfileSlotState::Stable;
-            }
-            ProfileSlotPatch::SetConfidence {
-                canonical_value,
-                confidence,
-            } => {
-                audit_action = "patch_confidence";
-                audit_cv = canonical_value.clone();
-                audit_conf = confidence.clamp(0.0, 1.0);
-                if let Some(value) = slot
-                    .values
-                    .iter_mut()
-                    .find(|v| v.canonical_value == canonical_value)
-                {
-                    value.confidence = confidence.clamp(0.0, 1.0);
-                    value.last_seen_at = now;
-                } else {
-                    return Ok(ProfilePatchOutcome::ValueNotFound {
-                        canonical_value: canonical_value.clone(),
-                    });
-                }
-            }
-        }
+        };
 
         slot.updated_at = now;
         slot.version = slot.version.saturating_add(1);
@@ -644,13 +816,39 @@ impl MemoroseEngine {
             created_at: now,
             user_id: user_id.to_string(),
             slot_key: slot_key.to_string(),
-            action: audit_action.to_string(),
-            canonical_value: audit_cv,
-            confidence: audit_conf,
+            action: meta.audit_action.to_string(),
+            canonical_value: meta.audit_cv,
+            confidence: meta.audit_conf,
             change_type: "manual".to_string(),
             source_unit_id: None,
             reason: None,
         })?;
         Ok(ProfilePatchOutcome::Applied(Box::new(slot)))
     }
+
+    /// Compute what [`Self::patch_profile_slot`] would produce WITHOUT persisting
+    /// or auditing — the "preview" half of preview→execute. `Applied` carries the
+    /// would-be slot.
+    pub async fn preview_profile_patch(
+        &self,
+        user_id: &str,
+        slot_key: &str,
+        op: ProfileSlotPatch,
+    ) -> Result<ProfilePatchOutcome> {
+        let Some(mut slot) = self.get_profile_slot(user_id, slot_key)? else {
+            return Ok(ProfilePatchOutcome::SlotNotFound);
+        };
+        let now = Utc::now();
+        if let Err(canonical_value) = Self::apply_patch_to_slot(&mut slot, &op, now) {
+            return Ok(ProfilePatchOutcome::ValueNotFound { canonical_value });
+        }
+        slot.sort_values();
+        Ok(ProfilePatchOutcome::Applied(Box::new(slot)))
+    }
+}
+
+struct PatchMeta {
+    audit_action: &'static str,
+    audit_cv: String,
+    audit_conf: f32,
 }

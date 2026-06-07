@@ -10,7 +10,8 @@ pub mod tokenizer;
 pub mod video;
 
 pub use profile::{
-    ProfileSlot, ProfileSlotState, ProfileSlotValue, ProfileValueStatus, PROFILE_VALUE_MAX_SOURCES,
+    OrgProfileAggregate, OrgProfileAttribute, OrgProfileValueCount, ProfileSlot, ProfileSlotState,
+    ProfileSlotValue, ProfileValueStatus, PROFILE_VALUE_MAX_SOURCES,
 };
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

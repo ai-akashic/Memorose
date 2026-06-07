@@ -694,3 +694,26 @@ export interface ProfileAuditEntry {
 export interface ProfileAuditResponse {
   entries: ProfileAuditEntry[];
 }
+
+export interface ProfilePreviewResponse {
+  status: string;
+  before: ProfileSlot | null;
+  after: ProfileSlot;
+}
+
+export interface OrgProfileValueCount {
+  canonical_value: string;
+  value: string;
+  user_count: number;
+}
+
+export interface OrgProfileAttribute {
+  attribute: string;
+  values: OrgProfileValueCount[];
+}
+
+export interface OrgProfileAggregate {
+  org_id: string;
+  user_count: number;
+  attributes: OrgProfileAttribute[];
+}

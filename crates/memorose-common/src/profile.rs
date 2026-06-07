@@ -109,3 +109,34 @@ impl ProfileSlot {
         });
     }
 }
+
+// ---------------------------------------------------------------------------
+// Org-level aggregation (read-only analytics across an organization's users)
+// ---------------------------------------------------------------------------
+
+/// How many distinct users in an org hold a given canonical value.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrgProfileValueCount {
+    pub canonical_value: String,
+    /// A representative display value for the canonical value.
+    pub value: String,
+    pub user_count: usize,
+}
+
+/// Distribution of active values for one attribute across an org's users.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrgProfileAttribute {
+    pub attribute: String,
+    /// Values sorted by `user_count` descending.
+    pub values: Vec<OrgProfileValueCount>,
+}
+
+/// Aggregate of active profile values across all users in an organization.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrgProfileAggregate {
+    pub org_id: String,
+    /// Distinct users in the org with at least one matching active profile value.
+    pub user_count: usize,
+    /// Attributes sorted by name.
+    pub attributes: Vec<OrgProfileAttribute>,
+}

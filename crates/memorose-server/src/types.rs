@@ -190,6 +190,12 @@ pub struct RetrieveRequest {
     /// Base64-encoded video for cross-modal retrieval
     #[serde(default)]
     pub video: Option<String>,
+    /// When true, include a compact user-profile block in the response.
+    #[serde(default)]
+    pub include_profile: bool,
+    /// Max active values rendered per profile slot (defaults applied per tier).
+    #[serde(default)]
+    pub profile_top_n: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -204,6 +210,10 @@ pub struct RetrieveResponse {
     pub query: String,
     pub results: Vec<RetrieveResultItem>,
     pub query_time_ms: u128,
+    /// Compact profile block (text), present only when `include_profile` was set
+    /// and the user has profile slots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_context: Option<String>,
 }
 // PLACEHOLDER_CHUNK4
 
@@ -400,6 +410,13 @@ pub struct ProfilePatchRequest {
 pub struct ProfilePatchResponse {
     pub status: &'static str,
     pub slot: Option<memorose_common::ProfileSlot>,
+}
+
+#[derive(Serialize)]
+pub struct ProfilePreviewResponse {
+    pub status: &'static str,
+    pub before: Option<memorose_common::ProfileSlot>,
+    pub after: memorose_common::ProfileSlot,
 }
 
 #[derive(Deserialize)]

@@ -5154,4 +5154,92 @@ mod tests {
         // If we want to test set_raft we need a MemoroseRaft object, which might be hard to mock.
         // We'll skip set_raft for now.
     }
+
+    /// Load workspace `.env` KEY=VALUE pairs into the process env (only keys not
+    /// already set), walking up from the crate dir. Lets the real-LLM E2E pick up
+    /// `GOOGLE_API_KEY` without a dotenv dependency.
+    fn load_workspace_dotenv() {
+        let mut dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        for _ in 0..4 {
+            if let Ok(contents) = std::fs::read_to_string(dir.join(".env")) {
+                for line in contents.lines() {
+                    let line = line.trim();
+                    if line.is_empty() || line.starts_with('#') {
+                        continue;
+                    }
+                    if let Some((k, v)) = line.split_once('=') {
+                        let (k, v) = (k.trim(), v.trim().trim_matches('"'));
+                        if !k.is_empty() && std::env::var(k).is_err() {
+                            std::env::set_var(k, v);
+                        }
+                    }
+                }
+                return;
+            }
+            if !dir.pop() {
+                break;
+            }
+        }
+    }
+
+    /// Real end-to-end check: ingest a natural-language event, run one
+    /// consolidation cycle against a real LLM, and assert the residence fact is
+    /// promoted into the profile layer. Ignored by default (needs an API key);
+    /// run with:
+    ///   cargo test -p memorose-core profile_e2e_real_llm -- --ignored --test-threads=1
+    #[tokio::test]
+    #[ignore = "real LLM E2E; requires GOOGLE_API_KEY/.env and network"]
+    async fn profile_e2e_real_llm_promotes_residence() -> Result<()> {
+        load_workspace_dotenv();
+        let config = AppConfig::load().unwrap_or_default();
+        if config.llm.google_api_key.is_none() && std::env::var("OPENAI_API_KEY").is_err() {
+            eprintln!("skipping real-LLM E2E: no API key configured");
+            return Ok(());
+        }
+
+        let temp_dir = tempdir()?;
+        let engine =
+            MemoroseEngine::new_with_default_threshold(temp_dir.path(), 1000, false, false).await?;
+        let worker = BackgroundWorker::with_config(engine.clone(), config);
+        *worker.last_consolidation.lock().await =
+            std::time::Instant::now() - Duration::from_secs(60);
+
+        let user = "e2e_user";
+        let event = Event::new(
+            None,
+            user.into(),
+            None,
+            Uuid::new_v4(),
+            EventContent::Text("I live in Berlin and I love hiking".into()),
+        );
+        engine.ingest_event_directly(event).await?;
+
+        worker.run_consolidation_cycle().await?;
+
+        let slots = engine.list_profile_slots(user)?;
+        eprintln!("E2E produced {} profile slot(s):", slots.len());
+        for slot in &slots {
+            let actives: Vec<_> = slot
+                .active_values()
+                .map(|v| format!("{}={}", slot.attribute, v.value))
+                .collect();
+            eprintln!("  {} -> {:?}", slot.slot_key, actives);
+        }
+        assert!(
+            !slots.is_empty(),
+            "real LLM consolidation should promote at least one profile slot"
+        );
+        let has_berlin = slots.iter().any(|slot| {
+            slot.attribute == "residence"
+                && slot
+                    .active_values()
+                    .any(|v| v.canonical_value.contains("berlin"))
+        });
+        assert!(
+            has_berlin,
+            "expected residence=berlin; got {:?}",
+            slots.iter().map(|s| &s.slot_key).collect::<Vec<_>>()
+        );
+        Ok(())
+    }
 }

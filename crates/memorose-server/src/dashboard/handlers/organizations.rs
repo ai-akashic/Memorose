@@ -366,13 +366,24 @@ pub async fn get_organization_knowledge_metrics(
     State(state): State<Arc<crate::AppState>>,
     Path(org_id): Path<String>,
 ) -> axum::response::Response {
+    // Organization knowledge is spread across shards; aggregate all of them
+    // (matching list_organization_knowledge) rather than only the first.
+    let mut details = Vec::new();
+    let mut counters = memorose_core::engine::OrganizationAutomationCounterSnapshot {
+        org_id: org_id.clone(),
+        auto_approved_total: 0,
+        auto_publish_total: 0,
+        rebuild_total: 0,
+        revoke_total: 0,
+        merged_publication_total: 0,
+    };
     for (_, shard) in state.shard_manager.all_shards() {
-        let details = match shard
+        match shard
             .engine
             .list_organization_knowledge_detail_records(Some(org_id.as_str()))
             .await
         {
-            Ok(details) => details,
+            Ok(mut shard_details) => details.append(&mut shard_details),
             Err(error) => {
                 tracing::error!("Get organization automation metrics error: {}", error);
                 return (
@@ -381,12 +392,18 @@ pub async fn get_organization_knowledge_metrics(
                 )
                     .into_response();
             }
-        };
-        let counters = match shard
+        }
+        match shard
             .engine
             .get_organization_automation_counter_snapshot(&org_id)
         {
-            Ok(counters) => counters,
+            Ok(shard_counters) => {
+                counters.auto_approved_total += shard_counters.auto_approved_total;
+                counters.auto_publish_total += shard_counters.auto_publish_total;
+                counters.rebuild_total += shard_counters.rebuild_total;
+                counters.revoke_total += shard_counters.revoke_total;
+                counters.merged_publication_total += shard_counters.merged_publication_total;
+            }
             Err(error) => {
                 tracing::error!("Get organization automation counters error: {}", error);
                 return (
@@ -395,29 +412,13 @@ pub async fn get_organization_knowledge_metrics(
                 )
                     .into_response();
             }
-        };
-        return Json(
-            DashboardOrganizationAutomationMetricsView::from_detail_records(
-                &org_id, &details, counters,
-            ),
-        )
-        .into_response();
+        }
     }
 
-    Json(DashboardOrganizationAutomationMetricsView {
-        org_id,
-        knowledge_count: 0,
-        contribution_count: 0,
-        membership_count: 0,
-        candidate_contribution_count: 0,
-        revoked_contribution_count: 0,
-        contributor_count: 0,
-        auto_approved_total: 0,
-        auto_publish_total: 0,
-        rebuild_total: 0,
-        revoke_total: 0,
-        merged_publication_total: 0,
-        source_type_distribution: Vec::new(),
-    })
+    Json(
+        DashboardOrganizationAutomationMetricsView::from_detail_records(
+            &org_id, &details, counters,
+        ),
+    )
     .into_response()
 }

@@ -291,6 +291,9 @@ impl super::MemoroseEngine {
         let _ = self.graph.delete_edges_for_node(user_id, unit_id).await?;
         self.invalidate_query_cache(user_id).await;
         self.clear_memory_unit_forgotten(user_id, unit_id)?;
+        // Right-to-be-forgotten: erase derived profile values sourced only from
+        // this unit so nothing about it survives in the profile layer.
+        self.reconcile_profile_after_forget(user_id, unit_id, true)?;
 
         if let Some(unit) = unit {
             if unit.level == 1 {

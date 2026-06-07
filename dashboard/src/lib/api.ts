@@ -429,4 +429,16 @@ export const api = {
       `/v1/users/${encodeURIComponent(user_id)}/profile/reviews/${encodeURIComponent(review_id)}/reject`,
       { method: "POST", body: JSON.stringify(body ?? {}) }
     ),
+  previewProfile: (
+    user_id: string,
+    body: { slot_key: string; op: string; canonical_value?: string; confidence?: number }
+  ) =>
+    fetchRaw<import("./types").ProfilePreviewResponse>(
+      `/v1/users/${encodeURIComponent(user_id)}/profile/preview`,
+      { method: "POST", body: JSON.stringify(body) }
+    ),
+  getOrgProfile: (org_id: string) =>
+    fetchRaw<import("./types").OrgProfileAggregate>(
+      `/v1/organizations/${encodeURIComponent(org_id)}/profile`
+    ),
 };

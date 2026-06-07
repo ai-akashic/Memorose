@@ -277,6 +277,9 @@ pub(super) async fn execute_forget_preview_record(
                     preview.mode.clone(),
                 );
                 engine.mark_memory_unit_forgotten(&preview.user_id, *unit_id, &tombstone)?;
+                // User-initiated forget: obsolete derived profile values whose
+                // last source was this unit (logical = non-destructive).
+                engine.reconcile_profile_after_forget(&preview.user_id, *unit_id, false)?;
             }
 
             for event_id in &preview.event_ids {

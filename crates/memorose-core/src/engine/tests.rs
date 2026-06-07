@@ -7518,6 +7518,180 @@ fn slot_key_for(fact: &StoredMemoryFact) -> String {
         .slot_key
 }
 
+#[tokio::test]
+async fn test_reconcile_profile_after_hard_forget_erases_orphan_value() -> Result<()> {
+    let (_dir, engine) = new_test_engine().await?;
+    let unit_a = Uuid::new_v4();
+    let unit_b = Uuid::new_v4();
+    // Two preferences: tea (sourced only by unit_a) and coffee (only unit_b).
+    let tea = profile_fact("preference", "tea", "addition", 0.9);
+    let coffee = profile_fact("preference", "coffee", "addition", 0.9);
+    engine.upsert_profile_slot_from_fact(TEST_USER, None, &tea, unit_a, Utc::now())?;
+    engine.upsert_profile_slot_from_fact(TEST_USER, None, &coffee, unit_b, Utc::now())?;
+
+    // Hard-forget unit_a: tea loses its only source and must be erased.
+    engine.reconcile_profile_after_forget(TEST_USER, unit_a, true)?;
+
+    let slot = engine
+        .get_profile_slot(TEST_USER, &slot_key_for(&tea))?
+        .expect("slot exists");
+    let cvs: Vec<_> = slot
+        .values
+        .iter()
+        .map(|v| v.canonical_value.clone())
+        .collect();
+    assert_eq!(
+        cvs,
+        vec!["coffee".to_string()],
+        "tea erased, coffee retained"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_reconcile_profile_after_logical_forget_obsoletes_orphan_value() -> Result<()> {
+    let (_dir, engine) = new_test_engine().await?;
+    let unit_a = Uuid::new_v4();
+    let residence = profile_fact("residence", "Berlin", "reaffirm", 0.9);
+    engine.upsert_profile_slot_from_fact(TEST_USER, None, &residence, unit_a, Utc::now())?;
+
+    engine.reconcile_profile_after_forget(TEST_USER, unit_a, false)?;
+
+    let slot = engine
+        .get_profile_slot(TEST_USER, &slot_key_for(&residence))?
+        .expect("slot exists");
+    // Logical forget retains the value but obsoletes it (non-destructive).
+    assert_eq!(slot.active_values().count(), 0);
+    let berlin = slot
+        .values
+        .iter()
+        .find(|v| v.canonical_value == "berlin")
+        .expect("berlin retained");
+    assert_eq!(
+        berlin.status,
+        memorose_common::ProfileValueStatus::Obsoleted
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_preview_profile_patch_does_not_persist() -> Result<()> {
+    let (_dir, engine) = new_test_engine().await?;
+    let berlin = profile_fact("residence", "Berlin", "reaffirm", 0.9);
+    engine.upsert_profile_slot_from_fact(TEST_USER, None, &berlin, Uuid::new_v4(), Utc::now())?;
+    let key = slot_key_for(&berlin);
+
+    // Preview obsoleting Berlin: the returned slot shows it obsoleted...
+    let outcome = engine
+        .preview_profile_patch(
+            TEST_USER,
+            &key,
+            ProfileSlotPatch::ObsoleteValue {
+                canonical_value: "berlin".into(),
+            },
+        )
+        .await?;
+    let after = match outcome {
+        ProfilePatchOutcome::Applied(slot) => *slot,
+        _ => panic!("expected Applied"),
+    };
+    assert_eq!(after.active_values().count(), 0, "preview shows obsoleted");
+
+    // ...but storage is unchanged (Berlin still Active).
+    let stored = engine.get_profile_slot(TEST_USER, &key)?.expect("slot");
+    assert_eq!(stored.active_values().count(), 1);
+    assert_eq!(
+        stored.active_values().next().unwrap().canonical_value,
+        "berlin"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_reconcile_profile_hard_forget_spares_unrelated_manual_value() -> Result<()> {
+    let (_dir, engine) = new_test_engine().await?;
+    let unit_a = Uuid::new_v4();
+    // tea is sourced by unit_a; coffee is added manually (no source) to the SAME slot.
+    let tea = profile_fact("preference", "tea", "addition", 0.9);
+    engine.upsert_profile_slot_from_fact(TEST_USER, None, &tea, unit_a, Utc::now())?;
+    let key = slot_key_for(&tea);
+    engine
+        .patch_profile_slot(
+            TEST_USER,
+            &key,
+            ProfileSlotPatch::SetActiveValue {
+                canonical_value: "coffee".into(),
+            },
+        )
+        .await?;
+
+    // Hard-forget unit_a: tea is orphaned and erased, coffee (manual, never
+    // sourced by unit_a) must survive.
+    engine.reconcile_profile_after_forget(TEST_USER, unit_a, true)?;
+
+    let slot = engine
+        .get_profile_slot(TEST_USER, &key)?
+        .expect("slot exists");
+    let cvs: Vec<_> = slot
+        .values
+        .iter()
+        .map(|v| v.canonical_value.clone())
+        .collect();
+    assert!(!cvs.contains(&"tea".to_string()), "orphaned tea erased");
+    assert!(
+        cvs.contains(&"coffee".to_string()),
+        "manual coffee must not be collaterally erased"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_reconcile_profile_logical_forget_respects_pin() -> Result<()> {
+    let (_dir, engine) = new_test_engine().await?;
+    let unit_a = Uuid::new_v4();
+    let berlin = profile_fact("residence", "Berlin", "reaffirm", 0.9);
+    engine.upsert_profile_slot_from_fact(TEST_USER, None, &berlin, unit_a, Utc::now())?;
+    let key = slot_key_for(&berlin);
+    engine
+        .patch_profile_slot(TEST_USER, &key, ProfileSlotPatch::Pin)
+        .await?;
+
+    // Logical forget must not obsolete a value in a pinned slot.
+    engine.reconcile_profile_after_forget(TEST_USER, unit_a, false)?;
+
+    let slot = engine
+        .get_profile_slot(TEST_USER, &key)?
+        .expect("slot exists");
+    assert_eq!(
+        slot.active_values().count(),
+        1,
+        "pinned value retained active"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_reconcile_profile_keeps_value_with_other_sources() -> Result<()> {
+    let (_dir, engine) = new_test_engine().await?;
+    let unit_a = Uuid::new_v4();
+    let unit_b = Uuid::new_v4();
+    // Same value reaffirmed by two units.
+    let fact = profile_fact("residence", "Berlin", "reaffirm", 0.9);
+    engine.upsert_profile_slot_from_fact(TEST_USER, None, &fact, unit_a, Utc::now())?;
+    engine.upsert_profile_slot_from_fact(TEST_USER, None, &fact, unit_b, Utc::now())?;
+
+    // Hard-forget one source: the value survives on the remaining source.
+    engine.reconcile_profile_after_forget(TEST_USER, unit_a, true)?;
+
+    let slot = engine
+        .get_profile_slot(TEST_USER, &slot_key_for(&fact))?
+        .expect("slot exists");
+    let value = slot.active_values().next().expect("still active");
+    assert_eq!(value.canonical_value, "berlin");
+    assert_eq!(value.source_unit_ids, vec![unit_b]);
+    Ok(())
+}
+
 fn sample_rac_review(
     user_id: &str,
     status: ReviewStatus,
@@ -7627,6 +7801,92 @@ async fn test_review_queue_roundtrip_preserves_rac_wire() -> Result<()> {
         json.contains("\"status\":\"pending\""),
         "status wire format: {json}"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_aggregate_org_profile_counts_users_per_value() -> Result<()> {
+    let (_dir, engine) = new_test_engine().await?;
+    let org = "acme";
+    // Two users in the org both live in Berlin; one in Munich. Mark users active.
+    for (user, city) in [("u1", "Berlin"), ("u2", "Berlin"), ("u3", "Munich")] {
+        engine
+            .system_kv()
+            .put(format!("active_user:{user}").as_bytes(), b"1")?;
+        let fact = profile_fact("residence", city, "reaffirm", 0.9);
+        engine.upsert_profile_slot_from_fact(user, Some(org), &fact, Uuid::new_v4(), Utc::now())?;
+    }
+    // A user in a different org must not be counted.
+    engine.system_kv().put(b"active_user:outsider", b"1")?;
+    let other = profile_fact("residence", "Berlin", "reaffirm", 0.9);
+    engine.upsert_profile_slot_from_fact(
+        "outsider",
+        Some("other"),
+        &other,
+        Uuid::new_v4(),
+        Utc::now(),
+    )?;
+
+    let agg = engine.aggregate_org_profile(org)?;
+    assert_eq!(agg.user_count, 3);
+    let residence = agg
+        .attributes
+        .iter()
+        .find(|a| a.attribute == "residence")
+        .expect("residence attribute");
+    // Berlin (2 users) sorts before Munich (1 user).
+    assert_eq!(residence.values[0].canonical_value, "berlin");
+    assert_eq!(residence.values[0].user_count, 2);
+    assert_eq!(residence.values[1].canonical_value, "munich");
+    assert_eq!(residence.values[1].user_count, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_review_index_reflects_status_transition() -> Result<()> {
+    let (_dir, engine) = new_test_engine().await?;
+    let mut review = sample_rac_review(TEST_USER, ReviewStatus::Pending, Utc::now());
+    engine.store_review(&review)?;
+    let id = review.review_id.clone();
+
+    // Initially in the pending bucket.
+    let pending =
+        engine.list_rac_reviews(Some(ReviewStatus::Pending), Some(TEST_USER), None, 100)?;
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].review_id, id);
+
+    // Resolve to approved (status change via store_review).
+    review.status = ReviewStatus::Approved;
+    engine.store_review(&review)?;
+
+    // No longer in pending; now in approved. The stale pending index entry must
+    // not leak the record back into the pending bucket.
+    let pending =
+        engine.list_rac_reviews(Some(ReviewStatus::Pending), Some(TEST_USER), None, 100)?;
+    assert!(pending.is_empty(), "moved out of pending");
+    let approved =
+        engine.list_rac_reviews(Some(ReviewStatus::Approved), Some(TEST_USER), None, 100)?;
+    assert_eq!(approved.len(), 1);
+    assert_eq!(approved[0].review_id, id);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_review_index_backfills_preexisting_records() -> Result<()> {
+    let (_dir, engine) = new_test_engine().await?;
+    // Simulate a record written before the index existed: write only the record
+    // key, bypassing store_review's index maintenance.
+    let review = sample_rac_review(TEST_USER, ReviewStatus::Pending, Utc::now());
+    let key = format!("rac_review:{}", review.review_id);
+    engine
+        .system_kv()
+        .put(key.as_bytes(), &serde_json::to_vec(&review)?)?;
+
+    // A status-filtered list must lazily backfill the index and find it.
+    let pending =
+        engine.list_rac_reviews(Some(ReviewStatus::Pending), Some(TEST_USER), None, 100)?;
+    assert_eq!(pending.len(), 1, "backfill surfaced the pre-index record");
+    assert_eq!(pending[0].review_id, review.review_id);
     Ok(())
 }
 

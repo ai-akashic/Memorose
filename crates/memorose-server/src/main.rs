@@ -29,10 +29,10 @@ use types::{
     default_context_token_budget, public_asset_storage_key, AddEdgeRequest, BatchIngestRequest,
     ContextCompressionTier, ContextFormat, GoalMemoryUnitView, GoalTree, IngestRequest,
     JoinRequest, L3TaskTree, MemoryContextHitView, MemoryContextRequest, MemoryContextResponse,
-    ProfileAuditQuery, ProfilePatchRequest, ProfilePatchResponse, ProfileQuery, ProfileResponse,
-    ProfileReviewListQuery, RenderedMemoryContext, ResolveProfileReviewRequest,
-    RetrievalMemoryUnitView, RetrieveRequest, RetrieveResponse, RetrieveResultItem,
-    UpdateTaskStatusRequest,
+    ProfileAuditQuery, ProfilePatchRequest, ProfilePatchResponse, ProfilePreviewResponse,
+    ProfileQuery, ProfileResponse, ProfileReviewListQuery, RenderedMemoryContext,
+    ResolveProfileReviewRequest, RetrievalMemoryUnitView, RetrieveRequest, RetrieveResponse,
+    RetrieveResultItem, UpdateTaskStatusRequest,
 };
 
 use shard_manager::ShardManager;
@@ -311,7 +311,12 @@ async fn main() {
         )
         .route("/v1/users/:user_id/graph/edges", post(add_edge))
         .route("/v1/users/:user_id/profile", get(get_user_profile))
+        .route("/v1/organizations/:org_id/profile", get(get_org_profile))
         .route("/v1/users/:user_id/profile", patch(patch_user_profile))
+        .route(
+            "/v1/users/:user_id/profile/preview",
+            post(preview_user_profile),
+        )
         .route(
             "/v1/users/:user_id/profile/audit",
             get(get_user_profile_audit),
@@ -1639,11 +1644,34 @@ async fn retrieve_memory(
                         })
                         .collect();
 
+                    // Optional compact profile block (text), under the same tier
+                    // sizing as /v1/memory/context.
+                    let profile_context = if payload.include_profile {
+                        let tier = context_compression_tier(
+                            token_budget.unwrap_or_else(default_context_token_budget),
+                        );
+                        shard
+                            .engine
+                            .list_profile_slots(&user_id)
+                            .ok()
+                            .and_then(|slots| {
+                                format_profile_block(
+                                    &slots,
+                                    tier,
+                                    payload.profile_top_n,
+                                    ContextFormat::Text,
+                                )
+                            })
+                    } else {
+                        None
+                    };
+
                     Json(RetrieveResponse {
                         stream_id,
                         query: payload.query,
                         results: processed_units,
                         query_time_ms: start.elapsed().as_millis(),
+                        profile_context,
                     })
                     .into_response()
                 }
@@ -1872,6 +1900,64 @@ async fn get_user_profile(
     .into_response()
 }
 
+async fn get_org_profile(
+    State(state): State<Arc<AppState>>,
+    Path(org_id): Path<String>,
+) -> axum::response::Response {
+    if let Err(r) = validate_id(&org_id, "org_id") {
+        return r;
+    }
+    use std::collections::HashMap;
+    // Users partition across shards; sum per-shard aggregates.
+    let mut user_count = 0usize;
+    // attribute -> canonical_value -> (display, count)
+    let mut merged: HashMap<String, HashMap<String, (String, usize)>> = HashMap::new();
+    for (_shard_id, shard) in state.shard_manager.all_shards() {
+        let Ok(agg) = shard.engine.aggregate_org_profile(&org_id) else {
+            continue;
+        };
+        user_count += agg.user_count;
+        for attribute in agg.attributes {
+            let bucket = merged.entry(attribute.attribute).or_default();
+            for value in attribute.values {
+                let entry = bucket
+                    .entry(value.canonical_value)
+                    .or_insert((value.value.clone(), 0));
+                entry.1 += value.user_count;
+            }
+        }
+    }
+    let mut attributes: Vec<memorose_common::OrgProfileAttribute> = merged
+        .into_iter()
+        .map(|(attribute, values)| {
+            let mut values: Vec<memorose_common::OrgProfileValueCount> = values
+                .into_iter()
+                .map(|(canonical_value, (value, user_count))| {
+                    memorose_common::OrgProfileValueCount {
+                        canonical_value,
+                        value,
+                        user_count,
+                    }
+                })
+                .collect();
+            values.sort_by(|a, b| {
+                b.user_count
+                    .cmp(&a.user_count)
+                    .then_with(|| a.canonical_value.cmp(&b.canonical_value))
+            });
+            memorose_common::OrgProfileAttribute { attribute, values }
+        })
+        .collect();
+    attributes.sort_by(|a, b| a.attribute.cmp(&b.attribute));
+
+    Json(memorose_common::OrgProfileAggregate {
+        org_id,
+        user_count,
+        attributes,
+    })
+    .into_response()
+}
+
 async fn patch_user_profile(
     State(state): State<Arc<AppState>>,
     Path(user_id): Path<String>,
@@ -1893,6 +1979,55 @@ async fn patch_user_profile(
         Ok(memorose_core::ProfilePatchOutcome::Applied(slot)) => Json(ProfilePatchResponse {
             status: "updated",
             slot: Some(*slot),
+        })
+        .into_response(),
+        Ok(memorose_core::ProfilePatchOutcome::SlotNotFound) => (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "profile slot not found" })),
+        )
+            .into_response(),
+        Ok(memorose_core::ProfilePatchOutcome::ValueNotFound { canonical_value }) => (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!("canonical value '{canonical_value}' not found in slot")
+            })),
+        )
+            .into_response(),
+        Err(error) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn preview_user_profile(
+    State(state): State<Arc<AppState>>,
+    Path(user_id): Path<String>,
+    Json(payload): Json<ProfilePatchRequest>,
+) -> axum::response::Response {
+    if let Err(r) = validate_id(&user_id, "user_id") {
+        return r;
+    }
+    let op = match parse_profile_patch(&payload) {
+        Ok(op) => op,
+        Err(response) => return response,
+    };
+    let shard = state.shard_manager.shard_for_user(&user_id);
+    let before = shard
+        .engine
+        .get_profile_slot(&user_id, &payload.slot_key)
+        .ok()
+        .flatten();
+    match shard
+        .engine
+        .preview_profile_patch(&user_id, &payload.slot_key, op)
+        .await
+    {
+        Ok(memorose_core::ProfilePatchOutcome::Applied(after)) => Json(ProfilePreviewResponse {
+            status: "preview",
+            before,
+            after: *after,
         })
         .into_response(),
         Ok(memorose_core::ProfilePatchOutcome::SlotNotFound) => (

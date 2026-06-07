@@ -16,6 +16,18 @@ pub enum ReviewStatus {
     Rejected,
 }
 
+impl ReviewStatus {
+    /// Stable string used in the status secondary-index key. Matches the serde
+    /// snake_case wire value.
+    pub(crate) fn as_index_str(self) -> &'static str {
+        match self {
+            ReviewStatus::Pending => "pending",
+            ReviewStatus::Approved => "approved",
+            ReviewStatus::Rejected => "rejected",
+        }
+    }
+}
+
 /// Common header every review-queue record exposes. The storage/query plumbing
 /// (`store_review`/`get_review`/`list_reviews`) is generic over this trait so the
 /// RAC and profile queues share one implementation; each record keeps its own
@@ -60,11 +72,66 @@ impl MemoroseEngine {
         format!("{}{}", R::KEY_PREFIX, review_id)
     }
 
+    /// Status secondary-index key: `review_idx:{prefix}{status}:{id}`. Lets
+    /// `list_reviews(Some(status))` scan only one status bucket instead of the
+    /// whole queue. Distinct from the record keyspace (`{prefix}{id}`).
+    fn review_index_key<R: ReviewRecord>(status: ReviewStatus, review_id: &str) -> String {
+        format!(
+            "review_idx:{}{}:{}",
+            R::KEY_PREFIX,
+            status.as_index_str(),
+            review_id
+        )
+    }
+
+    fn review_index_prefix<R: ReviewRecord>(status: ReviewStatus) -> String {
+        format!("review_idx:{}{}:", R::KEY_PREFIX, status.as_index_str())
+    }
+
+    fn review_index_backfill_marker<R: ReviewRecord>() -> String {
+        format!("review_idx_backfilled:{}", R::KEY_PREFIX)
+    }
+
     pub(crate) fn store_review<R: ReviewRecord>(&self, review: &R) -> Result<()> {
-        self.system_kv().put(
+        let kv = self.system_kv();
+        let new_status = review.status();
+        // Drop a stale index entry when an existing record's status changed.
+        if let Some(existing) = self.get_review::<R>(review.review_id())? {
+            let old_status = existing.status();
+            if old_status != new_status {
+                kv.delete(Self::review_index_key::<R>(old_status, review.review_id()).as_bytes())?;
+            }
+        }
+        kv.put(
             Self::review_storage_key::<R>(review.review_id()).as_bytes(),
             &serde_json::to_vec(review)?,
-        )
+        )?;
+        kv.put(
+            Self::review_index_key::<R>(new_status, review.review_id()).as_bytes(),
+            review.review_id().as_bytes(),
+        )?;
+        Ok(())
+    }
+
+    /// One-time, idempotent backfill of the status index for records written
+    /// before the index existed. Guarded by a marker so it runs at most once per
+    /// queue. Called lazily on the first status-filtered list.
+    fn ensure_review_index_backfilled<R: ReviewRecord>(&self) -> Result<()> {
+        let kv = self.system_kv();
+        let marker = Self::review_index_backfill_marker::<R>();
+        if kv.get(marker.as_bytes())?.is_some() {
+            return Ok(());
+        }
+        for (_, value) in kv.scan(R::KEY_PREFIX.as_bytes())? {
+            if let Ok(record) = serde_json::from_slice::<R>(&value) {
+                kv.put(
+                    Self::review_index_key::<R>(record.status(), record.review_id()).as_bytes(),
+                    record.review_id().as_bytes(),
+                )?;
+            }
+        }
+        kv.put(marker.as_bytes(), b"1")?;
+        Ok(())
     }
 
     pub(crate) fn get_review<R: ReviewRecord>(&self, review_id: &str) -> Result<Option<R>> {
@@ -85,17 +152,37 @@ impl MemoroseEngine {
         if limit == 0 {
             return Ok(Vec::new());
         }
+        let kv = self.system_kv();
 
-        let mut records = self
-            .system_kv()
-            .scan(R::KEY_PREFIX.as_bytes())?
-            .into_iter()
-            .filter_map(|(_, value)| serde_json::from_slice::<R>(&value).ok())
-            .filter(|record| status_filter.is_none_or(|status| record.status() == status))
-            .filter(|record| user_id_filter.is_none_or(|user_id| record.user_id() == user_id))
-            .filter(|record| org_id_filter.is_none_or(|org_id| record.org_id() == Some(org_id)))
-            .collect::<Vec<_>>();
+        let mut records: Vec<R> = if let Some(status) = status_filter {
+            // Read only the requested status bucket via the secondary index.
+            self.ensure_review_index_backfilled::<R>()?;
+            let prefix = Self::review_index_prefix::<R>(status);
+            let storage_keys: Vec<String> = kv
+                .scan(prefix.as_bytes())?
+                .into_iter()
+                .filter_map(|(_, id)| String::from_utf8(id).ok())
+                .map(|id| Self::review_storage_key::<R>(&id))
+                .collect();
+            let key_refs: Vec<&[u8]> = storage_keys.iter().map(|k| k.as_bytes()).collect();
+            kv.multi_get(&key_refs)?
+                .into_iter()
+                .flatten()
+                .filter_map(|bytes| serde_json::from_slice::<R>(&bytes).ok())
+                // Guard against a stale index entry whose record has since moved.
+                .filter(|record| record.status() == status)
+                .collect()
+        } else {
+            kv.scan(R::KEY_PREFIX.as_bytes())?
+                .into_iter()
+                .filter_map(|(_, value)| serde_json::from_slice::<R>(&value).ok())
+                .collect()
+        };
 
+        records.retain(|record| {
+            user_id_filter.is_none_or(|user_id| record.user_id() == user_id)
+                && org_id_filter.is_none_or(|org_id| record.org_id() == Some(org_id))
+        });
         records.sort_by(|left, right| {
             right
                 .created_at()
